@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+dist/
+out/
+
+# Published binaries
+src/Dolphin/bin/
+src/Dolphin/obj/
+tests/Dolphin.Tests/bin/
+tests/Dolphin.Tests/obj/
+
+# Plugin binaries (platform-specific builds go here at publish time)
+bin/
+
+# Semgrep cache
+.semgrep/
+.semgrep_logs/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db

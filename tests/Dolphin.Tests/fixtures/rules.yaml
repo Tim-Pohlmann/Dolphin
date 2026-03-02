@@ -1,0 +1,13 @@
+rules:
+  - id: no-console-log
+    message: "Remove console.log before committing."
+    languages: [typescript, javascript]
+    severity: WARNING
+    patterns:
+      - pattern: console.log(...)
+
+  - id: no-hardcoded-secret
+    message: "Possible hardcoded secret detected."
+    languages: [typescript, javascript]
+    severity: ERROR
+    pattern-regex: '(api_key|apiKey|secret|password|token)\s*=\s*[''"][^''"]{8,}[''"]'

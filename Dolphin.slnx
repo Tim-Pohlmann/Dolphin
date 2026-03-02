@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Dolphin/Dolphin.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Dolphin.Tests/Dolphin.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "dolphin": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/dolphin",
+      "args": ["serve", "--stdio"]
+    }
+  }
+}

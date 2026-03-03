@@ -34,9 +34,6 @@ public static class Runner
             cwd
         };
 
-        if (ruleId != null)
-            args.AddRange(["--rule-id", ruleId]);
-
         var psi = new ProcessStartInfo(semgrepBinary)
         {
             UseShellExecute = false,
@@ -57,6 +54,12 @@ public static class Runner
                 $"Semgrep exited with code {proc.ExitCode}.\n{stderr}");
 
         var findings = ParseFindings(stdout, cwd);
+        // Filter by rule ID if requested. The check_id in the output is typically the bare rule ID
+        // but may be path-prefixed by the scanner (e.g. ".dolphin.my-rule"). Match on suffix.
+        if (ruleId != null)
+            findings = findings
+                .Where(f => f.RuleId == ruleId || f.RuleId.EndsWith("." + ruleId))
+                .ToList();
         return new RunResult(findings, proc.ExitCode == 1);
     }
 

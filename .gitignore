@@ -13,10 +13,11 @@ tests/Dolphin.Tests/obj/
 # Plugin binaries (platform-specific builds go here at publish time)
 bin/
 
-# Semgrep cache
+# Semgrep / Opengrep cache
 .semgrep/
 .semgrep_logs/
-# Semgrep download cache for bundling (obj/ above covers obj/semgrep-<RID>)
+.opengrep/
+# Opengrep download cache for bundling (obj/ above covers obj/semgrep-<RID>)
 src/Dolphin/obj/semgrep-*
 
 # IDE

@@ -13,16 +13,18 @@ public static class Installer
     public static async Task<string> EnsureInstalledAsync()
     {
         // 1. Bundled binary (published plugin path: same directory as dolphin)
+        //    Named "semgrep" on Unix, "semgrep.exe" on Windows (placed by BundleSemgrep MSBuild target).
         var processDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
-        var bundled = Path.Combine(processDir, "semgrep");
+        var bundledName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "semgrep.exe" : "semgrep";
+        var bundled = Path.Combine(processDir, bundledName);
         if (File.Exists(bundled) && IsExecutable(bundled))
         {
             var version = await GetVersionAsync(bundled);
             if (version != null) return bundled;
         }
 
-        // 2. PATH (developer / CI installs)
-        var inPath = FindInPath("semgrep");
+        // 2. PATH (developer / CI installs: semgrep, opengrep, or semgrep.exe on Windows)
+        var inPath = FindInPath("semgrep") ?? FindInPath("opengrep");
         if (inPath != null)
         {
             var version = await GetVersionAsync(inPath);
@@ -30,9 +32,9 @@ public static class Installer
         }
 
         throw new InvalidOperationException(
-            "Semgrep not found. " +
-            "If running from source (dotnet run), install Semgrep and ensure it is on your PATH. " +
-            "See: https://semgrep.dev/docs/getting-started/"
+            "Semgrep / Opengrep not found. " +
+            "If running from source (dotnet run), install Semgrep or Opengrep and ensure it is on your PATH. " +
+            "See: https://semgrep.dev/docs/getting-started/ or https://opengrep.dev"
         );
     }
 
@@ -66,11 +68,17 @@ public static class Installer
 
     private static string? FindInPath(string name)
     {
+        var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
         var paths = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
         foreach (var dir in paths)
         {
             var candidate = Path.Combine(dir, name);
             if (File.Exists(candidate)) return candidate;
+            if (isWindows)
+            {
+                var withExe = Path.Combine(dir, name + ".exe");
+                if (File.Exists(withExe)) return withExe;
+            }
         }
         return null;
     }

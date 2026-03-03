@@ -21,39 +21,61 @@
   </ItemGroup>
 
   <!--
-    BundleSemgrep: downloads the correct platform Semgrep binary during `dotnet publish`.
-    Cached in obj/semgrep-<RID> so subsequent publishes skip the download.
-    The binary lands next to the dolphin executable in the publish output directory.
+    BundleSemgrep: downloads the correct platform Opengrep binary during `dotnet publish`.
+    Opengrep (https://github.com/opengrep/opengrep) is the community fork of Semgrep CE,
+    licensed under LGPL 2.1.  It ships true standalone binaries for all platforms including
+    Windows, which Semgrep CE does not.  The CLI is fully compatible with the Semgrep CLI
+    (same flags, same JSON output schema).
+
+    The binary is fetched from the Opengrep GitHub Releases page, cached in obj/semgrep-<RID>
+    to avoid re-downloading on subsequent publishes, and copied next to the dolphin executable
+    as "semgrep" (or "semgrep.exe" on Windows).
+
+    LGPL 2.1 redistribution obligations (satisfied by this project):
+      - Source code available at https://github.com/opengrep/opengrep (binary not modified)
+      - LGPL license text is included in the published output as OPENGREP-LICENSE.txt
+      - Users are notified that the LGPL binary is bundled (see Installer.cs startup message)
+
     Only runs when RuntimeIdentifier is specified (i.e. during a platform publish).
   -->
   <Target Name="BundleSemgrep" AfterTargets="Publish"
           Condition="'$(RuntimeIdentifier)' != ''">
     <PropertyGroup>
-      <_SemgrepBin Condition="'$(RuntimeIdentifier)'=='linux-x64'">semgrep-linux-x86_64</_SemgrepBin>
-      <_SemgrepBin Condition="'$(RuntimeIdentifier)'=='linux-arm64'">semgrep-linux-aarch64</_SemgrepBin>
-      <_SemgrepBin Condition="'$(RuntimeIdentifier)'=='osx-x64'">semgrep-osx-x86_64</_SemgrepBin>
-      <_SemgrepBin Condition="'$(RuntimeIdentifier)'=='osx-arm64'">semgrep-osx-arm64</_SemgrepBin>
-      <_SemgrepCache>$(IntermediateOutputPath)semgrep-$(RuntimeIdentifier)</_SemgrepCache>
-      <_SemgrepUrl>https://github.com/semgrep/semgrep/releases/latest/download/$(_SemgrepBin)</_SemgrepUrl>
+      <!-- Opengrep binary name per RID -->
+      <_OpengrepBin Condition="'$(RuntimeIdentifier)'=='linux-x64'">opengrep_manylinux_x86</_OpengrepBin>
+      <_OpengrepBin Condition="'$(RuntimeIdentifier)'=='linux-arm64'">opengrep_manylinux_aarch64</_OpengrepBin>
+      <_OpengrepBin Condition="'$(RuntimeIdentifier)'=='osx-x64'">opengrep_osx_x86</_OpengrepBin>
+      <_OpengrepBin Condition="'$(RuntimeIdentifier)'=='osx-arm64'">opengrep_osx_arm64</_OpengrepBin>
+      <_OpengrepBin Condition="'$(RuntimeIdentifier)'=='win-x64'">opengrep_windows_x86.exe</_OpengrepBin>
+      <!-- Cache path and download URL -->
+      <_OpengrepCache>$(IntermediateOutputPath)semgrep-$(RuntimeIdentifier)</_OpengrepCache>
+      <_OpengrepUrl>https://github.com/opengrep/opengrep/releases/latest/download/$(_OpengrepBin)</_OpengrepUrl>
+      <!-- Published binary name: "semgrep" on Unix, "semgrep.exe" on Windows -->
+      <_PublishedBinName Condition="'$(RuntimeIdentifier)'=='win-x64'">semgrep.exe</_PublishedBinName>
+      <_PublishedBinName Condition="'$(RuntimeIdentifier)'!='win-x64'">semgrep</_PublishedBinName>
     </PropertyGroup>
 
-    <Error Condition="'$(_SemgrepBin)'==''"
-           Text="Unsupported RuntimeIdentifier '$(RuntimeIdentifier)'. Supported: linux-x64, linux-arm64, osx-x64, osx-arm64" />
+    <Error Condition="'$(_OpengrepBin)'==''"
+           Text="Unsupported RuntimeIdentifier '$(RuntimeIdentifier)'. Supported: linux-x64, linux-arm64, osx-x64, osx-arm64, win-x64" />
 
-    <Message Text="Bundling Semgrep for $(RuntimeIdentifier)..." Importance="High" />
+    <Message Text="Bundling Opengrep (LGPL 2.1) for $(RuntimeIdentifier)..." Importance="High" />
 
     <!-- Download only when not already cached -->
-    <Exec Condition="!Exists('$(_SemgrepCache)')"
-          Command="curl -fsSL -o &quot;$(_SemgrepCache)&quot; &quot;$(_SemgrepUrl)&quot;" />
+    <Exec Condition="!Exists('$(_OpengrepCache)')"
+          Command="curl -fsSL -o &quot;$(_OpengrepCache)&quot; &quot;$(_OpengrepUrl)&quot;" />
     <Exec Condition="'$(OS)'!='Windows_NT'"
-          Command="chmod +x &quot;$(_SemgrepCache)&quot;" />
+          Command="chmod +x &quot;$(_OpengrepCache)&quot;" />
 
     <!-- Copy cached binary into the publish output -->
-    <Copy SourceFiles="$(_SemgrepCache)" DestinationFiles="$(PublishDir)semgrep" />
+    <Copy SourceFiles="$(_OpengrepCache)" DestinationFiles="$(PublishDir)$(_PublishedBinName)" />
     <Exec Condition="'$(OS)'!='Windows_NT'"
-          Command="chmod +x &quot;$(PublishDir)semgrep&quot;" />
+          Command="chmod +x &quot;$(PublishDir)$(_PublishedBinName)&quot;" />
 
-    <Message Text="Semgrep bundled → $(PublishDir)semgrep" Importance="High" />
+    <!-- Write a brief LGPL attribution file next to the binary -->
+    <WriteLinesToFile File="$(PublishDir)OPENGREP-LICENSE.txt" Overwrite="true"
+      Lines="Dolphin bundles Opengrep (https://github.com/opengrep/opengrep), licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).%0AThe binary has not been modified. Source code is available at https://github.com/opengrep/opengrep.%0AThe full license text is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" />
+
+    <Message Text="Opengrep bundled → $(PublishDir)$(_PublishedBinName)" Importance="High" />
   </Target>
 
 </Project>

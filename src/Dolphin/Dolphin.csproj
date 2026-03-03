@@ -20,4 +20,40 @@
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
   </ItemGroup>
 
+  <!--
+    BundleSemgrep: downloads the correct platform Semgrep binary during `dotnet publish`.
+    Cached in obj/semgrep-<RID> so subsequent publishes skip the download.
+    The binary lands next to the dolphin executable in the publish output directory.
+    Only runs when RuntimeIdentifier is specified (i.e. during a platform publish).
+  -->
+  <Target Name="BundleSemgrep" AfterTargets="Publish"
+          Condition="'$(RuntimeIdentifier)' != ''">
+    <PropertyGroup>
+      <_SemgrepBin Condition="'$(RuntimeIdentifier)'=='linux-x64'">semgrep-linux-x86_64</_SemgrepBin>
+      <_SemgrepBin Condition="'$(RuntimeIdentifier)'=='linux-arm64'">semgrep-linux-aarch64</_SemgrepBin>
+      <_SemgrepBin Condition="'$(RuntimeIdentifier)'=='osx-x64'">semgrep-osx-x86_64</_SemgrepBin>
+      <_SemgrepBin Condition="'$(RuntimeIdentifier)'=='osx-arm64'">semgrep-osx-arm64</_SemgrepBin>
+      <_SemgrepCache>$(IntermediateOutputPath)semgrep-$(RuntimeIdentifier)</_SemgrepCache>
+      <_SemgrepUrl>https://github.com/semgrep/semgrep/releases/latest/download/$(_SemgrepBin)</_SemgrepUrl>
+    </PropertyGroup>
+
+    <Error Condition="'$(_SemgrepBin)'==''"
+           Text="Unsupported RuntimeIdentifier '$(RuntimeIdentifier)'. Supported: linux-x64, linux-arm64, osx-x64, osx-arm64" />
+
+    <Message Text="Bundling Semgrep for $(RuntimeIdentifier)..." Importance="High" />
+
+    <!-- Download only when not already cached -->
+    <Exec Condition="!Exists('$(_SemgrepCache)')"
+          Command="curl -fsSL -o &quot;$(_SemgrepCache)&quot; &quot;$(_SemgrepUrl)&quot;" />
+    <Exec Condition="'$(OS)'!='Windows_NT'"
+          Command="chmod +x &quot;$(_SemgrepCache)&quot;" />
+
+    <!-- Copy cached binary into the publish output -->
+    <Copy SourceFiles="$(_SemgrepCache)" DestinationFiles="$(PublishDir)semgrep" />
+    <Exec Condition="'$(OS)'!='Windows_NT'"
+          Command="chmod +x &quot;$(PublishDir)semgrep&quot;" />
+
+    <Message Text="Semgrep bundled → $(PublishDir)semgrep" Importance="High" />
+  </Target>
+
 </Project>

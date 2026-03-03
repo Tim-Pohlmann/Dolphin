@@ -4,7 +4,6 @@ using Dolphin.Mcp;
 
 // `dolphin serve --stdio` → MCP server mode (Claude Code uses this)
 // `dolphin check`         → CLI analysis mode
-// `dolphin setup`         → download/verify Semgrep
 
 if (args is ["serve", "--stdio"])
 {
@@ -14,8 +13,7 @@ if (args is ["serve", "--stdio"])
 
 var root = new RootCommand("Dolphin — custom static analysis powered by Semgrep")
 {
-    CheckCommand.Build(),
-    SetupCommand.Build()
+    CheckCommand.Build()
 };
 
 root.Name = "dolphin";

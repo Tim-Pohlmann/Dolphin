@@ -15,7 +15,6 @@ public static class McpServer
             {
                 services.AddMcpServer()
                     .WithStdioServerTransport()
-                    .WithTools<SetupSemgrepTool>()
                     .WithTools<RunCheckTool>();
 
                 services.AddLogging(logging =>

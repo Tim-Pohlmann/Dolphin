@@ -16,6 +16,8 @@ bin/
 # Semgrep cache
 .semgrep/
 .semgrep_logs/
+# Semgrep download cache for bundling (obj/ above covers obj/semgrep-<RID>)
+src/Dolphin/obj/semgrep-*
 
 # IDE
 .vs/

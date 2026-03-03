@@ -45,17 +45,11 @@ public static class CheckCommand
                 return;
             }
 
-            // Ensure Semgrep is available (auto-downloads on first run)
+            // Locate Semgrep (bundled next to dolphin, or on PATH for dev builds)
             string semgrepBinary;
             try
             {
-                var progress = new Progress<string>(msg =>
-                {
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.WriteLine(msg);
-                    Console.ResetColor();
-                });
-                semgrepBinary = await Installer.EnsureInstalledAsync(progress);
+                semgrepBinary = await Installer.EnsureInstalledAsync();
             }
             catch (Exception ex)
             {

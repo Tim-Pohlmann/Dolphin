@@ -21,15 +21,14 @@
   </ItemGroup>
 
   <!--
-    BundleSemgrep: downloads the correct platform Opengrep binary during `dotnet publish`.
+    BundleOpengrep: downloads the correct platform Opengrep binary during `dotnet publish`.
     Opengrep (https://github.com/opengrep/opengrep) is the community fork of Semgrep CE,
     licensed under LGPL 2.1.  It ships true standalone binaries for all platforms including
-    Windows, which Semgrep CE does not.  The CLI is fully compatible with the Semgrep CLI
-    (same flags, same JSON output schema).
+    Windows, which Semgrep CE does not.
 
-    The binary is fetched from the Opengrep GitHub Releases page, cached in obj/semgrep-<RID>
+    The binary is fetched from the Opengrep GitHub Releases page, cached in obj/opengrep-<RID>
     to avoid re-downloading on subsequent publishes, and copied next to the dolphin executable
-    as "semgrep" (or "semgrep.exe" on Windows).
+    as "opengrep" (or "opengrep.exe" on Windows).
 
     LGPL 2.1 redistribution obligations (satisfied by this project):
       - Source code available at https://github.com/opengrep/opengrep (binary not modified)
@@ -38,7 +37,7 @@
 
     Only runs when RuntimeIdentifier is specified (i.e. during a platform publish).
   -->
-  <Target Name="BundleSemgrep" AfterTargets="Publish"
+  <Target Name="BundleOpengrep" AfterTargets="Publish"
           Condition="'$(RuntimeIdentifier)' != ''">
     <PropertyGroup>
       <!-- Opengrep binary name per RID -->
@@ -48,17 +47,17 @@
       <_OpengrepBin Condition="'$(RuntimeIdentifier)'=='osx-arm64'">opengrep_osx_arm64</_OpengrepBin>
       <_OpengrepBin Condition="'$(RuntimeIdentifier)'=='win-x64'">opengrep_windows_x86.exe</_OpengrepBin>
       <!-- Cache path and download URL -->
-      <_OpengrepCache>$(IntermediateOutputPath)semgrep-$(RuntimeIdentifier)</_OpengrepCache>
+      <_OpengrepCache>$(IntermediateOutputPath)opengrep-$(RuntimeIdentifier)</_OpengrepCache>
       <_OpengrepUrl>https://github.com/opengrep/opengrep/releases/latest/download/$(_OpengrepBin)</_OpengrepUrl>
-      <!-- Published binary name: "semgrep" on Unix, "semgrep.exe" on Windows -->
-      <_PublishedBinName Condition="'$(RuntimeIdentifier)'=='win-x64'">semgrep.exe</_PublishedBinName>
-      <_PublishedBinName Condition="'$(RuntimeIdentifier)'!='win-x64'">semgrep</_PublishedBinName>
+      <!-- Published binary name: "opengrep" on Unix, "opengrep.exe" on Windows -->
+      <_PublishedBinName Condition="'$(RuntimeIdentifier)'=='win-x64'">opengrep.exe</_PublishedBinName>
+      <_PublishedBinName Condition="'$(RuntimeIdentifier)'!='win-x64'">opengrep</_PublishedBinName>
     </PropertyGroup>
 
     <Error Condition="'$(_OpengrepBin)'==''"
            Text="Unsupported RuntimeIdentifier '$(RuntimeIdentifier)'. Supported: linux-x64, linux-arm64, osx-x64, osx-arm64, win-x64" />
 
-    <Message Text="Bundling Opengrep (LGPL 2.1) for $(RuntimeIdentifier)..." Importance="High" />
+    <Message Text="Bundling Opengrep (LGPL 2.1) as opengrep for $(RuntimeIdentifier)..." Importance="High" />
 
     <!-- Download only when not already cached -->
     <Exec Condition="!Exists('$(_OpengrepCache)')"

@@ -64,7 +64,7 @@ dolphin check --cwd /path/to/project
 
 ## Rule format
 
-Rules are stored in `.dolphin/rules.yaml` using the Opengrep/Semgrep rule schema:
+Rules are stored in `.dolphin/rules.yaml` using the Opengrep rule schema:
 
 ```yaml
 rules:

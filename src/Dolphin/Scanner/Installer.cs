@@ -6,16 +6,16 @@ namespace Dolphin.Scanner;
 public static class Installer
 {
     /// <summary>
-    /// Resolves the scanner binary (Opengrep/Semgrep), in priority order:
-    /// 1. Bundled — next to the dolphin executable (placed there by BundleSemgrep MSBuild target at publish time)
+    /// Resolves the scanner binary (Opengrep), in priority order:
+    /// 1. Bundled — next to the dolphin executable (placed there by BundleOpengrep MSBuild target at publish time)
     /// 2. PATH    — useful for developers who have Opengrep or Semgrep installed
     /// </summary>
     public static async Task<string> EnsureInstalledAsync()
     {
         // 1. Bundled binary (published plugin path: same directory as dolphin)
-        //    Named "semgrep" on Unix, "semgrep.exe" on Windows (placed by BundleSemgrep MSBuild target).
+        //    Named "opengrep" on Unix, "opengrep.exe" on Windows (placed by BundleOpengrep MSBuild target).
         var processDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
-        var bundledName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "semgrep.exe" : "semgrep";
+        var bundledName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "opengrep.exe" : "opengrep";
         var bundled = Path.Combine(processDir, bundledName);
         if (File.Exists(bundled) && IsExecutable(bundled))
         {
@@ -23,8 +23,8 @@ public static class Installer
             if (version != null) return bundled;
         }
 
-        // 2. PATH (developer / CI installs: semgrep, opengrep, or semgrep.exe on Windows)
-        var inPath = FindInPath("semgrep") ?? FindInPath("opengrep");
+        // 2. PATH (developer / CI installs: opengrep or semgrep)
+        var inPath = FindInPath("opengrep") ?? FindInPath("semgrep");
         if (inPath != null)
         {
             var version = await GetVersionAsync(inPath);
@@ -33,8 +33,8 @@ public static class Installer
 
         throw new InvalidOperationException(
             "Scanner not found. " +
-            "If running from source (dotnet run), install Opengrep or Semgrep and ensure it is on your PATH. " +
-            "See: https://opengrep.dev or https://semgrep.dev/docs/getting-started/"
+            "If running from source (dotnet run), install Opengrep and ensure it is on your PATH. " +
+            "See: https://opengrep.dev"
         );
     }
 

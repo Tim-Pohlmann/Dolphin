@@ -1,10 +1,10 @@
 # Dolphin
 
-Custom static code analysis powered by [Semgrep](https://semgrep.dev), integrated with Claude Code.
+Custom static code analysis powered by [Opengrep](https://opengrep.dev), integrated with Claude Code.
 
 ## What it does
 
-- **Generate rules** — Install the Dolphin plugin in Claude Code and use the `generate-rules` skill. Claude analyzes your codebase, proposes Semgrep rules one by one, lets you keep/skip/modify each, then writes `.dolphin/rules.yaml`.
+- **Generate rules** — Install the Dolphin plugin in Claude Code and use the `generate-rules` skill. Claude analyzes your codebase, proposes rules one by one, lets you keep/skip/modify each, then writes `.dolphin/rules.yaml`.
 - **Run rules** — Use `dolphin check` in your terminal or CI pipeline. No Claude required at runtime.
 
 ## Installation
@@ -35,7 +35,7 @@ sudo mv dolphin /usr/local/bin/
 
 Invoke the `generate-rules` skill. Claude will:
 1. Analyze your codebase
-2. Propose Semgrep rules one by one — you `keep`, `skip`, or `modify` each
+2. Propose rules one by one — you `keep`, `skip`, or `modify` each
 3. Write the confirmed rules to `.dolphin/rules.yaml`
 
 ### Run analysis
@@ -52,9 +52,6 @@ dolphin check --format json
 
 # Scan a specific directory
 dolphin check --cwd /path/to/project
-
-# Pre-download Semgrep (useful in CI setup steps)
-dolphin setup
 ```
 
 ### Exit codes
@@ -63,11 +60,11 @@ dolphin setup
 |------|---------|
 | `0`  | No `ERROR`-severity violations |
 | `1`  | One or more `ERROR`-severity violations found |
-| `2`  | Fatal error (Semgrep unavailable, rules file missing, etc.) |
+| `2`  | Fatal error (scanner unavailable, rules file missing, etc.) |
 
 ## Rule format
 
-Rules are stored in `.dolphin/rules.yaml` as standard Semgrep YAML:
+Rules are stored in `.dolphin/rules.yaml` using the Opengrep/Semgrep rule schema:
 
 ```yaml
 rules:
@@ -87,7 +84,7 @@ Commit `.dolphin/rules.yaml` to your repository so the whole team uses the same 
 # Build
 dotnet build
 
-# Run tests (downloads Semgrep on first run)
+# Run tests
 dotnet test
 
 # Publish self-contained binary

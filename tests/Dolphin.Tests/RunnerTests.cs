@@ -8,25 +8,13 @@ public class RunnerTests
         AppContext.BaseDirectory, "fixtures"
     );
 
-    /// <summary>Returns the scanner binary path, or null if none is available (causing the test to skip).</summary>
-    private static string? TryGetScanner()
-    {
-        var paths = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
-        foreach (var name in new[] { "semgrep", "opengrep" })
-            foreach (var dir in paths)
-            {
-                var candidate = Path.Combine(dir, name);
-                if (File.Exists(candidate)) return candidate;
-            }
-        return null;
-    }
-
     [Fact]
     public async Task RunAsync_ThrowsWhenRulesFileMissing()
     {
-        if (TryGetScanner() is null) return; // skip — no scanner in this environment
+        string scanner;
+        try { scanner = await Installer.EnsureInstalledAsync(); }
+        catch { return; } // skip — no scanner in this environment
 
-        var scanner = await Installer.EnsureInstalledAsync();
         var emptyDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         Directory.CreateDirectory(emptyDir);
 
@@ -45,10 +33,10 @@ public class RunnerTests
     [Fact]
     public async Task RunAsync_DetectsViolationsInSampleFile()
     {
-        if (TryGetScanner() is null) return;
-        var scanner = await Installer.EnsureInstalledAsync();
+        string scanner;
+        try { scanner = await Installer.EnsureInstalledAsync(); }
+        catch { return; }
 
-        // Set up a temp dir with rules.yaml and the bad sample file
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
         var tmpSrcDir = Path.Combine(tmpDir, "src");
@@ -80,8 +68,9 @@ public class RunnerTests
     [Fact]
     public async Task RunAsync_FindingsAreSortedByFilePathThenLine()
     {
-        if (TryGetScanner() is null) return;
-        var scanner = await Installer.EnsureInstalledAsync();
+        string scanner;
+        try { scanner = await Installer.EnsureInstalledAsync(); }
+        catch { return; }
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");

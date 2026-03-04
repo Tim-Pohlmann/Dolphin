@@ -1,13 +1,13 @@
 ---
-description: Analyze this codebase and generate Semgrep static analysis rules for .dolphin/rules.yaml
+description: Analyze this codebase and generate static analysis rules for .dolphin/rules.yaml
 argument-hint: "[focus-area] (optional — e.g. 'security', 'style', or 'performance')"
 allowed-tools: Bash(find:*), Bash(ls:*), Bash(cat:*), Bash(head:*), Bash(mkdir:*), Bash(test:*), Glob, Grep, Read, Write
 ---
 
-You are generating Semgrep static analysis rules for the Dolphin tool.
+You are generating static analysis rules for the Dolphin tool.
 These rules will be written to `.dolphin/rules.yaml` and executed later by the
-`dolphin check` CLI command — WITHOUT Claude. Every rule must be a valid Semgrep
-rule that Semgrep can execute independently.
+`dolphin check` CLI command — WITHOUT Claude. Every rule must be a valid Opengrep
+rule that Opengrep can execute independently.
 
 The user's optional focus area is: $ARGUMENTS
 If no focus area was provided, perform a broad analysis covering security, style, and correctness.
@@ -41,7 +41,7 @@ Do NOT propose rules already enforced by existing linters.
 
 **Step 1.4 — Note language and file scope**
 Record which languages and directories you'll target per rule. Use precise
-Semgrep `languages` and `paths.include` fields rather than broad wildcards.
+`languages` and `paths.include` fields rather than broad wildcards.
 
 ---
 
@@ -53,7 +53,7 @@ Propose rules **one at a time**. For each rule, present:
 Rule N: <rule-id>
   Severity:  ERROR | WARNING | INFO
   Languages: <comma-separated list>
-  Pattern:   <the Semgrep pattern>
+  Pattern:   <the pattern>
   Message:   <violation message shown to the developer>
   Why:       <1-2 sentences on why this is relevant to THIS codebase>
 
@@ -90,7 +90,7 @@ Once the user confirms:
    mkdir -p .dolphin
    ```
 
-3. **Build the YAML** for all confirmed rules. Each rule must follow this Semgrep schema:
+3. **Build the YAML** for all confirmed rules. Each rule must follow this Opengrep schema:
    ```yaml
    rules:
      - id: <kebab-case-id>
@@ -99,18 +99,18 @@ Once the user confirms:
        severity: ERROR | WARNING | INFO
        # Use ONE of: pattern, patterns, pattern-either, pattern-regex
        pattern: |
-         <semgrep pattern with $METAVARIABLES and ... ellipsis>
+         <pattern with $METAVARIABLES and ... ellipsis>
    ```
 
-   Semgrep pattern tips:
+   Pattern tips:
    - Use `...` to match any arguments: `console.log(...)`
    - Use `$VAR` to capture expressions: `$KEY = "$VALUE"`
    - Use `pattern-regex` for regex-based matching when AST patterns aren't suitable
    - Use `pattern-either` to match multiple alternatives
-   - Always test that the pattern is valid Semgrep syntax
+   - Always test that the pattern is valid Opengrep syntax
 
 4. **Write the file** using the Write tool.
 
 5. **Confirm success:**
    > "Written N rule(s) to `.dolphin/rules.yaml`.
-   > Run `dolphin check` to run your first scan, or `dolphin setup` to pre-download the Semgrep engine."
+   > Run `dolphin check` to run your first scan."

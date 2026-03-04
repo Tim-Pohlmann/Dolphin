@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Text;
-using Dolphin.Semgrep;
+using Dolphin.Scanner;
 using ModelContextProtocol.Server;
 
 namespace Dolphin.Mcp.Tools;
@@ -22,20 +22,20 @@ public sealed class RunCheckTool
         if (!Directory.Exists(cwd))
             return $"Error: directory not found: {cwd}";
 
-        string semgrepBinary;
+        string scannerBinary;
         try
         {
-            semgrepBinary = await Installer.EnsureInstalledAsync();
+            scannerBinary = await Installer.EnsureInstalledAsync();
         }
         catch (Exception ex)
         {
-            return $"Error: could not get Semgrep: {ex.Message}";
+            return $"Error: could not locate scanner: {ex.Message}";
         }
 
         RunResult result;
         try
         {
-            result = await Runner.RunAsync(semgrepBinary, cwd, ruleId);
+            result = await Runner.RunAsync(scannerBinary, cwd, ruleId);
         }
         catch (FileNotFoundException ex)
         {
@@ -43,7 +43,7 @@ public sealed class RunCheckTool
         }
         catch (Exception ex)
         {
-            return $"Error running Semgrep: {ex.Message}";
+            return $"Error running scanner: {ex.Message}";
         }
 
         if (result.Findings.Count == 0)

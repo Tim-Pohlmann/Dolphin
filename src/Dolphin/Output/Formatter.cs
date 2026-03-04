@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Dolphin.Semgrep;
+using Dolphin.Scanner;
 
 namespace Dolphin.Output;
 

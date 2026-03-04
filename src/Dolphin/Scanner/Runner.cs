@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Dolphin.Semgrep;
+namespace Dolphin.Scanner;
 
 public static class Runner
 {
@@ -13,11 +13,11 @@ public static class Runner
     };
 
     /// <summary>
-    /// Runs semgrep against <paramref name="cwd"/> using .dolphin/rules.yaml.
+    /// Runs the scanner against <paramref name="cwd"/> using .dolphin/rules.yaml.
     /// Optionally filters to a single rule ID.
     /// </summary>
     public static async Task<RunResult> RunAsync(
-        string semgrepBinary,
+        string scannerBinary,
         string cwd,
         string? ruleId = null)
     {
@@ -35,7 +35,7 @@ public static class Runner
             cwd
         };
 
-        var psi = new ProcessStartInfo(semgrepBinary)
+        var psi = new ProcessStartInfo(scannerBinary)
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -49,10 +49,10 @@ public static class Runner
         var stderr = await proc.StandardError.ReadToEndAsync();
         await proc.WaitForExitAsync();
 
-        // Semgrep exits 0 (clean), 1 (findings), 2+ (error)
+        // Exit 0 = clean, 1 = findings present, 2+ = error
         if (proc.ExitCode >= 2)
             throw new InvalidOperationException(
-                $"Semgrep exited with code {proc.ExitCode}.\n{stderr}");
+                $"Scanner exited with code {proc.ExitCode}.\n{stderr}");
 
         var findings = ParseFindings(stdout, cwd);
         // Filter by rule ID if requested. The check_id in the output is typically the bare rule ID

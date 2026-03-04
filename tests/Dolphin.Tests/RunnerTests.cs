@@ -1,4 +1,4 @@
-using Dolphin.Semgrep;
+using Dolphin.Scanner;
 
 namespace Dolphin.Tests;
 

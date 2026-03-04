@@ -1,14 +1,14 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace Dolphin.Semgrep;
+namespace Dolphin.Scanner;
 
 public static class Installer
 {
     /// <summary>
-    /// Resolves the Semgrep binary, in priority order:
+    /// Resolves the scanner binary (Opengrep/Semgrep), in priority order:
     /// 1. Bundled — next to the dolphin executable (placed there by BundleSemgrep MSBuild target at publish time)
-    /// 2. PATH    — useful for developers who have Semgrep globally installed
+    /// 2. PATH    — useful for developers who have Opengrep or Semgrep installed
     /// </summary>
     public static async Task<string> EnsureInstalledAsync()
     {
@@ -32,9 +32,9 @@ public static class Installer
         }
 
         throw new InvalidOperationException(
-            "Semgrep / Opengrep not found. " +
-            "If running from source (dotnet run), install Semgrep or Opengrep and ensure it is on your PATH. " +
-            "See: https://semgrep.dev/docs/getting-started/ or https://opengrep.dev"
+            "Scanner not found. " +
+            "If running from source (dotnet run), install Opengrep or Semgrep and ensure it is on your PATH. " +
+            "See: https://opengrep.dev or https://semgrep.dev/docs/getting-started/"
         );
     }
 

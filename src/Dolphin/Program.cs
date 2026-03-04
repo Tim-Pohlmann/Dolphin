@@ -11,7 +11,7 @@ if (args is ["serve", "--stdio"])
     return;
 }
 
-var root = new RootCommand("Dolphin — custom static analysis powered by Semgrep")
+var root = new RootCommand("Dolphin — custom static analysis powered by Opengrep")
 {
     CheckCommand.Build()
 };

@@ -1,6 +1,6 @@
 using System.CommandLine;
 using Dolphin.Output;
-using Dolphin.Semgrep;
+using Dolphin.Scanner;
 
 namespace Dolphin.Cli;
 
@@ -45,16 +45,16 @@ public static class CheckCommand
                 return;
             }
 
-            // Locate Semgrep (bundled next to dolphin, or on PATH for dev builds)
-            string semgrepBinary;
+            // Locate scanner binary (bundled next to dolphin, or on PATH for dev builds)
+            string scannerBinary;
             try
             {
-                semgrepBinary = await Installer.EnsureInstalledAsync();
+                scannerBinary = await Installer.EnsureInstalledAsync();
             }
             catch (Exception ex)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.Error.WriteLine($"Failed to get Semgrep: {ex.Message}");
+                Console.Error.WriteLine($"Failed to locate scanner: {ex.Message}");
                 Console.ResetColor();
                 Environment.Exit(2);
                 return;
@@ -64,7 +64,7 @@ public static class CheckCommand
             RunResult result;
             try
             {
-                result = await Runner.RunAsync(semgrepBinary, cwd, ruleId);
+                result = await Runner.RunAsync(scannerBinary, cwd, ruleId);
             }
             catch (FileNotFoundException ex)
             {

@@ -22,4 +22,8 @@
     <ProjectReference Include="..\..\src\Dolphin\Dolphin.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

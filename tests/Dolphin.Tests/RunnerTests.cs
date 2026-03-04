@@ -8,9 +8,25 @@ public class RunnerTests
         AppContext.BaseDirectory, "fixtures"
     );
 
+    /// <summary>Returns the scanner binary path, or null if none is available (causing the test to skip).</summary>
+    private static string? TryGetScanner()
+    {
+        var paths = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator) ?? [];
+        foreach (var name in new[] { "semgrep", "opengrep" })
+            foreach (var dir in paths)
+            {
+                var candidate = Path.Combine(dir, name);
+                if (File.Exists(candidate)) return candidate;
+            }
+        return null;
+    }
+
     [Fact]
     public async Task RunAsync_ThrowsWhenRulesFileMissing()
     {
+        var scanner = TryGetScanner();
+        if (scanner is null) return; // skip — no scanner in this environment
+
         var semgrep = await Installer.EnsureInstalledAsync();
         var emptyDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         Directory.CreateDirectory(emptyDir);
@@ -30,6 +46,7 @@ public class RunnerTests
     [Fact]
     public async Task RunAsync_DetectsViolationsInSampleFile()
     {
+        if (TryGetScanner() is null) return;
         var semgrep = await Installer.EnsureInstalledAsync();
 
         // Set up a temp dir with rules.yaml and the bad sample file
@@ -64,6 +81,7 @@ public class RunnerTests
     [Fact]
     public async Task RunAsync_FindingsAreSortedByFilePathThenLine()
     {
+        if (TryGetScanner() is null) return;
         var semgrep = await Installer.EnsureInstalledAsync();
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");

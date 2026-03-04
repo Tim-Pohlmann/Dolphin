@@ -31,6 +31,7 @@ public static class Runner
             "--config", rulesPath,
             "--json",
             "--no-git-ignore",
+            "--no-rewrite-rule-ids",
             cwd
         };
 

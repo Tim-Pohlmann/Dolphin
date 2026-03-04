@@ -2,7 +2,8 @@
 name: generate-rules
 description: Analyze this codebase and generate static analysis rules for .dolphin/rules.yaml
 argument-hint: "[focus-area] (optional — e.g. 'security', 'style', or 'performance')"
-allowed-tools: Bash(find *), Bash(ls *), Bash(cat *), Bash(head *), Bash(mkdir *), Bash(test *), Glob, Grep, Read, Write
+disable-model-invocation: true
+allowed-tools: Bash(ls *), Bash(head *), Bash(mkdir *), Bash(test *), Glob, Grep, Read, Write
 ---
 
 You are generating static analysis rules for the Dolphin tool.

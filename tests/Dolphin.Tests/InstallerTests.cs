@@ -11,7 +11,7 @@ public class InstallerTests
         // In a published plugin, the BundleScanner MSBuild target guarantees presence.
         string binaryPath;
         try { binaryPath = await Installer.EnsureInstalledAsync(); }
-        catch { return; }
+        catch { Assert.Skip("No scanner available in this environment"); return; }
 
         Assert.True(File.Exists(binaryPath), $"Binary not found at: {binaryPath}");
     }
@@ -20,7 +20,7 @@ public class InstallerTests
     public async Task GetInstalledInfo_ReturnsVersionString_WhenScannerAvailable()
     {
         try { await Installer.EnsureInstalledAsync(); }
-        catch { return; }
+        catch { Assert.Skip("No scanner available in this environment"); return; }
 
         var (binary, version) = await Installer.GetInstalledInfoAsync();
 

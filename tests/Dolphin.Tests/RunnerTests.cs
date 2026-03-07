@@ -14,7 +14,7 @@ public class RunnerTests
     {
         string scanner;
         try { scanner = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner found in this environment"); return; }
+        catch { Assert.Inconclusive("No scanner found in this environment"); return; }
 
         var emptyDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         Directory.CreateDirectory(emptyDir);
@@ -36,7 +36,7 @@ public class RunnerTests
     {
         string scanner;
         try { scanner = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner found in this environment"); return; }
+        catch { Assert.Inconclusive("No scanner found in this environment"); return; }
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
@@ -71,7 +71,7 @@ public class RunnerTests
     {
         string scanner;
         try { scanner = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner found in this environment"); return; }
+        catch { Assert.Inconclusive("No scanner found in this environment"); return; }
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
@@ -107,7 +107,7 @@ public class RunnerTests
     {
         string scanner;
         try { scanner = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner found in this environment"); return; }
+        catch { Assert.Inconclusive("No scanner found in this environment"); return; }
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
@@ -142,7 +142,7 @@ public class RunnerTests
     {
         string scanner;
         try { scanner = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner found in this environment"); return; }
+        catch { Assert.Inconclusive("No scanner found in this environment"); return; }
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
@@ -182,7 +182,7 @@ public class RunnerTests
     {
         string scanner;
         try { scanner = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner found in this environment"); return; }
+        catch { Assert.Inconclusive("No scanner found in this environment"); return; }
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");

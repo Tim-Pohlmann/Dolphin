@@ -2,25 +2,26 @@ using Dolphin.Scanner;
 
 namespace Dolphin.Tests;
 
+[TestClass]
 public class RunnerTests
 {
     private static readonly string FixturesDir = Path.Combine(
         AppContext.BaseDirectory, "fixtures"
     );
 
-    [Fact]
+    [TestMethod]
     public async Task RunAsync_ThrowsWhenRulesFileMissing()
     {
         string scanner;
         try { scanner = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner available in this environment"); return; }
+        catch { Assert.Inconclusive("No scanner available in this environment"); return; }
 
         var emptyDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         Directory.CreateDirectory(emptyDir);
 
         try
         {
-            await Assert.ThrowsAsync<FileNotFoundException>(
+            await Assert.ThrowsExceptionAsync<FileNotFoundException>(
                 () => Runner.RunAsync(scanner, emptyDir)
             );
         }
@@ -30,12 +31,12 @@ public class RunnerTests
         }
     }
 
-    [Fact]
+    [TestMethod]
     public async Task RunAsync_DetectsViolationsInSampleFile()
     {
         string scanner;
         try { scanner = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner available in this environment"); return; }
+        catch { Assert.Inconclusive("No scanner available in this environment"); return; }
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
@@ -56,8 +57,8 @@ public class RunnerTests
         {
             var result = await Runner.RunAsync(scanner, tmpDir);
 
-            Assert.True(result.Findings.Count > 0, "Expected at least one finding in bad-file.ts");
-            Assert.Contains(result.Findings, f => f.RuleId == "no-console-log");
+            Assert.IsTrue(result.Findings.Count > 0, "Expected at least one finding in bad-file.ts");
+            Assert.IsTrue(result.Findings.Any(f => f.RuleId == "no-console-log"), "Expected finding with rule 'no-console-log'");
         }
         finally
         {
@@ -65,12 +66,12 @@ public class RunnerTests
         }
     }
 
-    [Fact]
+    [TestMethod]
     public async Task RunAsync_FindingsAreSortedByFilePathThenLine()
     {
         string scanner;
         try { scanner = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner available in this environment"); return; }
+        catch { Assert.Inconclusive("No scanner available in this environment"); return; }
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
@@ -97,9 +98,9 @@ public class RunnerTests
                 var curr = result.Findings[i];
                 var cmp = string.Compare(prev.FilePath, curr.FilePath, StringComparison.OrdinalIgnoreCase);
                 if (cmp == 0)
-                    Assert.True(prev.Line <= curr.Line, "Findings not sorted by line number");
+                    Assert.IsTrue(prev.Line <= curr.Line, "Findings not sorted by line number");
                 else
-                    Assert.True(cmp <= 0, "Findings not sorted by file path");
+                    Assert.IsTrue(cmp <= 0, "Findings not sorted by file path");
             }
         }
         finally

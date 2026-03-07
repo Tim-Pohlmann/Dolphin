@@ -2,5 +2,5 @@
   "name": "dolphin",
   "version": "0.1.0",
   "description": "Custom static analysis powered by Opengrep. Generate rules with Claude, run them in CI.",
-  "author": "Tim Pohlmann"
+  "author": { "name": "Tim Pohlmann" }
 }

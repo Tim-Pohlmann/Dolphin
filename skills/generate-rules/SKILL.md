@@ -2,54 +2,27 @@
 name: generate-rules
 description: Analyze this codebase and generate static analysis rules for .dolphin/rules.yaml
 argument-hint: "[focus-area] (optional — e.g. 'security', 'style', or 'performance')"
-disable-model-invocation: true
-allowed-tools: Bash(ls *), Bash(head *), Bash(mkdir *), Bash(test *), Glob, Grep, Read, Write
+allowed-tools: Agent(generate-rules-recon), Bash(mkdir *), Bash(test *), Write
 ---
 
-You are generating static analysis rules for the Dolphin tool.
-These rules will be written to `.dolphin/rules.yaml` and executed later by the
-`dolphin check` CLI command — WITHOUT Claude. Every rule must be a valid Opengrep
-rule that Opengrep can execute independently.
-
+You are orchestrating static analysis rule generation for the Dolphin tool.
 The user's optional focus area is: $ARGUMENTS
-If no focus area was provided, perform a broad analysis covering security, style, and correctness.
 
 ---
 
-## PHASE 1 — CODEBASE RECONNAISSANCE
+## PHASE 1 — CODEBASE RECONNAISSANCE (delegated)
 
-Work through these steps before proposing any rules.
+Invoke the `generate-rules-recon` agent with the following prompt:
 
-**Step 1.1 — Discover the project layout**
-Use Glob with `**/*` and Bash `ls` to understand:
-- Languages present (check extensions: .ts, .js, .py, .go, .java, .cs, .rb, etc.)
-- Directory structure (src/, lib/, app/, tests/, etc.)
-- Config files present (package.json, pyproject.toml, go.mod, .eslintrc, etc.)
+> "Scan this codebase for candidate Dolphin/Opengrep rules. Focus area: $ARGUMENTS (if empty, cover security, style, and correctness broadly)."
 
-**Step 1.2 — Sample source files**
-Use Glob to find up to 20 representative source files across major directories.
-Use Read (or Bash `head -n 80`) to read samples. Look for:
-- Logging patterns (console.log, print, fmt.Println, logger.*)
-- TODO/FIXME comment patterns
-- Import/require conventions
-- Error handling patterns
-- Potential hardcoded secrets or API keys
-- Deprecated API usage
-- Naming convention inconsistencies
-
-**Step 1.3 — Check existing lint configurations**
-Read `.eslintrc*`, `pyproject.toml`, `.rubocop.yml`, etc. if present.
-Do NOT propose rules already enforced by existing linters.
-
-**Step 1.4 — Note language and file scope**
-Record which languages and directories you'll target per rule. Use precise
-`languages` and `paths.include` fields rather than broad wildcards.
+Wait for the agent to return its `RECON_RESULT` block. Parse out the `CANDIDATE_RULES` entries — each has: `id`, `severity`, `languages`, `pattern`, `message`, `why`.
 
 ---
 
 ## PHASE 2 — INTERACTIVE RULE REFINEMENT
 
-Propose rules **one at a time**. For each rule, present:
+Propose rules **one at a time** from the candidate list. For each rule, present:
 
 ```
 Rule N: <rule-id>
@@ -67,7 +40,7 @@ Wait for the user's response before moving to the next rule:
 - **s / skip** → discard, show next rule
 - **m / modify** → ask what to change, apply changes, re-show updated rule, re-ask
 
-Target 8–15 candidate rules total. After all rules are reviewed, show a summary:
+After all rules are reviewed, show a summary:
 
 > "You confirmed N rule(s): [rule-id-1], [rule-id-2], ...
 > Ready to write `.dolphin/rules.yaml`? (yes/no)"

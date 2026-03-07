@@ -11,6 +11,7 @@ namespace Dolphin.Tests;
 /// Each test spawns a child process via `dotnet run` so that
 /// Environment.Exit() in CheckCommand doesn't terminate the test runner.
 /// </summary>
+[TestClass]
 public class CheckCommandTests
 {
     private static readonly string FixturesDir = Path.Combine(
@@ -57,17 +58,17 @@ public class CheckCommandTests
 
     // ──────────────────────────────────────────────────────────────────────────
 
-    [Fact]
+    [TestMethod]
     public async Task Check_ExitCode2_WhenDirectoryDoesNotExist()
     {
         var (exitCode, _, _) = await RunDolphinAsync(
             "check --cwd /nonexistent/dolphin-test-path-that-does-not-exist"
         );
 
-        Assert.Equal(2, exitCode);
+        Assert.AreEqual(2, exitCode);
     }
 
-    [Fact]
+    [TestMethod]
     public async Task Check_ExitCode2_WhenRulesFileMissing()
     {
         // Graceful skip if scanner unavailable
@@ -82,7 +83,7 @@ public class CheckCommandTests
             // No .dolphin/rules.yaml — Runner should throw FileNotFoundException → exit 2
             var (exitCode, _, _) = await RunDolphinAsync($"check --cwd \"{tmpDir}\"");
 
-            Assert.Equal(2, exitCode);
+            Assert.AreEqual(2, exitCode);
         }
         finally
         {
@@ -90,7 +91,7 @@ public class CheckCommandTests
         }
     }
 
-    [Fact]
+    [TestMethod]
     public async Task Check_ExitCode1_WhenErrorFindingsExist()
     {
         // Graceful skip if scanner unavailable
@@ -117,7 +118,7 @@ public class CheckCommandTests
         {
             var (exitCode, _, _) = await RunDolphinAsync($"check --cwd \"{tmpDir}\"");
 
-            Assert.Equal(1, exitCode);
+            Assert.AreEqual(1, exitCode);
         }
         finally
         {
@@ -125,7 +126,7 @@ public class CheckCommandTests
         }
     }
 
-    [Fact]
+    [TestMethod]
     public async Task Check_ExitCode0_WhenOnlyWarningFindingsExist()
     {
         // Graceful skip if scanner unavailable
@@ -154,7 +155,7 @@ public class CheckCommandTests
             var (exitCode, _, _) = await RunDolphinAsync($"check --cwd \"{tmpDir}\"");
 
             // Warnings don't trigger exit 1; only ERRORs do.
-            Assert.Equal(0, exitCode);
+            Assert.AreEqual(0, exitCode);
         }
         finally
         {
@@ -162,7 +163,7 @@ public class CheckCommandTests
         }
     }
 
-    [Fact]
+    [TestMethod]
     public async Task Check_JsonFormat_OutputsValidJsonArray()
     {
         // Graceful skip if scanner unavailable
@@ -191,11 +192,11 @@ public class CheckCommandTests
             );
 
             // Exit code 2 means a fatal error — scanner unavailable etc.
-            Assert.NotEqual(2, exitCode);
+            Assert.AreNotEqual(2, exitCode);
 
             using var doc = JsonDocument.Parse(stdout.Trim());
-            Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
-            Assert.True(doc.RootElement.GetArrayLength() > 0,
+            Assert.AreEqual(JsonValueKind.Array, doc.RootElement.ValueKind);
+            Assert.IsTrue(doc.RootElement.GetArrayLength() > 0,
                 "Expected at least one finding in the JSON output");
         }
         finally

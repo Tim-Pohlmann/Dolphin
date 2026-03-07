@@ -1,0 +1,157 @@
+using Dolphin.Mcp.Tools;
+using Dolphin.Scanner;
+
+namespace Dolphin.Tests;
+
+/// <summary>
+/// Tests for the RunCheckTool MCP tool method — the string it returns is
+/// exactly what Claude receives when it calls the run_check tool.
+/// </summary>
+[TestClass]
+public class RunCheckToolTests
+{
+    private static readonly string FixturesDir = Path.Combine(
+        AppContext.BaseDirectory, "fixtures"
+    );
+
+    [TestMethod]
+    public async Task RunCheck_ReturnsError_WhenDirectoryDoesNotExist()
+    {
+        var tool = new RunCheckTool();
+
+        var result = await tool.RunCheck("/nonexistent/dolphin-test-path-that-does-not-exist");
+
+        StringAssert.StartsWith(result, "Error:");
+        StringAssert.Contains(result, "directory not found");
+    }
+
+    [TestMethod]
+    public async Task RunCheck_ReturnsError_WhenRulesFileMissing()
+    {
+        try { await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("No scanner available in this environment"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tmpDir);
+
+        try
+        {
+            var tool = new RunCheckTool();
+            var result = await tool.RunCheck(tmpDir);
+
+            StringAssert.StartsWith(result, "Error:");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RunCheck_ReturnsNoViolationsMessage_ForCleanDirectory()
+    {
+        try { await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("No scanner available in this environment"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var tmpSrcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(tmpDolphinDir);
+        Directory.CreateDirectory(tmpSrcDir);
+
+        File.Copy(
+            Path.Combine(FixturesDir, "rules.yaml"),
+            Path.Combine(tmpDolphinDir, "rules.yaml")
+        );
+        File.Copy(
+            Path.Combine(FixturesDir, "sample-src", "clean-file.ts"),
+            Path.Combine(tmpSrcDir, "clean-file.ts")
+        );
+
+        try
+        {
+            var tool = new RunCheckTool();
+            var result = await tool.RunCheck(tmpDir);
+
+            Assert.AreEqual("✓ No violations found.", result);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RunCheck_ReturnsFormattedViolations_WhenFindingsExist()
+    {
+        try { await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("No scanner available in this environment"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var tmpSrcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(tmpDolphinDir);
+        Directory.CreateDirectory(tmpSrcDir);
+
+        File.Copy(
+            Path.Combine(FixturesDir, "rules.yaml"),
+            Path.Combine(tmpDolphinDir, "rules.yaml")
+        );
+        File.Copy(
+            Path.Combine(FixturesDir, "sample-src", "bad-file.ts"),
+            Path.Combine(tmpSrcDir, "bad-file.ts")
+        );
+
+        try
+        {
+            var tool = new RunCheckTool();
+            var result = await tool.RunCheck(tmpDir);
+
+            StringAssert.Contains(result, "violation(s)");
+            StringAssert.Contains(result, "no-hardcoded-secret");
+            StringAssert.Contains(result, "no-console-log");
+            StringAssert.Contains(result, "[ERROR]");
+            StringAssert.Contains(result, "[WARNING]");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RunCheck_SummaryLine_ReflectsCorrectCounts()
+    {
+        try { await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("No scanner available in this environment"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var tmpSrcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(tmpDolphinDir);
+        Directory.CreateDirectory(tmpSrcDir);
+
+        File.Copy(
+            Path.Combine(FixturesDir, "rules.yaml"),
+            Path.Combine(tmpDolphinDir, "rules.yaml")
+        );
+        File.Copy(
+            Path.Combine(FixturesDir, "sample-src", "bad-file.ts"),
+            Path.Combine(tmpSrcDir, "bad-file.ts")
+        );
+
+        try
+        {
+            var tool = new RunCheckTool();
+            var result = await tool.RunCheck(tmpDir);
+
+            // bad-file.ts has 1 ERROR (no-hardcoded-secret) and 1 WARNING (no-console-log)
+            StringAssert.Contains(result, "1 errors");
+            StringAssert.Contains(result, "1 warnings");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+}

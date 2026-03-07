@@ -2,6 +2,9 @@
 
 Custom static code analysis powered by [Opengrep](https://opengrep.dev), integrated with Claude Code.
 
+## AI Slop
+This repo is full of AI Slop.
+
 ## What it does
 
 - **Generate rules** — Install the Dolphin plugin in Claude Code and use the `generate-rules` skill. Claude analyzes your codebase, proposes rules one by one, lets you keep/skip/modify each, then writes `.dolphin/rules.yaml`.

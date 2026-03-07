@@ -13,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for SonarQube blame information
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -26,8 +28,22 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
 
+      - name: Install dotnet-sonarscanner
+        run: dotnet tool install --global dotnet-sonarscanner
+
       - name: Restore
         run: dotnet restore Dolphin.slnx
+
+      - name: Begin SonarQube analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          dotnet sonarscanner begin \
+            /k:"Tim-Pohlmann_Dolphin" \
+            /o:"tim-pohlmann" \
+            /d:sonar.token="$SONAR_TOKEN" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.cs.opencover.reportsPaths="tests/**/coverage.opencover.xml"
 
       - name: Build
         run: dotnet build Dolphin.slnx --no-restore -c Release
@@ -38,4 +54,9 @@ jobs:
           chmod +x /usr/local/bin/opengrep
 
       - name: Test
-        run: dotnet test Dolphin.slnx --no-build -c Release --verbosity normal
+        run: dotnet test Dolphin.slnx --no-build -c Release --verbosity normal --collect:"XPlat Code Coverage" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+      - name: End SonarQube analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"

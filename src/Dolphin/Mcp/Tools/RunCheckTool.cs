@@ -8,7 +8,7 @@ namespace Dolphin.Mcp.Tools;
 [McpServerToolType]
 public sealed class RunCheckTool
 {
-    [McpServerTool, Description(
+    [McpServerTool(Name = "run_check"), Description(
         "Run Dolphin static analysis rules against a codebase. " +
         "Returns a summary of all violations found. " +
         "Optionally filter to a single rule ID."

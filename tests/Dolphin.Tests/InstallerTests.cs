@@ -2,9 +2,10 @@ using Dolphin.Scanner;
 
 namespace Dolphin.Tests;
 
+[TestClass]
 public class InstallerTests
 {
-    [Fact]
+    [TestMethod]
     public async Task EnsureInstalled_ReturnsValidBinaryPath_WhenScannerAvailable()
     {
         // Skip if no scanner is available (bundled binary or on PATH).
@@ -13,10 +14,10 @@ public class InstallerTests
         try { binaryPath = await Installer.EnsureInstalledAsync(); }
         catch { return; }
 
-        Assert.True(File.Exists(binaryPath), $"Binary not found at: {binaryPath}");
+        Assert.IsTrue(File.Exists(binaryPath), $"Binary not found at: {binaryPath}");
     }
 
-    [Fact]
+    [TestMethod]
     public async Task GetInstalledInfo_ReturnsVersionString_WhenScannerAvailable()
     {
         try { await Installer.EnsureInstalledAsync(); }
@@ -24,8 +25,8 @@ public class InstallerTests
 
         var (binary, version) = await Installer.GetInstalledInfoAsync();
 
-        Assert.False(string.IsNullOrWhiteSpace(binary));
-        Assert.False(string.IsNullOrWhiteSpace(version));
-        Assert.True(char.IsDigit(version[0]), $"Unexpected version string: {version}");
+        Assert.IsFalse(string.IsNullOrWhiteSpace(binary));
+        Assert.IsFalse(string.IsNullOrWhiteSpace(version));
+        Assert.IsTrue(char.IsDigit(version[0]), $"Unexpected version string: {version}");
     }
 }

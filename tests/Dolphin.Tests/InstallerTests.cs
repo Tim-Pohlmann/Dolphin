@@ -12,7 +12,7 @@ public class InstallerTests
         // In a published plugin, the BundleScanner MSBuild target guarantees presence.
         string binaryPath;
         try { binaryPath = await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner available in this environment"); return; }
+        catch { throw new Xunit.Sdk.SkipException("No scanner available in this environment"); }
 
         Assert.IsTrue(File.Exists(binaryPath), $"Binary not found at: {binaryPath}");
     }
@@ -21,7 +21,7 @@ public class InstallerTests
     public async Task GetInstalledInfo_ReturnsVersionString_WhenScannerAvailable()
     {
         try { await Installer.EnsureInstalledAsync(); }
-        catch { Assert.Skip("No scanner available in this environment"); return; }
+        catch { throw new Xunit.Sdk.SkipException("No scanner available in this environment"); }
 
         var (binary, version) = await Installer.GetInstalledInfoAsync();
 

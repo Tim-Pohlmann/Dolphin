@@ -9,19 +9,17 @@ const { spawnSync } = require('child_process');
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.join(__dirname, '..');
 const GITHUB_REPO = 'Tim-Pohlmann/Dolphin';
 
-function getVersion() {
-  const pluginJsonPath = path.join(PLUGIN_ROOT, '.claude-plugin', 'plugin.json');
+function getVersion(pluginRoot = PLUGIN_ROOT) {
+  const pluginJsonPath = path.join(pluginRoot, '.claude-plugin', 'plugin.json');
   return JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8')).version;
 }
 
-function getRid() {
-  const p = process.platform;
-  const a = process.arch;
-  if (p === 'linux'  && a === 'x64')   return { rid: 'linux-x64',   ext: 'tar.gz' };
-  if (p === 'linux'  && a === 'arm64') return { rid: 'linux-arm64', ext: 'tar.gz' };
-  if (p === 'darwin' && a === 'arm64') return { rid: 'osx-arm64',   ext: 'tar.gz' };
-  if (p === 'win32'  && a === 'x64')   return { rid: 'win-x64',     ext: 'zip'    };
-  throw new Error(`Unsupported platform: ${p}/${a}. Supported: linux-x64, linux-arm64, osx-arm64, win-x64.`);
+function getRid(platform = process.platform, arch = process.arch) {
+  if (platform === 'linux'  && arch === 'x64')   return { rid: 'linux-x64',   ext: 'tar.gz' };
+  if (platform === 'linux'  && arch === 'arm64') return { rid: 'linux-arm64', ext: 'tar.gz' };
+  if (platform === 'darwin' && arch === 'arm64') return { rid: 'osx-arm64',   ext: 'tar.gz' };
+  if (platform === 'win32'  && arch === 'x64')   return { rid: 'win-x64',     ext: 'zip'    };
+  throw new Error(`Unsupported platform: ${platform}/${arch}. Supported: linux-x64, linux-arm64, osx-arm64, win-x64.`);
 }
 
 function download(url, dest) {
@@ -89,10 +87,14 @@ async function ensureBinary() {
   return binaryPath;
 }
 
-ensureBinary().then(binaryPath => {
-  const result = spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
-  process.exit(result.status ?? 1);
-}).catch(err => {
-  process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
-  process.exit(2);
-});
+if (require.main === module) {
+  ensureBinary().then(binaryPath => {
+    const result = spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
+    process.exit(result.status ?? 1);
+  }).catch(err => {
+    process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
+    process.exit(2);
+  });
+}
+
+module.exports = { getVersion, getRid };

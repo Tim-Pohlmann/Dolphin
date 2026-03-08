@@ -18,39 +18,11 @@ public class CheckCommandTests
         AppContext.BaseDirectory, "fixtures"
     );
 
-    /// <summary>
-    /// Resolves the src/Dolphin project path by walking up from the test
-    /// output directory (e.g. tests/Dolphin.Tests/bin/Debug/net10.0/).
-    /// </summary>
-    private static string FindDolphinProjectPath()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            var candidate = Path.Combine(dir.FullName, "src", "Dolphin", "Dolphin.csproj");
-            if (File.Exists(candidate))
-                return Path.GetDirectoryName(candidate)!;
-            dir = dir.Parent;
-        }
-        throw new InvalidOperationException("Could not locate src/Dolphin/Dolphin.csproj");
-    }
-
-    /// <summary>
-    /// Returns the build configuration (e.g. "Release" or "Debug") that was used
-    /// when compiling the current test binary, by inspecting AppContext.BaseDirectory.
-    /// Path is like: ...bin/Release/net10.0/ or ...bin/Debug/net10.0/
-    /// </summary>
-    private static string CurrentConfiguration()
-    {
-        var baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return Path.GetFileName(Path.GetDirectoryName(baseDir)!) is { } c && c.Length > 0 ? c : "Release";
-    }
-
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDolphinAsync(
         string args, CancellationToken ct = default)
     {
-        var projectPath = FindDolphinProjectPath();
-        var config = CurrentConfiguration();
+        var projectPath = TestProcessHelper.FindDolphinProjectPath();
+        var config = TestProcessHelper.CurrentConfiguration();
         // --no-build skips MSBuild recompilation. Must pass --configuration so dotnet
         // run looks in bin/{config}/ rather than defaulting to Debug (which may not exist).
         var psi = new ProcessStartInfo("dotnet", $"run --no-build --configuration {config} --project \"{projectPath}\" -- {args}")

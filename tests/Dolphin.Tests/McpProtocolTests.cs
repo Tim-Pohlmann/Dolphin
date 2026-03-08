@@ -11,29 +11,10 @@ namespace Dolphin.Tests;
 [TestClass]
 public class McpProtocolTests
 {
-    private static string FindDolphinProjectPath()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            var candidate = Path.Combine(dir.FullName, "src", "Dolphin", "Dolphin.csproj");
-            if (File.Exists(candidate))
-                return Path.GetDirectoryName(candidate)!;
-            dir = dir.Parent;
-        }
-        throw new InvalidOperationException("Could not locate src/Dolphin/Dolphin.csproj");
-    }
-
-    private static string CurrentConfiguration()
-    {
-        var baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return Path.GetFileName(Path.GetDirectoryName(baseDir)!) is { } c && c.Length > 0 ? c : "Release";
-    }
-
     private static Process StartServer()
     {
-        var projectPath = FindDolphinProjectPath();
-        var config = CurrentConfiguration();
+        var projectPath = TestProcessHelper.FindDolphinProjectPath();
+        var config = TestProcessHelper.CurrentConfiguration();
         var psi = new ProcessStartInfo("dotnet", $"run --no-build --configuration {config} --project \"{projectPath}\" -- serve --stdio")
         {
             RedirectStandardInput = true,

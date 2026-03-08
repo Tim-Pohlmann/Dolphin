@@ -26,6 +26,9 @@ public static class LspServer
     // Per-URI cancellation: cancels superseded validations on rapid edits.
     private static readonly ConcurrentDictionary<string, CancellationTokenSource> _validationCts = new();
 
+    // Last-known text per URI, used to serve documentSymbol requests.
+    private static readonly ConcurrentDictionary<string, string> _textCache = new();
+
     public static async Task RunAsync()
     {
         // Best-effort early resolution; if it fails we retry on first validate.
@@ -80,6 +83,7 @@ public static class LspServer
                     w.WritePropertyName("capabilities");
                     w.WriteStartObject();
                     w.WriteNumber("textDocumentSync", 1); // full sync
+                    w.WriteBoolean("documentSymbolProvider", true);
                     w.WriteEndObject();
                     w.WriteEndObject();
                     w.WriteEndObject();
@@ -91,6 +95,7 @@ public static class LspServer
                 var td = p.GetProperty("textDocument");
                 var uri = td.GetProperty("uri").GetString() ?? "";
                 var text = td.GetProperty("text").GetString() ?? "";
+                _textCache[uri] = text;
                 _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
                 break;
             }
@@ -100,16 +105,58 @@ public static class LspServer
                 var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                 var changes = p.GetProperty("contentChanges");
                 if (changes.GetArrayLength() > 0)
-                    _ = ValidateAndPublishAsync(stdout, uri,
-                        changes[0].GetProperty("text").GetString() ?? "",
-                        CancelPrevious(uri));
+                {
+                    var text = changes[0].GetProperty("text").GetString() ?? "";
+                    _textCache[uri] = text;
+                    _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                }
                 break;
             }
 
             case "textDocument/didClose":
-                await PublishDiagnosticsAsync(stdout,
-                    p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "", []);
+            {
+                var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
+                _textCache.TryRemove(uri, out _);
+                await PublishDiagnosticsAsync(stdout, uri, []);
                 break;
+            }
+
+            case "textDocument/documentSymbol":
+            {
+                var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
+                var symbols = _textCache.TryGetValue(uri, out var cached)
+                    ? DocumentSymbols.Parse(uri, cached)
+                    : [];
+                await SendAsync(stdout, w =>
+                {
+                    w.WriteStartObject();
+                    w.WriteString("jsonrpc", "2.0");
+                    WriteId(w, id);
+                    w.WritePropertyName("result");
+                    w.WriteStartArray();
+                    foreach (var s in symbols)
+                    {
+                        w.WriteStartObject();
+                        w.WriteString("name", s.Name);
+                        w.WriteNumber("kind", 12); // Function
+                        w.WritePropertyName("location");
+                        w.WriteStartObject();
+                        w.WriteString("uri", uri);
+                        w.WritePropertyName("range");
+                        w.WriteStartObject();
+                        w.WritePropertyName("start");
+                        WritePosition(w, s.Start);
+                        w.WritePropertyName("end");
+                        WritePosition(w, s.End);
+                        w.WriteEndObject();
+                        w.WriteEndObject();
+                        w.WriteEndObject();
+                    }
+                    w.WriteEndArray();
+                    w.WriteEndObject();
+                });
+                break;
+            }
 
             case "shutdown":
                 _shutdownReceived = true;
@@ -192,7 +239,7 @@ public static class LspServer
 
             return proc.ExitCode == 0
                 ? []
-                : ParseDiagnostics(stdout + stderr);
+                : LspDiagnosticsParser.Parse(stdout + stderr);
         }
         catch
         {
@@ -202,80 +249,6 @@ public static class LspServer
         {
             try { File.Delete(tmp); } catch { }
         }
-    }
-
-    /// <summary>
-    /// Parses `opengrep validate` output into LSP diagnostics.
-    ///
-    /// Opengrep emits errors like:
-    ///   Invalid rule 'no-console-log': missing required field 'message'
-    ///     --> /path/to/file with spaces.yaml:8:5
-    /// </summary>
-    private static LspDiagnostic[] ParseDiagnostics(string output)
-    {
-        var diagnostics = new List<LspDiagnostic>();
-        var lines = output.Split('\n');
-
-        foreach (var raw in lines)
-        {
-            var trimmed = raw.Trim();
-            if (trimmed.Length == 0) continue;
-
-            // Location pointer: "  --> /any/path (spaces ok):LINE:COL"
-            // Anchor to end-of-line so we grab the last :number:number regardless
-            // of spaces or colons in the file path.
-            var locMatch = Regex.Match(raw, @"-->.+:(\d+)(?::(\d+))?\s*$");
-            if (locMatch.Success)
-            {
-                var lineNum = Math.Max(0, int.Parse(locMatch.Groups[1].Value) - 1);
-                var colNum = locMatch.Groups[2].Success
-                    ? Math.Max(0, int.Parse(locMatch.Groups[2].Value) - 1)
-                    : 0;
-
-                // Attach the precise location to the preceding pending diagnostic.
-                if (diagnostics.Count > 0 && diagnostics[^1].Pending)
-                {
-                    diagnostics[^1] = diagnostics[^1] with
-                    {
-                        Range = new LspRange(
-                            new LspPosition(lineNum, colNum),
-                            new LspPosition(lineNum, int.MaxValue)),
-                        Pending = false,
-                    };
-                }
-                continue;
-            }
-
-            // Error message line
-            if (Regex.IsMatch(trimmed, @"error|invalid|missing|required|unexpected",
-                    RegexOptions.IgnoreCase))
-            {
-                diagnostics.Add(new LspDiagnostic(
-                    Range: new LspRange(new LspPosition(0, 0), new LspPosition(0, int.MaxValue)),
-                    Severity: 1,
-                    Source: "opengrep",
-                    Message: trimmed,
-                    Pending: true));
-            }
-        }
-
-        // Finalise any diagnostics that never got a location (leave at line 0).
-        for (int i = 0; i < diagnostics.Count; i++)
-            if (diagnostics[i].Pending)
-                diagnostics[i] = diagnostics[i] with { Pending = false };
-
-        // Fallback: non-zero exit but no recognisable error lines.
-        if (diagnostics.Count == 0 && output.Trim().Length > 0)
-        {
-            diagnostics.Add(new LspDiagnostic(
-                Range: new LspRange(new LspPosition(0, 0), new LspPosition(0, int.MaxValue)),
-                Severity: 1,
-                Source: "opengrep",
-                Message: output.Trim().Split('\n')[0],
-                Pending: false));
-        }
-
-        return [.. diagnostics];
     }
 
     // ── Wire protocol helpers ─────────────────────────────────────────────────

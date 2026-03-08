@@ -14,7 +14,9 @@ src/Dolphin/
   Mcp/Server.cs            MCP server host
   Mcp/Tools/RunCheckTool.cs  MCP tool: run_check
   Output/Formatter.cs      Text and JSON output formatting
-  Lsp/LspServer.cs         LSP server: JSON-RPC over stdio, runs `opengrep validate` on .dolphin/*.yaml
+  Lsp/LspServer.cs         LSP server: JSON-RPC over stdio; runs `opengrep validate` on YAML files under .dolphin/
+  Lsp/LspDiagnosticsParser.cs  Parses `opengrep validate` output into LSP diagnostics
+  Lsp/DocumentSymbols.cs   Extracts rule IDs for the document outline (textDocument/documentSymbol)
 
 launcher/
   launcher.js              Downloads/caches the dolphin+opengrep binary from GitHub Releases
@@ -22,6 +24,7 @@ launcher/
 tests/Dolphin.Tests/
   InstallerTests.cs        Tests for binary resolution
   RunnerTests.cs           Integration tests (skipped if no scanner on PATH)
+  LspDiagnosticsParserTests.cs  Unit tests for diagnostic parsing and document symbols
   fixtures/                Sample rules.yaml and bad-file.ts for tests
 
 skills/generate-rules/     Claude Code skill for interactive rule generation

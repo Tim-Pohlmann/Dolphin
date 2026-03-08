@@ -108,7 +108,8 @@ public class McpProtocolTests
         finally
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            try { await proc.WaitForExitAsync(new CancellationTokenSource(5000).Token); } catch { }
+            using var killCts = new CancellationTokenSource(5000);
+            try { await proc.WaitForExitAsync(killCts.Token); } catch { }
         }
     }
 
@@ -142,7 +143,8 @@ public class McpProtocolTests
         finally
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            try { await proc.WaitForExitAsync(new CancellationTokenSource(5000).Token); } catch { }
+            using var killCts = new CancellationTokenSource(5000);
+            try { await proc.WaitForExitAsync(killCts.Token); } catch { }
         }
     }
 }

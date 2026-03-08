@@ -31,6 +31,8 @@ jobs:
             archive_ext: tar.gz
           - rid: linux-arm64
             archive_ext: tar.gz
+          - rid: osx-x64
+            archive_ext: tar.gz
           - rid: osx-arm64
             archive_ext: tar.gz
           - rid: win-x64

@@ -24,10 +24,17 @@ public class McpProtocolTests
         throw new InvalidOperationException("Could not locate src/Dolphin/Dolphin.csproj");
     }
 
+    private static string CurrentConfiguration()
+    {
+        var baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return Path.GetFileName(Path.GetDirectoryName(baseDir)!) is { } c && c.Length > 0 ? c : "Release";
+    }
+
     private static Process StartServer()
     {
         var projectPath = FindDolphinProjectPath();
-        var psi = new ProcessStartInfo("dotnet", $"run --no-build --project \"{projectPath}\" -- serve --stdio")
+        var config = CurrentConfiguration();
+        var psi = new ProcessStartInfo("dotnet", $"run --no-build --configuration {config} --project \"{projectPath}\" -- serve --stdio")
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,

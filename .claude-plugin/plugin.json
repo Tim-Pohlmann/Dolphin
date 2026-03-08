@@ -2,5 +2,22 @@
   "name": "dolphin",
   "version": "0.1.0",
   "description": "Custom static analysis powered by Opengrep. Generate rules with Claude, run them in CI.",
-  "author": { "name": "Tim Pohlmann" }
+  "author": { "name": "Tim Pohlmann" },
+  "lspServers": {
+    "opengrep-rules": {
+      "command": "yaml-language-server",
+      "args": ["--stdio"],
+      "extensionToLanguage": {
+        ".yaml": "yaml",
+        ".yml": "yaml"
+      },
+      "settings": {
+        "yaml": {
+          "schemas": {
+            "https://json.schemastore.org/semgrep.json": ".dolphin/**"
+          }
+        }
+      }
+    }
+  }
 }

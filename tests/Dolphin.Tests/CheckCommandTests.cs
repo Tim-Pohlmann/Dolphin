@@ -47,7 +47,7 @@ public class CheckCommandTests
         var baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var tfm = Path.GetFileName(baseDir);
         var config = Path.GetFileName(Path.GetDirectoryName(baseDir)!);
-        return Path.Combine(projectPath, "bin", config, tfm, "Dolphin.dll");
+        return Path.Combine(projectPath, "bin", config, tfm, "dolphin.dll");
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDolphinAsync(

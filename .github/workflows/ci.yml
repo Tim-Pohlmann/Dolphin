@@ -82,7 +82,7 @@ jobs:
           sudo chmod +x /usr/local/bin/opengrep
 
       - name: Test (launcher)
-        run: node --test --experimental-test-coverage --test-coverage-reporter=lcov --test-coverage-destination=coverage/lcov.info launcher/launcher.test.js
+        run: npx --yes c8 --reporter=lcov --report-dir=coverage node --test launcher/launcher.test.js
 
       - name: Test (.NET)
         run: dotnet test Dolphin.slnx --no-build -c Release --verbosity normal --collect:"XPlat Code Coverage" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover

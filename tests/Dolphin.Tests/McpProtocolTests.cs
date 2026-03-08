@@ -11,23 +11,11 @@ namespace Dolphin.Tests;
 [TestClass]
 public class McpProtocolTests
 {
-    private static string FindDolphinProjectPath()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            var candidate = Path.Combine(dir.FullName, "src", "Dolphin", "Dolphin.csproj");
-            if (File.Exists(candidate))
-                return Path.GetDirectoryName(candidate)!;
-            dir = dir.Parent;
-        }
-        throw new InvalidOperationException("Could not locate src/Dolphin/Dolphin.csproj");
-    }
-
     private static Process StartServer()
     {
-        var projectPath = FindDolphinProjectPath();
-        var psi = new ProcessStartInfo("dotnet", $"run --project \"{projectPath}\" -- serve --stdio")
+        var projectPath = TestProcessHelper.FindDolphinProjectPath();
+        var config = TestProcessHelper.CurrentConfiguration();
+        var psi = new ProcessStartInfo("dotnet", $"run --no-build --configuration {config} --project \"{projectPath}\" -- serve --stdio")
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -101,7 +89,8 @@ public class McpProtocolTests
         finally
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            try { await proc.WaitForExitAsync(new CancellationTokenSource(5000).Token); } catch { }
+            using var killCts = new CancellationTokenSource(5000);
+            try { await proc.WaitForExitAsync(killCts.Token); } catch { }
         }
     }
 
@@ -135,7 +124,8 @@ public class McpProtocolTests
         finally
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            try { await proc.WaitForExitAsync(new CancellationTokenSource(5000).Token); } catch { }
+            using var killCts = new CancellationTokenSource(5000);
+            try { await proc.WaitForExitAsync(killCts.Token); } catch { }
         }
     }
 }

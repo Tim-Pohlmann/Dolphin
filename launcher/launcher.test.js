@@ -272,7 +272,6 @@ test('ensureBinary throws when tar extraction fails', async (t) => {
 
 test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {
   const origPlatform = process.platform;
-  const origArch = process.arch;
   const origExists = fs.existsSync;
   const origMkdir = fs.mkdirSync;
   const origUnlink = fs.unlinkSync;
@@ -282,7 +281,6 @@ test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {
 
   t.after(() => {
     Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
-    Object.defineProperty(process, 'arch', { value: origArch, configurable: true });
     fs.existsSync = origExists;
     fs.mkdirSync = origMkdir;
     fs.unlinkSync = origUnlink;
@@ -292,7 +290,6 @@ test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {
   });
 
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-  Object.defineProperty(process, 'arch', { value: 'x64', configurable: true });
 
   let call = 0;
   fs.existsSync = () => { call++; return call !== 1; /* first=not cached */ };
@@ -313,7 +310,6 @@ test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {
 
 test('ensureBinary throws when PowerShell extraction fails', async (t) => {
   const origPlatform = process.platform;
-  const origArch = process.arch;
   const origExists = fs.existsSync;
   const origMkdir = fs.mkdirSync;
   const origCWS = fs.createWriteStream;
@@ -322,7 +318,6 @@ test('ensureBinary throws when PowerShell extraction fails', async (t) => {
 
   t.after(() => {
     Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
-    Object.defineProperty(process, 'arch', { value: origArch, configurable: true });
     fs.existsSync = origExists;
     fs.mkdirSync = origMkdir;
     fs.createWriteStream = origCWS;
@@ -331,7 +326,6 @@ test('ensureBinary throws when PowerShell extraction fails', async (t) => {
   });
 
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-  Object.defineProperty(process, 'arch', { value: 'x64', configurable: true });
 
   let call = 0;
   fs.existsSync = () => { call++; return false; };

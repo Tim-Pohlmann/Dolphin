@@ -55,10 +55,31 @@ jobs:
       - name: Build
         run: dotnet build Dolphin.slnx --no-restore -c Release
 
+      - name: Get latest opengrep version
+        id: opengrep-version
+        run: |
+          VERSION=$(curl -fsSL --proto '=https' --tlsv1.2 "https://api.github.com/repos/opengrep/opengrep/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+          test -n "$VERSION" || { echo "Failed to determine opengrep version" >&2; exit 1; }
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Cache opengrep
+        id: cache-opengrep
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/opengrep
+          key: opengrep-${{ runner.os }}-${{ steps.opengrep-version.outputs.version }}
+
+      - name: Download opengrep
+        if: steps.cache-opengrep.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.cache/opengrep
+          VERSION="${{ steps.opengrep-version.outputs.version }}"
+          curl -fsSL --proto '=https' --tlsv1.2 "https://github.com/opengrep/opengrep/releases/download/${VERSION}/opengrep_manylinux_x86" -o ~/.cache/opengrep/opengrep
+
       - name: Install opengrep
         run: |
-          curl -fsSL https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_x86 -o /usr/local/bin/opengrep
-          chmod +x /usr/local/bin/opengrep
+          sudo cp ~/.cache/opengrep/opengrep /usr/local/bin/opengrep
+          sudo chmod +x /usr/local/bin/opengrep
 
       - name: Test (launcher)
         run: npx --yes c8@10 --reporter=lcov --report-dir=coverage node --test launcher/launcher.test.js

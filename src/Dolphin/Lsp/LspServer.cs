@@ -53,7 +53,10 @@ public static class LspServer
                 using var doc = JsonDocument.Parse(body);
                 await HandleMessageAsync(doc.RootElement, stdout);
             }
-            catch { /* never crash the LSP server process */ }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"[dolphin-lsp] failed to parse message: {ex.Message}");
+            }
         }
     }
 
@@ -67,70 +70,90 @@ public static class LspServer
         msg.TryGetProperty("id", out var id);
         msg.TryGetProperty("params", out var p);
 
-        switch (method)
+        try
         {
-            case "initialize":
+            switch (method)
+            {
+                case "initialize":
+                    await SendAsync(stdout, w =>
+                    {
+                        w.WriteStartObject();
+                        w.WriteString("jsonrpc", "2.0");
+                        WriteId(w, id);
+                        w.WritePropertyName("result");
+                        w.WriteStartObject();
+                        w.WritePropertyName("capabilities");
+                        w.WriteStartObject();
+                        w.WriteNumber("textDocumentSync", 1); // full sync
+                        w.WriteEndObject();
+                        w.WriteEndObject();
+                        w.WriteEndObject();
+                    });
+                    break;
+
+                case "textDocument/didOpen":
+                {
+                    var td = p.GetProperty("textDocument");
+                    var uri = td.GetProperty("uri").GetString() ?? "";
+                    var text = td.GetProperty("text").GetString() ?? "";
+                    if (IsDolphinRulesFile(uri))
+                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                    break;
+                }
+
+                case "textDocument/didChange":
+                {
+                    var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
+                    var changes = p.GetProperty("contentChanges");
+                    if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
+                        _ = ValidateAndPublishAsync(stdout, uri,
+                            changes[0].GetProperty("text").GetString() ?? "",
+                            CancelPrevious(uri));
+                    break;
+                }
+
+                case "textDocument/didClose":
+                {
+                    var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
+                    CancelAndRemove(uri);
+                    await PublishDiagnosticsAsync(stdout, uri, []);
+                    break;
+                }
+
+                case "shutdown":
+                    _shutdownReceived = true;
+                    await SendAsync(stdout, w =>
+                    {
+                        w.WriteStartObject();
+                        w.WriteString("jsonrpc", "2.0");
+                        WriteId(w, id);
+                        w.WriteNull("result");
+                        w.WriteEndObject();
+                    });
+                    break;
+
+                case "exit":
+                    // LSP spec: exit 0 if preceded by shutdown, 1 otherwise.
+                    Environment.Exit(_shutdownReceived ? 0 : 1);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] error handling '{method}': {ex.Message}");
+            if (id.ValueKind != JsonValueKind.Undefined)
                 await SendAsync(stdout, w =>
                 {
                     w.WriteStartObject();
                     w.WriteString("jsonrpc", "2.0");
                     WriteId(w, id);
-                    w.WritePropertyName("result");
+                    w.WritePropertyName("error");
                     w.WriteStartObject();
-                    w.WritePropertyName("capabilities");
-                    w.WriteStartObject();
-                    w.WriteNumber("textDocumentSync", 1); // full sync
-                    w.WriteEndObject();
+                    w.WriteNumber("code", -32603); // InternalError
+                    w.WriteString("message", ex.Message);
                     w.WriteEndObject();
                     w.WriteEndObject();
                 });
-                break;
-
-            case "textDocument/didOpen":
-            {
-                var td = p.GetProperty("textDocument");
-                var uri = td.GetProperty("uri").GetString() ?? "";
-                var text = td.GetProperty("text").GetString() ?? "";
-                if (IsDolphinRulesFile(uri))
-                    _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
-                break;
-            }
-
-            case "textDocument/didChange":
-            {
-                var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
-                var changes = p.GetProperty("contentChanges");
-                if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
-                    _ = ValidateAndPublishAsync(stdout, uri,
-                        changes[0].GetProperty("text").GetString() ?? "",
-                        CancelPrevious(uri));
-                break;
-            }
-
-            case "textDocument/didClose":
-            {
-                var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
-                CancelAndRemove(uri);
-                await PublishDiagnosticsAsync(stdout, uri, []);
-                break;
-            }
-
-            case "shutdown":
-                _shutdownReceived = true;
-                await SendAsync(stdout, w =>
-                {
-                    w.WriteStartObject();
-                    w.WriteString("jsonrpc", "2.0");
-                    WriteId(w, id);
-                    w.WriteNull("result");
-                    w.WriteEndObject();
-                });
-                break;
-
-            case "exit":
-                // LSP spec: exit 0 if preceded by shutdown, 1 otherwise.
-                Environment.Exit(_shutdownReceived ? 0 : 1);
-                break;
         }
     }
 
@@ -304,7 +327,7 @@ public static class LspServer
     {
         w.WriteStartObject();
         w.WriteNumber("line", pos.Line);
-        w.WriteNumber("character", pos.Character == int.MaxValue ? 9999 : pos.Character);
+        w.WriteNumber("character", pos.Character);
         w.WriteEndObject();
     }
 }

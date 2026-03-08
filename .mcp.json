@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "dolphin": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/bin/dolphin",
-      "args": ["serve", "--stdio"]
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/launcher/launcher.js", "serve", "--stdio"]
     }
   }
 }

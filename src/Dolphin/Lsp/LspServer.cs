@@ -18,12 +18,14 @@ public static class LspServer
 {
     private static string? _opengrepBinary;
 
+    // Guards concurrent writes to stdout (validation runs off the message loop).
+    private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
+
     public static async Task RunAsync()
     {
-        // Resolve the opengrep binary up-front, but don't fail if it isn't
-        // ready yet — we'll skip validation silently until it is.
+        // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-        catch { /* will remain null; diagnostics skipped */ }
+        catch { /* will retry lazily */ }
 
         var reader = new LspReader(Console.OpenStandardInput());
         var stdout = Console.OpenStandardOutput();
@@ -33,10 +35,13 @@ public static class LspServer
             var header = await reader.ReadHeaderAsync();
             if (header is null) break; // stdin closed
 
-            var clMatch = Regex.Match(header, @"Content-Length:\s*(\d+)");
-            if (!clMatch.Success) continue;
+            // Case-insensitive per the LSP spec (HTTP-style headers).
+            var clMatch = Regex.Match(header, @"Content-Length:\s*(\d+)",
+                RegexOptions.IgnoreCase);
+            if (!clMatch.Success || !int.TryParse(clMatch.Groups[1].Value, out var length))
+                continue;
 
-            var body = await reader.ReadBodyAsync(int.Parse(clMatch.Groups[1].Value));
+            var body = await reader.ReadBodyAsync(length);
 
             try
             {
@@ -81,7 +86,8 @@ public static class LspServer
                 var td = p.GetProperty("textDocument");
                 var uri = td.GetProperty("uri").GetString() ?? "";
                 var text = td.GetProperty("text").GetString() ?? "";
-                await ValidateAndPublishAsync(stdout, uri, text);
+                // Fire-and-forget so the message loop stays responsive.
+                _ = ValidateAndPublishAsync(stdout, uri, text);
                 break;
             }
 
@@ -90,7 +96,7 @@ public static class LspServer
                 var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                 var changes = p.GetProperty("contentChanges");
                 if (changes.GetArrayLength() > 0)
-                    await ValidateAndPublishAsync(stdout, uri,
+                    _ = ValidateAndPublishAsync(stdout, uri,
                         changes[0].GetProperty("text").GetString() ?? "");
                 break;
             }
@@ -124,14 +130,22 @@ public static class LspServer
 
     private static async Task ValidateAndPublishAsync(Stream stdout, string uri, string text)
     {
-        if (!IsDolphinRulesFile(uri))
-            return; // not a Dolphin rules file — ignore, don't touch other servers' diagnostics
+        try
+        {
+            if (!IsDolphinRulesFile(uri))
+                return; // not a Dolphin rules file — ignore
 
-        if (_opengrepBinary is null)
-            return; // binary not ready; skip silently
+            // Lazy retry: attempt resolution if startup failed.
+            if (_opengrepBinary is null)
+            {
+                try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
+                catch { return; }
+            }
 
-        var diagnostics = await RunValidateAsync(text);
-        await PublishDiagnosticsAsync(stdout, uri, diagnostics);
+            var diagnostics = await RunValidateAsync(text);
+            await PublishDiagnosticsAsync(stdout, uri, diagnostics);
+        }
+        catch { /* swallow — must not propagate from fire-and-forget */ }
     }
 
     private static async Task<LspDiagnostic[]> RunValidateAsync(string text)
@@ -171,25 +185,26 @@ public static class LspServer
     }
 
     /// <summary>
-    /// Parses `opengrep validate` output (inherited from Semgrep) into LSP diagnostics.
+    /// Parses `opengrep validate` output into LSP diagnostics.
     ///
     /// Opengrep emits errors like:
     ///   Invalid rule 'no-console-log': missing required field 'message'
-    ///     --> /tmp/dolphin-lsp-1234.yaml:8:5
+    ///     --> /path/to/file with spaces.yaml:8:5
     /// </summary>
     private static LspDiagnostic[] ParseDiagnostics(string output)
     {
         var diagnostics = new List<LspDiagnostic>();
         var lines = output.Split('\n');
 
-        for (int i = 0; i < lines.Length; i++)
+        foreach (var raw in lines)
         {
-            var raw = lines[i];
             var trimmed = raw.Trim();
             if (trimmed.Length == 0) continue;
 
-            // Location pointer: "  --> /path/to/file:LINE:COL"
-            var locMatch = Regex.Match(raw, @"-->\s+\S+:(\d+)(?::(\d+))?");
+            // Location pointer: "  --> /any/path (spaces ok):LINE:COL"
+            // Anchor to end-of-line so we grab the last :number:number regardless
+            // of spaces or colons in the file path.
+            var locMatch = Regex.Match(raw, @"-->.+:(\d+)(?::(\d+))?\s*$");
             if (locMatch.Success)
             {
                 var lineNum = Math.Max(0, int.Parse(locMatch.Groups[1].Value) - 1);
@@ -197,11 +212,10 @@ public static class LspServer
                     ? Math.Max(0, int.Parse(locMatch.Groups[2].Value) - 1)
                     : 0;
 
-                // Update the preceding pending diagnostic with the precise location
+                // Attach the precise location to the preceding pending diagnostic.
                 if (diagnostics.Count > 0 && diagnostics[^1].Pending)
                 {
-                    var d = diagnostics[^1];
-                    diagnostics[^1] = d with
+                    diagnostics[^1] = diagnostics[^1] with
                     {
                         Range = new LspRange(
                             new LspPosition(lineNum, colNum),
@@ -225,12 +239,12 @@ public static class LspServer
             }
         }
 
-        // Finalise any diagnostics that never got a location (leave at line 0)
+        // Finalise any diagnostics that never got a location (leave at line 0).
         for (int i = 0; i < diagnostics.Count; i++)
             if (diagnostics[i].Pending)
                 diagnostics[i] = diagnostics[i] with { Pending = false };
 
-        // Fallback: non-zero exit but no recognisable error lines
+        // Fallback: non-zero exit but no recognisable error lines.
         if (diagnostics.Count == 0 && output.Trim().Length > 0)
         {
             diagnostics.Add(new LspDiagnostic(
@@ -253,9 +267,19 @@ public static class LspServer
             write(w);
 
         var header = $"Content-Length: {buf.WrittenCount}\r\n\r\n";
-        await stdout.WriteAsync(Encoding.ASCII.GetBytes(header));
-        await stdout.WriteAsync(buf.WrittenMemory);
-        await stdout.FlushAsync();
+        var headerBytes = Encoding.ASCII.GetBytes(header);
+
+        await _stdoutLock.WaitAsync();
+        try
+        {
+            await stdout.WriteAsync(headerBytes);
+            await stdout.WriteAsync(buf.WrittenMemory);
+            await stdout.FlushAsync();
+        }
+        finally
+        {
+            _stdoutLock.Release();
+        }
     }
 
     private static void WriteId(Utf8JsonWriter w, JsonElement id)
@@ -370,7 +394,7 @@ internal sealed class LspReader(Stream stream)
         var body = new byte[length];
         int offset = 0;
 
-        // Drain what's already in our internal buffer first
+        // Drain what's already in our internal buffer first.
         int fromBuf = Math.Min(length, _end - _start);
         if (fromBuf > 0)
         {
@@ -379,7 +403,7 @@ internal sealed class LspReader(Stream stream)
             offset += fromBuf;
         }
 
-        // Read the remainder directly from the stream
+        // Read the remainder directly from the stream.
         while (offset < length)
         {
             var read = await stream.ReadAsync(body.AsMemory(offset, length - offset));

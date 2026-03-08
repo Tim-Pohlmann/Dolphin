@@ -51,7 +51,7 @@ jobs:
       - name: Get latest opengrep version
         id: opengrep-version
         run: |
-          VERSION=$(curl -fsSL "https://api.github.com/repos/opengrep/opengrep/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+          VERSION=$(curl -fsSL --proto '=https' --tlsv1.2 "https://api.github.com/repos/opengrep/opengrep/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Cache opengrep
@@ -66,7 +66,7 @@ jobs:
         run: |
           mkdir -p ~/.cache/opengrep
           VERSION="${{ steps.opengrep-version.outputs.version }}"
-          curl -fsSL "https://github.com/opengrep/opengrep/releases/download/${VERSION}/opengrep_manylinux_x86" -o ~/.cache/opengrep/opengrep
+          curl -fsSL --proto '=https' --tlsv1.2 "https://github.com/opengrep/opengrep/releases/download/${VERSION}/opengrep_manylinux_x86" -o ~/.cache/opengrep/opengrep
 
       - name: Install opengrep
         run: |

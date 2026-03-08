@@ -14,10 +14,10 @@ src/Dolphin/
   Mcp/Server.cs            MCP server host
   Mcp/Tools/RunCheckTool.cs  MCP tool: run_check
   Output/Formatter.cs      Text and JSON output formatting
+  Lsp/LspServer.cs         LSP server: JSON-RPC over stdio, runs `opengrep validate` on .dolphin/*.yaml
 
 launcher/
   launcher.js              Downloads/caches the dolphin+opengrep binary from GitHub Releases
-  lsp.js                   LSP server: runs `opengrep validate` on .dolphin/*.yaml, publishes diagnostics
 
 tests/Dolphin.Tests/
   InstallerTests.cs        Tests for binary resolution
@@ -56,3 +56,4 @@ dotnet publish src/Dolphin -r win-x64   -c Release -o bin/
 - **Exit codes**: `0` = no ERROR findings, `1` = at least one ERROR finding, `2` = fatal error.
 - **Trimmed publish**: `PublishTrimmed=true` — use source-generated JSON (`[JsonSerializable]`) and avoid reflection-based serialization.
 - **MCP server**: `dolphin serve --stdio` — no args other than that exact pair; matched by pattern in `Program.cs`.
+- **LSP server**: `dolphin lsp` — matched by pattern in `Program.cs`; called by Claude Code via `launcher.js lsp`.

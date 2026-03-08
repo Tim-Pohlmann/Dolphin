@@ -6,7 +6,7 @@
   "lspServers": {
     "opengrep-rules": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/launcher/lsp.js"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/launcher/launcher.js", "lsp"],
       "extensionToLanguage": {
         ".yaml": "yaml",
         ".yml": "yaml"

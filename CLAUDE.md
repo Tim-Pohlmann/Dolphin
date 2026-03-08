@@ -38,15 +38,17 @@ dotnet build
 
 # Test
 dotnet test
+node --test launcher/launcher.test.js
 
 # Run CLI against this repo
 dotnet run --project src/Dolphin -- check --cwd .
 dotnet run --project src/Dolphin -- check --cwd . --format json
 
 # Publish self-contained binaries
-dotnet publish src/Dolphin -r linux-x64 -c Release -o bin/
-dotnet publish src/Dolphin -r osx-arm64 -c Release -o bin/
-dotnet publish src/Dolphin -r win-x64   -c Release -o bin/
+dotnet publish src/Dolphin -r linux-x64   -c Release -o bin/
+dotnet publish src/Dolphin -r linux-arm64 -c Release -o bin/
+dotnet publish src/Dolphin -r osx-arm64   -c Release -o bin/
+dotnet publish src/Dolphin -r win-x64     -c Release -o bin/
 ```
 
 ## Key conventions

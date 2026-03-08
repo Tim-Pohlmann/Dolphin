@@ -5,21 +5,21 @@
 set -euo pipefail
 
 # Only run in remote (cloud) sessions
-if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
+if [[ "${CLAUDE_CODE_REMOTE:-}" != "true" ]]; then
   exit 0
 fi
 
 OUTPUT_FILE="${CLAUDE_PROJECT_DIR:-.}/.sonarqube-pr-results.md"
 
 # Check required env vars
-if [ -z "${SONARQUBE_URL:-}" ] || [ -z "${SONARQUBE_TOKEN:-}" ] || [ -z "${SONARQUBE_PROJECT_KEY:-}" ]; then
+if [[ -z "${SONARQUBE_URL:-}" ]] || [[ -z "${SONARQUBE_TOKEN:-}" ]] || [[ -z "${SONARQUBE_PROJECT_KEY:-}" ]]; then
   echo "[sonarqube-hook] SONARQUBE_URL, SONARQUBE_TOKEN, or SONARQUBE_PROJECT_KEY not set — skipping." >&2
   exit 0
 fi
 
 # Find the PR number for the current branch
 PR_NUMBER=$(gh pr view --json number --jq '.number' 2>/dev/null || true)
-if [ -z "$PR_NUMBER" ]; then
+if [[ -z "$PR_NUMBER" ]]; then
   echo "[sonarqube-hook] No open PR found for current branch — skipping." >&2
   rm -f "$OUTPUT_FILE"
   exit 0
@@ -48,9 +48,9 @@ TOTAL=$(echo "$ISSUES_JSON" | jq -r '.total // 0')
   echo ""
 
   # Quality gate badge
-  if [ "$QG_STATUS" = "OK" ]; then
+  if [[ "$QG_STATUS" = "OK" ]]; then
     echo "**Quality Gate: PASSED**"
-  elif [ "$QG_STATUS" = "ERROR" ]; then
+  elif [[ "$QG_STATUS" = "ERROR" ]]; then
     echo "**Quality Gate: FAILED**"
   else
     echo "**Quality Gate: ${QG_STATUS}**"
@@ -66,7 +66,7 @@ TOTAL=$(echo "$ISSUES_JSON" | jq -r '.total // 0')
     | "- \(.metricKey): \(.status) (actual: \(.actualValue // "n/a"), threshold: \(.errorThreshold // "n/a"))"
   ' 2>/dev/null || true)
 
-  if [ -n "$CONDITIONS" ]; then
+  if [[ -n "$CONDITIONS" ]]; then
     echo "## Quality Gate Conditions"
     echo ""
     echo "$CONDITIONS"
@@ -74,7 +74,7 @@ TOTAL=$(echo "$ISSUES_JSON" | jq -r '.total // 0')
   fi
 
   # Issues list
-  if [ "$TOTAL" -gt 0 ]; then
+  if [[ "$TOTAL" -gt 0 ]]; then
     echo "## Issues"
     echo ""
     echo "$ISSUES_JSON" | jq -r '

@@ -26,6 +26,9 @@ src/Dolphin/obj/semgrep-*
 *.user
 *.suo
 
+# Test coverage reports
+coverage/
+
 # OS
 .DS_Store
 Thumbs.db

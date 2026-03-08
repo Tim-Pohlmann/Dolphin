@@ -269,3 +269,70 @@ test('ensureBinary throws when tar extraction fails', async (t) => {
 
   await assert.rejects(ensureBinary(), /Failed to extract archive with tar/);
 });
+
+test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {
+  const origPlatform = process.platform;
+  const origExists = fs.existsSync;
+  const origMkdir = fs.mkdirSync;
+  const origUnlink = fs.unlinkSync;
+  const origCWS = fs.createWriteStream;
+  const origGet = https.get;
+  const origSpawn = childProcess.spawnSync;
+
+  t.after(() => {
+    Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
+    fs.existsSync = origExists;
+    fs.mkdirSync = origMkdir;
+    fs.unlinkSync = origUnlink;
+    fs.createWriteStream = origCWS;
+    https.get = origGet;
+    childProcess.spawnSync = origSpawn;
+  });
+
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+  let call = 0;
+  fs.existsSync = () => { call++; return call !== 1; /* first=not cached */ };
+  fs.mkdirSync = () => {};
+  fs.unlinkSync = () => {};
+  fs.createWriteStream = () => makeSinkStream();
+  https.get = (url, opts, cb) => { cb(makeResponse(200, 'archive')); return { on: () => {} }; };
+
+  let capturedArgs;
+  childProcess.spawnSync = (...args) => { capturedArgs = args; return { status: 0 }; };
+
+  const result = await ensureBinary();
+  assert.ok(result.endsWith('dolphin.exe'), `Expected .exe, got: ${result}`);
+  assert.ok(capturedArgs[0].toLowerCase().includes('powershell'), 'should invoke PowerShell');
+  assert.ok(capturedArgs[1].includes('-Command'), 'should pass -Command');
+  assert.ok(capturedArgs[1].some(a => a.includes('Expand-Archive')), 'should call Expand-Archive');
+});
+
+test('ensureBinary throws when PowerShell extraction fails', async (t) => {
+  const origPlatform = process.platform;
+  const origExists = fs.existsSync;
+  const origMkdir = fs.mkdirSync;
+  const origCWS = fs.createWriteStream;
+  const origGet = https.get;
+  const origSpawn = childProcess.spawnSync;
+
+  t.after(() => {
+    Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
+    fs.existsSync = origExists;
+    fs.mkdirSync = origMkdir;
+    fs.createWriteStream = origCWS;
+    https.get = origGet;
+    childProcess.spawnSync = origSpawn;
+  });
+
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+  let call = 0;
+  fs.existsSync = () => { call++; return false; };
+  fs.mkdirSync = () => {};
+  fs.createWriteStream = () => makeSinkStream();
+  https.get = (url, opts, cb) => { cb(makeResponse(200, 'archive')); return { on: () => {} }; };
+  childProcess.spawnSync = () => ({ status: 1 });
+
+  await assert.rejects(ensureBinary(), /Failed to extract archive with PowerShell/);
+});

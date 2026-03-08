@@ -4,7 +4,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { spawnSync, execSync } = require('child_process');
+const { spawnSync } = require('child_process');
 
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.join(__dirname, '..');
 const GITHUB_REPO = 'Tim-Pohlmann/Dolphin';
@@ -67,9 +67,11 @@ async function ensureBinary() {
   await download(url, archivePath);
 
   if (ext === 'tar.gz') {
-    execSync(`tar -xzf "${archivePath}" -C "${cacheDir}"`);
+    spawnSync('tar', ['-xzf', archivePath, '-C', cacheDir], { stdio: 'inherit' });
   } else {
-    execSync(`powershell -Command "Expand-Archive -Path '${archivePath}' -DestinationPath '${cacheDir}' -Force"`);
+    spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      'Expand-Archive', '-Path', archivePath, '-DestinationPath', cacheDir, '-Force'],
+      { stdio: 'inherit' });
   }
 
   fs.unlinkSync(archivePath);

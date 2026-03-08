@@ -190,6 +190,7 @@ test('ensureBinary downloads and extracts tar.gz when binary is missing', async 
   const origCWS = fs.createWriteStream;
   const origGet = https.get;
   const origSpawn = childProcess.spawnSync;
+  const origRename = fs.renameSync;
 
   t.after(() => {
     fs.existsSync = origExists;
@@ -199,25 +200,27 @@ test('ensureBinary downloads and extracts tar.gz when binary is missing', async 
     fs.createWriteStream = origCWS;
     https.get = origGet;
     childProcess.spawnSync = origSpawn;
+    fs.renameSync = origRename;
   });
 
   // existsSync call order in ensureBinary (linux/x64 path):
-  //   1. binaryPath     → false  (not cached, trigger download)
-  //   2. /usr/bin/tar   → true   (select tar binary)
-  //   3. cacheDir/dolphin  → true  (so chmodSync is called)
-  //   4. cacheDir/opengrep → true  (so chmodSync is called)
+  //   1. binaryPath       → false  (not cached, trigger download)
+  //   2. /usr/bin/tar     → true   (select tar binary)
+  //   3. tmpDir/dolphin   → true   (so chmodSync is called)
+  //   4. tmpDir/opengrep  → true   (so chmodSync is called)
   let call = 0;
   fs.existsSync = (p) => {
     call++;
     if (call === 1) return false;
     if (p === '/usr/bin/tar') return true;
     if (p === '/bin/tar') return false;
-    return true; // chmod targets
+    return true; // chmod targets + binaryPath after rename
   };
 
   fs.mkdirSync = () => {};
   fs.unlinkSync = () => {};
   fs.chmodSync = () => {};
+  fs.renameSync = () => {};
   fs.createWriteStream = () => makeSinkStream();
 
   https.get = (url, opts, cb) => {
@@ -278,6 +281,7 @@ test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {
   const origCWS = fs.createWriteStream;
   const origGet = https.get;
   const origSpawn = childProcess.spawnSync;
+  const origRename = fs.renameSync;
 
   t.after(() => {
     Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
@@ -287,6 +291,7 @@ test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {
     fs.createWriteStream = origCWS;
     https.get = origGet;
     childProcess.spawnSync = origSpawn;
+    fs.renameSync = origRename;
   });
 
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
@@ -295,6 +300,7 @@ test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {
   fs.existsSync = () => { call++; return call !== 1; /* first=not cached */ };
   fs.mkdirSync = () => {};
   fs.unlinkSync = () => {};
+  fs.renameSync = () => {};
   fs.createWriteStream = () => makeSinkStream();
   https.get = (url, opts, cb) => { cb(makeResponse(200, 'archive')); return { on: () => {} }; };
 
@@ -337,7 +343,7 @@ test('ensureBinary throws when PowerShell extraction fails', async (t) => {
   await assert.rejects(ensureBinary(), /Failed to extract archive with PowerShell/);
 });
 
-test('ensureBinary cleans up cacheDir when download fails', async (t) => {
+test('ensureBinary cleans up tmpDir when download fails', async (t) => {
   const origExists = fs.existsSync;
   const origMkdir = fs.mkdirSync;
   const origRmSync = fs.rmSync;
@@ -373,5 +379,58 @@ test('ensureBinary cleans up cacheDir when download fails', async (t) => {
   };
 
   await assert.rejects(ensureBinary(), /HTTP 500/);
-  assert.ok(rmCalled, 'cacheDir should be cleaned up after download failure');
+  assert.ok(rmCalled, 'tmpDir should be cleaned up after download failure');
+});
+
+test('ensureBinary handles concurrent download (rename fails, binary already present)', async (t) => {
+  const origExists = fs.existsSync;
+  const origMkdir = fs.mkdirSync;
+  const origUnlink = fs.unlinkSync;
+  const origChmod = fs.chmodSync;
+  const origCWS = fs.createWriteStream;
+  const origGet = https.get;
+  const origSpawn = childProcess.spawnSync;
+  const origRename = fs.renameSync;
+  const origRmSync = fs.rmSync;
+
+  t.after(() => {
+    fs.existsSync = origExists;
+    fs.mkdirSync = origMkdir;
+    fs.unlinkSync = origUnlink;
+    fs.chmodSync = origChmod;
+    fs.createWriteStream = origCWS;
+    https.get = origGet;
+    childProcess.spawnSync = origSpawn;
+    fs.renameSync = origRename;
+    fs.rmSync = origRmSync;
+  });
+
+  // First existsSync (binaryPath) → false so we start downloading.
+  // After rename fails, existsSync is called again for binaryPath → true
+  // (simulating that a concurrent process placed the binary).
+  let existsCall = 0;
+  fs.existsSync = (p) => {
+    existsCall++;
+    if (existsCall === 1) return false; // binaryPath not yet cached
+    if (p === '/usr/bin/tar') return true;
+    if (p === '/bin/tar') return false;
+    return true; // chmod targets + binaryPath re-check after rename failure
+  };
+
+  fs.mkdirSync = () => {};
+  fs.unlinkSync = () => {};
+  fs.chmodSync = () => {};
+  fs.createWriteStream = () => makeSinkStream();
+  https.get = (url, opts, cb) => { cb(makeResponse(200, 'archive')); return { on: () => {} }; };
+  childProcess.spawnSync = () => ({ status: 0 });
+
+  // Simulate concurrent winner: rename fails because cacheDir already exists.
+  fs.renameSync = () => { const err = new Error('EEXIST: file already exists'); err.code = 'EEXIST'; throw err; };
+
+  let rmCalled = false;
+  fs.rmSync = (p, opts) => { rmCalled = true; };
+
+  const result = await ensureBinary();
+  assert.ok(result.endsWith('dolphin') || result.endsWith('dolphin.exe'));
+  assert.ok(rmCalled, 'tmpDir should be cleaned up after rename failure');
 });

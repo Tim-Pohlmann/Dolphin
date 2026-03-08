@@ -58,20 +58,22 @@ async function ensureBinary() {
 
   if (fs.existsSync(binaryPath)) return binaryPath;
 
-  fs.mkdirSync(cacheDir, { recursive: true });
+  // Use a per-process temp dir so concurrent launchers don't collide.
+  const tmpDir = `${cacheDir}.tmp.${process.pid}`;
+  fs.mkdirSync(tmpDir, { recursive: true });
 
   const archiveName = `dolphin-${version}-${rid}.${ext}`;
   const url = `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${archiveName}`;
-  const archivePath = path.join(cacheDir, archiveName);
+  const tmpArchivePath = path.join(tmpDir, archiveName);
 
   process.stderr.write(`[dolphin] Downloading ${archiveName} from GitHub Releases...\n`);
 
   try {
-    await download(url, archivePath);
+    await download(url, tmpArchivePath);
 
     if (ext === 'tar.gz') {
       const tar = fs.existsSync('/usr/bin/tar') ? '/usr/bin/tar' : '/bin/tar';
-      const result = childProcess.spawnSync(tar, ['-xzf', archivePath, '-C', cacheDir], { stdio: 'inherit' });
+      const result = childProcess.spawnSync(tar, ['-xzf', tmpArchivePath, '-C', tmpDir], { stdio: 'inherit' });
       if (result.error || result.status !== 0) {
         throw new Error(`[dolphin] Failed to extract archive with tar (exit code ${result.status ?? 'unknown'}).`);
       }
@@ -79,24 +81,38 @@ async function ensureBinary() {
       const ps = path.join(process.env.SystemRoot || 'C:\\Windows',
         'System32\\WindowsPowerShell\\v1.0\\powershell.exe');
       const q = (p) => `'${p.replace(/'/g, "''")}'`;
-      const cmd = `Expand-Archive -LiteralPath ${q(archivePath)} -DestinationPath ${q(cacheDir)} -Force`;
+      const cmd = `Expand-Archive -LiteralPath ${q(tmpArchivePath)} -DestinationPath ${q(tmpDir)} -Force`;
       const result = childProcess.spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { stdio: 'inherit' });
       if (result.error || result.status !== 0) {
         throw new Error(`[dolphin] Failed to extract archive with PowerShell (exit code ${result.status ?? 'unknown'}).`);
       }
     }
-  } catch (err) {
-    try { fs.rmSync(cacheDir, { recursive: true, force: true }); } catch {}
-    throw err;
-  }
 
-  fs.unlinkSync(archivePath);
-
-  if (!isWindows) {
-    for (const name of ['dolphin', 'opengrep']) {
-      const p = path.join(cacheDir, name);
-      if (fs.existsSync(p)) fs.chmodSync(p, 0o750);
+    if (!isWindows) {
+      for (const name of ['dolphin', 'opengrep']) {
+        const p = path.join(tmpDir, name);
+        if (fs.existsSync(p)) fs.chmodSync(p, 0o750);
+      }
     }
+
+    // Atomically promote tmpDir to cacheDir. If another process already
+    // completed the download concurrently, use its result instead.
+    try {
+      fs.renameSync(tmpDir, cacheDir);
+    } catch (renameErr) {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      if (!fs.existsSync(binaryPath)) {
+        throw new Error(`[dolphin] Failed to install binary: ${renameErr.message}`);
+      }
+      // Another process completed first; use its result.
+      return binaryPath;
+    }
+
+    // Archive was moved into cacheDir by the rename; remove it now.
+    try { fs.unlinkSync(path.join(cacheDir, archiveName)); } catch {}
+  } catch (err) {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    throw err;
   }
 
   return binaryPath;

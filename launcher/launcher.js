@@ -67,21 +67,26 @@ async function ensureBinary() {
   process.stderr.write(`[dolphin] Downloading ${archiveName} from GitHub Releases...\n`);
   await download(url, archivePath);
 
-  if (ext === 'tar.gz') {
-    const tar = fs.existsSync('/usr/bin/tar') ? '/usr/bin/tar' : '/bin/tar';
-    const result = childProcess.spawnSync(tar, ['-xzf', archivePath, '-C', cacheDir], { stdio: 'inherit' });
-    if (result.error || result.status !== 0) {
-      throw new Error(`[dolphin] Failed to extract archive with tar (exit code ${result.status ?? 'unknown'}).`);
+  try {
+    if (ext === 'tar.gz') {
+      const tar = fs.existsSync('/usr/bin/tar') ? '/usr/bin/tar' : '/bin/tar';
+      const result = childProcess.spawnSync(tar, ['-xzf', archivePath, '-C', cacheDir], { stdio: 'inherit' });
+      if (result.error || result.status !== 0) {
+        throw new Error(`[dolphin] Failed to extract archive with tar (exit code ${result.status ?? 'unknown'}).`);
+      }
+    } else {
+      const ps = path.join(process.env.SystemRoot || 'C:\\Windows',
+        'System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+      const q = (p) => `'${p.replace(/'/g, "''")}'`;
+      const cmd = `Expand-Archive -LiteralPath ${q(archivePath)} -DestinationPath ${q(cacheDir)} -Force`;
+      const result = childProcess.spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { stdio: 'inherit' });
+      if (result.error || result.status !== 0) {
+        throw new Error(`[dolphin] Failed to extract archive with PowerShell (exit code ${result.status ?? 'unknown'}).`);
+      }
     }
-  } else {
-    const ps = path.join(process.env.SystemRoot || 'C:\\Windows',
-      'System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-    const q = (p) => `'${p.replace(/'/g, "''")}'`;
-    const cmd = `Expand-Archive -LiteralPath ${q(archivePath)} -DestinationPath ${q(cacheDir)} -Force`;
-    const result = childProcess.spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { stdio: 'inherit' });
-    if (result.error || result.status !== 0) {
-      throw new Error(`[dolphin] Failed to extract archive with PowerShell (exit code ${result.status ?? 'unknown'}).`);
-    }
+  } catch (err) {
+    try { fs.rmSync(cacheDir, { recursive: true, force: true }); } catch {}
+    throw err;
   }
 
   fs.unlinkSync(archivePath);
@@ -99,7 +104,13 @@ async function ensureBinary() {
 if (require.main === module) {
   ensureBinary().then(binaryPath => {
     const result = childProcess.spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
-    process.exit(result.status ?? 1);
+    if (typeof result.status === 'number') {
+      process.exit(result.status);
+    } else if (result.signal) {
+      process.kill(process.pid, result.signal);
+    } else {
+      process.exit(1);
+    }
   }).catch(err => {
     process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
     process.exit(2);

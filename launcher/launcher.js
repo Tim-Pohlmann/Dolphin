@@ -58,11 +58,15 @@ async function ensureBinary() {
 
   if (fs.existsSync(binaryPath)) return binaryPath;
 
-  fs.mkdirSync(cacheDir, { recursive: true });
-
+  // Use a per-process temp directory so concurrent processes (e.g. parallel CI
+  // jobs sharing the same workspace) each write to their own location and never
+  // corrupt each other's download or extraction.
+  const tmpDir = `${cacheDir}.tmp.${process.pid}`;
   const archiveName = `dolphin-${version}-${rid}.${ext}`;
   const url = `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${archiveName}`;
-  const archivePath = path.join(cacheDir, archiveName);
+  const archivePath = path.join(tmpDir, archiveName);
+
+  fs.mkdirSync(tmpDir, { recursive: true });
 
   process.stderr.write(`[dolphin] Downloading ${archiveName} from GitHub Releases...\n`);
 
@@ -71,7 +75,7 @@ async function ensureBinary() {
 
     if (ext === 'tar.gz') {
       const tar = fs.existsSync('/usr/bin/tar') ? '/usr/bin/tar' : '/bin/tar';
-      const result = childProcess.spawnSync(tar, ['-xzf', archivePath, '-C', cacheDir], { stdio: 'inherit' });
+      const result = childProcess.spawnSync(tar, ['-xzf', archivePath, '-C', tmpDir], { stdio: 'inherit' });
       if (result.error || result.status !== 0) {
         throw new Error(`[dolphin] Failed to extract archive with tar (exit code ${result.status ?? 'unknown'}).`);
       }
@@ -79,24 +83,38 @@ async function ensureBinary() {
       const ps = path.join(process.env.SystemRoot || 'C:\\Windows',
         'System32\\WindowsPowerShell\\v1.0\\powershell.exe');
       const q = (p) => `'${p.replace(/'/g, "''")}'`;
-      const cmd = `Expand-Archive -LiteralPath ${q(archivePath)} -DestinationPath ${q(cacheDir)} -Force`;
+      const cmd = `Expand-Archive -LiteralPath ${q(archivePath)} -DestinationPath ${q(tmpDir)} -Force`;
       const result = childProcess.spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { stdio: 'inherit' });
       if (result.error || result.status !== 0) {
         throw new Error(`[dolphin] Failed to extract archive with PowerShell (exit code ${result.status ?? 'unknown'}).`);
       }
     }
-  } catch (err) {
-    try { fs.rmSync(cacheDir, { recursive: true, force: true }); } catch {}
-    throw err;
-  }
 
-  fs.unlinkSync(archivePath);
+    fs.unlinkSync(archivePath);
 
-  if (!isWindows) {
-    for (const name of ['dolphin', 'opengrep']) {
-      const p = path.join(cacheDir, name);
-      if (fs.existsSync(p)) fs.chmodSync(p, 0o750);
+    if (!isWindows) {
+      for (const name of ['dolphin', 'opengrep']) {
+        const p = path.join(tmpDir, name);
+        if (fs.existsSync(p)) fs.chmodSync(p, 0o750);
+      }
     }
+
+    // Atomically promote the temp directory to the final cache location.
+    // If another concurrent process already moved its copy first, discard ours.
+    try {
+      fs.renameSync(tmpDir, cacheDir);
+    } catch (renameErr) {
+      if (renameErr.code !== 'EEXIST' && renameErr.code !== 'ENOTEMPTY') {
+        throw renameErr;
+      }
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      if (!fs.existsSync(binaryPath)) {
+        throw new Error('[dolphin] Binary missing after concurrent install attempt.');
+      }
+    }
+  } catch (err) {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    throw err;
   }
 
   return binaryPath;

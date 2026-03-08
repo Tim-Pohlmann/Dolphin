@@ -1,5 +1,7 @@
 #!/bin/bash
-# Fetch SonarQube PR analysis results and write a summary for Claude to reference.
+# Fetch SonarQube PR analysis results after each Claude turn (Stop hook).
+# Runs after every turn so results are fresh by the next message, even when
+# the PR is created mid-session (SessionStart would be too early).
 # Requires: SONAR_URL, SONAR_TOKEN, SONAR_PROJECT_KEY env vars.
 # Skips gracefully if any are missing or no PR is open for the current branch.
 set -euo pipefail

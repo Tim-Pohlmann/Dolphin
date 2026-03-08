@@ -336,3 +336,42 @@ test('ensureBinary throws when PowerShell extraction fails', async (t) => {
 
   await assert.rejects(ensureBinary(), /Failed to extract archive with PowerShell/);
 });
+
+test('ensureBinary cleans up cacheDir when download fails', async (t) => {
+  const origExists = fs.existsSync;
+  const origMkdir = fs.mkdirSync;
+  const origRmSync = fs.rmSync;
+  const origCWS = fs.createWriteStream;
+  const origGet = https.get;
+
+  t.after(() => {
+    fs.existsSync = origExists;
+    fs.mkdirSync = origMkdir;
+    fs.rmSync = origRmSync;
+    fs.createWriteStream = origCWS;
+    https.get = origGet;
+  });
+
+  fs.existsSync = () => false;
+  fs.mkdirSync = () => {};
+
+  let rmCalled = false;
+  fs.rmSync = (p, opts) => { rmCalled = true; };
+
+  // Simulate a write stream that errors during the download
+  fs.createWriteStream = () => {
+    const ws = new Writable({ write(chunk, enc, cb) { cb(); } });
+    return ws;
+  };
+
+  https.get = (url, opts, cb) => {
+    const res = new PassThrough();
+    res.statusCode = 500;
+    cb(res);
+    res.resume();
+    return { on: () => {} };
+  };
+
+  await assert.rejects(ensureBinary(), /HTTP 500/);
+  assert.ok(rmCalled, 'cacheDir should be cleaned up after download failure');
+});

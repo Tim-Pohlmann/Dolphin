@@ -65,9 +65,10 @@ async function ensureBinary() {
   const archivePath = path.join(cacheDir, archiveName);
 
   process.stderr.write(`[dolphin] Downloading ${archiveName} from GitHub Releases...\n`);
-  await download(url, archivePath);
 
   try {
+    await download(url, archivePath);
+
     if (ext === 'tar.gz') {
       const tar = fs.existsSync('/usr/bin/tar') ? '/usr/bin/tar' : '/bin/tar';
       const result = childProcess.spawnSync(tar, ['-xzf', archivePath, '-C', cacheDir], { stdio: 'inherit' });

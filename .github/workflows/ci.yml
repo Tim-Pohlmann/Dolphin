@@ -52,6 +52,7 @@ jobs:
         id: opengrep-version
         run: |
           VERSION=$(curl -fsSL --proto '=https' --tlsv1.2 "https://api.github.com/repos/opengrep/opengrep/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+          test -n "$VERSION" || { echo "Failed to determine opengrep version" >&2; exit 1; }
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Cache opengrep

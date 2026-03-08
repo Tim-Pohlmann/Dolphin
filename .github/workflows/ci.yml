@@ -21,6 +21,11 @@ jobs:
         with:
           dotnet-version: '10.x'
 
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -43,7 +48,8 @@ jobs:
             /o:"tim-pohlmann" \
             /d:sonar.token="$SONAR_TOKEN" \
             /d:sonar.host.url="https://sonarcloud.io" \
-            /d:sonar.cs.opencover.reportsPaths="tests/**/coverage.opencover.xml"
+            /d:sonar.cs.opencover.reportsPaths="tests/**/coverage.opencover.xml" \
+            /d:sonar.javascript.lcov.reportPaths="coverage/lcov.info"
 
       - name: Build
         run: dotnet build Dolphin.slnx --no-restore -c Release
@@ -53,7 +59,10 @@ jobs:
           curl -fsSL https://github.com/opengrep/opengrep/releases/latest/download/opengrep_manylinux_x86 -o /usr/local/bin/opengrep
           chmod +x /usr/local/bin/opengrep
 
-      - name: Test
+      - name: Test (launcher)
+        run: node --test --experimental-test-coverage --test-coverage-reporter=lcov --test-coverage-destination=coverage/lcov.info launcher/launcher.test.js
+
+      - name: Test (.NET)
         run: dotnet test Dolphin.slnx --no-build -c Release --verbosity normal --collect:"XPlat Code Coverage" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
 
       - name: End SonarQube analysis

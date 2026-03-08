@@ -81,7 +81,7 @@ async function ensureBinary() {
       const ps = path.join(process.env.SystemRoot || 'C:\\Windows',
         'System32\\WindowsPowerShell\\v1.0\\powershell.exe');
       const q = (p) => `'${p.replace(/'/g, "''")}'`;
-      const cmd = `Expand-Archive -LiteralPath ${q(tmpArchivePath)} -DestinationPath ${q(tmpDir)} -Force`;
+      const cmd = `Expand-Archive -LiteralPath ${q(archivePath)} -DestinationPath ${q(cacheDir)} -Force`;
       const result = childProcess.spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { stdio: 'inherit' });
       if (result.error || result.status !== 0) {
         throw new Error(`[dolphin] Failed to extract archive with PowerShell (exit code ${result.status ?? 'unknown'}).`);

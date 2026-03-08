@@ -1,6 +1,6 @@
 #!/bin/bash
 # Fetch SonarQube PR analysis results and write a summary for Claude to reference.
-# Requires: SONARQUBE_URL, SONARQUBE_TOKEN, SONARQUBE_PROJECT_KEY env vars.
+# Requires: SONAR_URL, SONAR_TOKEN, SONAR_PROJECT_KEY env vars.
 # Skips gracefully if any are missing or no PR is open for the current branch.
 set -euo pipefail
 
@@ -12,8 +12,8 @@ fi
 OUTPUT_FILE="${CLAUDE_PROJECT_DIR:-.}/.sonarqube-pr-results.md"
 
 # Check required env vars
-if [[ -z "${SONARQUBE_URL:-}" ]] || [[ -z "${SONARQUBE_TOKEN:-}" ]] || [[ -z "${SONARQUBE_PROJECT_KEY:-}" ]]; then
-  echo "[sonarqube-hook] SONARQUBE_URL, SONARQUBE_TOKEN, or SONARQUBE_PROJECT_KEY not set — skipping." >&2
+if [[ -z "${SONAR_URL:-}" ]] || [[ -z "${SONAR_TOKEN:-}" ]] || [[ -z "${SONAR_PROJECT_KEY:-}" ]]; then
+  echo "[sonarqube-hook] SONAR_URL, SONAR_TOKEN, or SONAR_PROJECT_KEY not set — skipping." >&2
   exit 0
 fi
 
@@ -25,19 +25,19 @@ if [[ -z "$PR_NUMBER" ]]; then
   exit 0
 fi
 
-BASE_URL="${SONARQUBE_URL%/}"
-AUTH_HEADER="Authorization: Bearer ${SONARQUBE_TOKEN}"
+BASE_URL="${SONAR_URL%/}"
+AUTH_HEADER="Authorization: Bearer ${SONAR_TOKEN}"
 
 # Fetch quality gate status
 QG_JSON=$(curl -sf -H "$AUTH_HEADER" \
-  "${BASE_URL}/api/qualitygates/project_status?pullRequest=${PR_NUMBER}&projectKey=${SONARQUBE_PROJECT_KEY}" \
+  "${BASE_URL}/api/qualitygates/project_status?pullRequest=${PR_NUMBER}&projectKey=${SONAR_PROJECT_KEY}" \
   2>/dev/null || echo '{}')
 
 QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
 
 # Fetch issues (up to 50, ERROR and WARN severity)
 ISSUES_JSON=$(curl -sf -H "$AUTH_HEADER" \
-  "${BASE_URL}/api/issues/search?pullRequest=${PR_NUMBER}&projectKeys=${SONARQUBE_PROJECT_KEY}&ps=50&resolved=false" \
+  "${BASE_URL}/api/issues/search?pullRequest=${PR_NUMBER}&projectKeys=${SONAR_PROJECT_KEY}&ps=50&resolved=false" \
   2>/dev/null || echo '{"issues":[],"total":0}')
 
 TOTAL=$(echo "$ISSUES_JSON" | jq -r '.total // 0')

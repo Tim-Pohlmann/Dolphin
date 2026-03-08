@@ -67,9 +67,12 @@ async function ensureBinary() {
   await download(url, archivePath);
 
   if (ext === 'tar.gz') {
-    spawnSync('tar', ['-xzf', archivePath, '-C', cacheDir], { stdio: 'inherit' });
+    const tar = fs.existsSync('/usr/bin/tar') ? '/usr/bin/tar' : '/bin/tar';
+    spawnSync(tar, ['-xzf', archivePath, '-C', cacheDir], { stdio: 'inherit' });
   } else {
-    spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+    const ps = path.join(process.env.SystemRoot || 'C:\\Windows',
+      'System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+    spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command',
       'Expand-Archive', '-Path', archivePath, '-DestinationPath', cacheDir, '-Force'],
       { stdio: 'inherit' });
   }
@@ -79,7 +82,7 @@ async function ensureBinary() {
   if (!isWindows) {
     for (const name of ['dolphin', 'opengrep']) {
       const p = path.join(cacheDir, name);
-      if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+      if (fs.existsSync(p)) fs.chmodSync(p, 0o750);
     }
   }
 

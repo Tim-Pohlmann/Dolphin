@@ -1,9 +1,7 @@
 #!/bin/bash
-# Fetch SonarQube PR analysis results after each Claude turn (Stop hook).
-# Runs after every turn so results are fresh by the next message, even when
-# the PR is created mid-session (SessionStart would be too early).
-# Requires: SONAR_URL, SONAR_TOKEN, SONAR_PROJECT_KEY env vars.
-# Skips gracefully if any are missing or no PR is open for the current branch.
+# Fetch SonarCloud PR analysis results after each Claude turn (Stop hook).
+# Reads from GitHub PR issue comments posted by the sonarqubecloud[bot] —
+# no SonarCloud credentials needed for public repos.
 set -euo pipefail
 
 # Only run in remote (cloud) sessions
@@ -12,80 +10,53 @@ if [[ "${CLAUDE_CODE_REMOTE:-}" != "true" ]]; then
 fi
 
 OUTPUT_FILE="${CLAUDE_PROJECT_DIR:-.}/.sonarqube-pr-results.md"
+REPO="Tim-Pohlmann/Dolphin"
+GH_API="https://api.github.com/repos/${REPO}"
+GH_HEADERS=(-H "Accept: application/vnd.github.v3+json")
 
-# Check required env vars
-if [[ -z "${SONAR_URL:-}" ]] || [[ -z "${SONAR_TOKEN:-}" ]] || [[ -z "${SONAR_PROJECT_KEY:-}" ]]; then
-  echo "[sonarqube-hook] SONAR_URL, SONAR_TOKEN, or SONAR_PROJECT_KEY not set — skipping." >&2
+# Find the PR number for the current branch via the GitHub API
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+if [[ -z "$BRANCH" || "$BRANCH" == "HEAD" ]]; then
+  echo "[sonarqube-hook] Could not determine current branch — skipping." >&2
   exit 0
 fi
 
-# Find the PR number for the current branch
-PR_NUMBER=$(gh pr view --json number --jq '.number' 2>/dev/null || true)
+PR_JSON=$(curl -sf "${GH_HEADERS[@]}" \
+  "${GH_API}/pulls?state=open&head=${REPO%%/*}:${BRANCH}&per_page=1" \
+  2>/dev/null || echo '[]')
+PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number // empty')
+
 if [[ -z "$PR_NUMBER" ]]; then
-  echo "[sonarqube-hook] No open PR found for current branch — skipping." >&2
+  echo "[sonarqube-hook] No open PR found for branch '${BRANCH}' — skipping." >&2
   rm -f "$OUTPUT_FILE"
   exit 0
 fi
 
-BASE_URL="${SONAR_URL%/}"
-AUTH_HEADER="Authorization: Bearer ${SONAR_TOKEN}"
+# ── SonarCloud bot comment (primary strategy) ─────────────────────────────────
+# SonarCloud posts its quality gate summary as a PR issue comment from
+# sonarqubecloud[bot]. Fetch the most recent one.
 
-# Fetch quality gate status
-QG_JSON=$(curl -sf -H "$AUTH_HEADER" \
-  "${BASE_URL}/api/qualitygates/project_status?pullRequest=${PR_NUMBER}&projectKey=${SONAR_PROJECT_KEY}" \
-  2>/dev/null || echo '{}')
+SONAR_BODY=$(curl -sf "${GH_HEADERS[@]}" \
+  "${GH_API}/issues/${PR_NUMBER}/comments?per_page=100" \
+  2>/dev/null \
+  | jq -r '
+      [ .[]? | select(.user.login | ascii_downcase | contains("sonar")) ]
+      | last
+      | .body // empty
+    ' 2>/dev/null || true)
 
-QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
-
-# Fetch issues (up to 50, ERROR and WARN severity)
-ISSUES_JSON=$(curl -sf -H "$AUTH_HEADER" \
-  "${BASE_URL}/api/issues/search?pullRequest=${PR_NUMBER}&projectKeys=${SONAR_PROJECT_KEY}&ps=50&resolved=false" \
-  2>/dev/null || echo '{"issues":[],"total":0}')
-
-TOTAL=$(echo "$ISSUES_JSON" | jq -r '.total // 0')
-
-# Write markdown summary
-{
-  echo "# SonarQube PR #${PR_NUMBER} Results"
-  echo ""
-
-  # Quality gate badge
-  if [[ "$QG_STATUS" = "OK" ]]; then
-    echo "**Quality Gate: PASSED**"
-  elif [[ "$QG_STATUS" = "ERROR" ]]; then
-    echo "**Quality Gate: FAILED**"
-  else
-    echo "**Quality Gate: ${QG_STATUS}**"
-  fi
-
-  echo ""
-  echo "**Total issues:** ${TOTAL}"
-  echo ""
-
-  # Conditions (what caused gate to fail/pass)
-  CONDITIONS=$(echo "$QG_JSON" | jq -r '
-    .projectStatus.conditions[]?
-    | "- \(.metricKey): \(.status) (actual: \(.actualValue // "n/a"), threshold: \(.errorThreshold // "n/a"))"
-  ' 2>/dev/null || true)
-
-  if [[ -n "$CONDITIONS" ]]; then
-    echo "## Quality Gate Conditions"
+if [[ -n "$SONAR_BODY" ]]; then
+  {
+    echo "# SonarCloud PR #${PR_NUMBER} Results"
     echo ""
-    echo "$CONDITIONS"
+    echo "$SONAR_BODY"
     echo ""
-  fi
+    echo "_Generated at $(date -u '+%Y-%m-%dT%H:%M:%SZ')_"
+  } > "$OUTPUT_FILE"
 
-  # Issues list
-  if [[ "$TOTAL" -gt 0 ]]; then
-    echo "## Issues"
-    echo ""
-    echo "$ISSUES_JSON" | jq -r '
-      .issues[]
-      | "### \(.severity // "UNKNOWN") — \(.rule // "")\n**\(.message)**\n\(.component // ""):\(.textRange.startLine // "?")\n"
-    ' 2>/dev/null || true
-  fi
+  echo "[sonarqube-hook] Wrote SonarCloud results for PR #${PR_NUMBER} (via GitHub PR comment)" >&2
+  exit 0
+fi
 
-  echo "_Generated at $(date -u '+%Y-%m-%dT%H:%M:%SZ')_"
-} > "$OUTPUT_FILE"
-
-echo "[sonarqube-hook] Wrote SonarQube PR #${PR_NUMBER} results to ${OUTPUT_FILE}" >&2
+echo "[sonarqube-hook] No SonarCloud comment found on PR #${PR_NUMBER} — skipping." >&2
+rm -f "$OUTPUT_FILE"

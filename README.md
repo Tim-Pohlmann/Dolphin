@@ -65,6 +65,57 @@ dolphin check --cwd /path/to/project
 | `1`  | One or more `ERROR`-severity violations found |
 | `2`  | Fatal error (scanner unavailable, rules file missing, etc.) |
 
+### Editor integration (LSP)
+
+Dolphin ships a Language Server Protocol server for `.dolphin/rules.yaml` files, giving you diagnostics, completions, and hover docs while you write rules.
+
+```bash
+dolphin lsp --stdio
+```
+
+**Features**
+- **Diagnostics** — highlights missing required fields (`id`, `message`, `languages`, `severity`, pattern), invalid severity values, unknown language identifiers, and duplicate rule IDs
+- **Completions** — field names, `ERROR`/`WARNING`/`INFO` after `severity:`, language identifiers after `languages:`, pattern operators inside `patterns:`
+- **Hover** — inline documentation for every rule field
+
+**VS Code** — add to `.vscode/settings.json`:
+
+```json
+{
+  "yaml.customTags": [],
+  "[yaml]": {},
+  "dolphin.lsp.enabled": true
+}
+```
+
+Then configure your YAML LSP extension (e.g. `vscode-yaml`) or install a generic LSP client (`vscode-glspc`) and point it at `dolphin lsp --stdio`.
+
+**Neovim** (with `nvim-lspconfig`):
+
+```lua
+local configs = require('lspconfig.configs')
+configs.dolphin = {
+  default_config = {
+    cmd = { 'dolphin', 'lsp', '--stdio' },
+    filetypes = { 'yaml' },
+    root_dir = require('lspconfig.util').root_pattern('.dolphin'),
+  },
+}
+require('lspconfig').dolphin.setup({})
+```
+
+**Zed** — add to your `settings.json`:
+
+```json
+{
+  "lsp": {
+    "dolphin": {
+      "binary": { "path": "dolphin", "arguments": ["lsp", "--stdio"] }
+    }
+  }
+}
+```
+
 ## Rule format
 
 Rules are stored in `.dolphin/rules.yaml` using the Opengrep rule schema:

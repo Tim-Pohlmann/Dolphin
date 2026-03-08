@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Dolphin.Scanner;
 
 namespace Dolphin.Lsp;
@@ -90,7 +91,8 @@ public static class LspServer
                 var td = p.GetProperty("textDocument");
                 var uri = td.GetProperty("uri").GetString() ?? "";
                 var text = td.GetProperty("text").GetString() ?? "";
-                _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                if (IsDolphinRulesFile(uri))
+                    _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
                 break;
             }
 
@@ -98,7 +100,7 @@ public static class LspServer
             {
                 var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                 var changes = p.GetProperty("contentChanges");
-                if (changes.GetArrayLength() > 0)
+                if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
                     _ = ValidateAndPublishAsync(stdout, uri,
                         changes[0].GetProperty("text").GetString() ?? "",
                         CancelPrevious(uri));
@@ -106,9 +108,12 @@ public static class LspServer
             }
 
             case "textDocument/didClose":
-                await PublishDiagnosticsAsync(stdout,
-                    p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "", []);
+            {
+                var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
+                CancelAndRemove(uri);
+                await PublishDiagnosticsAsync(stdout, uri, []);
                 break;
+            }
 
             case "shutdown":
                 _shutdownReceived = true;
@@ -135,13 +140,32 @@ public static class LspServer
         uri.Contains("/.dolphin/") || uri.Contains("\\.dolphin\\");
 
     /// <summary>
-    /// Cancels any in-flight validation for <paramref name="uri"/> and returns a fresh token.
+    /// Cancels any in-flight validation for <paramref name="uri"/>, disposes the old CTS,
+    /// and returns a fresh token for the new validation.
     /// </summary>
     private static CancellationToken CancelPrevious(string uri)
     {
         var cts = new CancellationTokenSource();
-        var old = _validationCts.AddOrUpdate(uri, cts, (_, prev) => { prev.Cancel(); return cts; });
+        _validationCts.AddOrUpdate(uri, cts, (_, prev) =>
+        {
+            prev.Cancel();
+            prev.Dispose();
+            return cts;
+        });
         return cts.Token;
+    }
+
+    /// <summary>
+    /// Cancels any in-flight validation for <paramref name="uri"/> and removes it from the map.
+    /// Called on document close to prevent stale publish and reclaim the CTS.
+    /// </summary>
+    private static void CancelAndRemove(string uri)
+    {
+        if (_validationCts.TryRemove(uri, out var cts))
+        {
+            cts.Cancel();
+            cts.Dispose();
+        }
     }
 
     private static async Task ValidateAndPublishAsync(
@@ -149,9 +173,6 @@ public static class LspServer
     {
         try
         {
-            if (!IsDolphinRulesFile(uri))
-                return; // not a Dolphin rules file — ignore
-
             // Lazy retry: attempt resolution if startup failed.
             if (_opengrepBinary is null)
             {
@@ -185,13 +206,22 @@ public static class LspServer
             psi.ArgumentList.Add(tmp);
 
             using var proc = Process.Start(psi)!;
-            var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
-            var stderr = await proc.StandardError.ReadToEndAsync(ct);
-            await proc.WaitForExitAsync(ct);
+            try
+            {
+                var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
+                var stderr = await proc.StandardError.ReadToEndAsync(ct);
+                await proc.WaitForExitAsync(ct);
 
-            return proc.ExitCode == 0
-                ? []
-                : LspDiagnosticsParser.Parse(stdout + stderr);
+                return proc.ExitCode == 0
+                    ? []
+                    : LspDiagnosticsParser.Parse(stdout + stderr);
+            }
+            catch (OperationCanceledException)
+            {
+                // Kill the process so it doesn't linger after a superseded validation.
+                try { proc.Kill(entireProcessTree: true); } catch (Exception) { /* best-effort */ }
+                return [];
+            }
         }
         catch
         {
@@ -199,7 +229,7 @@ public static class LspServer
         }
         finally
         {
-            try { File.Delete(tmp); } catch { }
+            try { File.Delete(tmp); } catch (Exception) { /* best-effort cleanup */ }
         }
     }
 

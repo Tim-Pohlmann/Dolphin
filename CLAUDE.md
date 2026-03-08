@@ -23,7 +23,7 @@ launcher/
 tests/Dolphin.Tests/
   InstallerTests.cs        Tests for binary resolution
   RunnerTests.cs           Integration tests (skipped if no scanner on PATH)
-  LspDiagnosticsParserTests.cs  Unit tests for diagnostic parsing and document symbols
+  LspDiagnosticsParserTests.cs  Unit tests for diagnostic parsing
   fixtures/                Sample rules.yaml and bad-file.ts for tests
 
 skills/generate-rules/     Claude Code skill for interactive rule generation

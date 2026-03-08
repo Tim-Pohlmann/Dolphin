@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -17,9 +18,13 @@ namespace Dolphin.Lsp;
 public static class LspServer
 {
     private static string? _opengrepBinary;
+    private static bool _shutdownReceived;
 
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
+
+    // Per-URI cancellation: cancels superseded validations on rapid edits.
+    private static readonly ConcurrentDictionary<string, CancellationTokenSource> _validationCts = new();
 
     public static async Task RunAsync()
     {
@@ -86,8 +91,7 @@ public static class LspServer
                 var td = p.GetProperty("textDocument");
                 var uri = td.GetProperty("uri").GetString() ?? "";
                 var text = td.GetProperty("text").GetString() ?? "";
-                // Fire-and-forget so the message loop stays responsive.
-                _ = ValidateAndPublishAsync(stdout, uri, text);
+                _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
                 break;
             }
 
@@ -97,7 +101,8 @@ public static class LspServer
                 var changes = p.GetProperty("contentChanges");
                 if (changes.GetArrayLength() > 0)
                     _ = ValidateAndPublishAsync(stdout, uri,
-                        changes[0].GetProperty("text").GetString() ?? "");
+                        changes[0].GetProperty("text").GetString() ?? "",
+                        CancelPrevious(uri));
                 break;
             }
 
@@ -107,6 +112,7 @@ public static class LspServer
                 break;
 
             case "shutdown":
+                _shutdownReceived = true;
                 await SendAsync(stdout, w =>
                 {
                     w.WriteStartObject();
@@ -118,7 +124,8 @@ public static class LspServer
                 break;
 
             case "exit":
-                Environment.Exit(0);
+                // LSP spec: exit 0 if preceded by shutdown, 1 otherwise.
+                Environment.Exit(_shutdownReceived ? 0 : 1);
                 break;
         }
     }
@@ -128,7 +135,18 @@ public static class LspServer
     private static bool IsDolphinRulesFile(string uri) =>
         uri.Contains("/.dolphin/") || uri.Contains("\\.dolphin\\");
 
-    private static async Task ValidateAndPublishAsync(Stream stdout, string uri, string text)
+    /// <summary>
+    /// Cancels any in-flight validation for <paramref name="uri"/> and returns a fresh token.
+    /// </summary>
+    private static CancellationToken CancelPrevious(string uri)
+    {
+        var cts = new CancellationTokenSource();
+        var old = _validationCts.AddOrUpdate(uri, cts, (_, prev) => { prev.Cancel(); return cts; });
+        return cts.Token;
+    }
+
+    private static async Task ValidateAndPublishAsync(
+        Stream stdout, string uri, string text, CancellationToken ct)
     {
         try
         {
@@ -142,18 +160,20 @@ public static class LspServer
                 catch { return; }
             }
 
-            var diagnostics = await RunValidateAsync(text);
+            var diagnostics = await RunValidateAsync(text, ct);
+            ct.ThrowIfCancellationRequested(); // don't publish stale results
             await PublishDiagnosticsAsync(stdout, uri, diagnostics);
         }
+        catch (OperationCanceledException) { /* superseded by a newer edit */ }
         catch { /* swallow — must not propagate from fire-and-forget */ }
     }
 
-    private static async Task<LspDiagnostic[]> RunValidateAsync(string text)
+    private static async Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
     {
-        var tmp = Path.Combine(Path.GetTempPath(), $"dolphin-lsp-{Environment.ProcessId}.yaml");
+        var tmp = Path.Combine(Path.GetTempPath(), $"dolphin-lsp-{Guid.NewGuid():N}.yaml");
         try
         {
-            await File.WriteAllTextAsync(tmp, text, Encoding.UTF8);
+            await File.WriteAllTextAsync(tmp, text, Encoding.UTF8, ct);
 
             var psi = new ProcessStartInfo(_opengrepBinary!)
             {
@@ -166,9 +186,9 @@ public static class LspServer
             psi.ArgumentList.Add(tmp);
 
             using var proc = Process.Start(psi)!;
-            var stdout = await proc.StandardOutput.ReadToEndAsync();
-            var stderr = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
+            var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
+            var stderr = await proc.StandardError.ReadToEndAsync(ct);
+            await proc.WaitForExitAsync(ct);
 
             return proc.ExitCode == 0
                 ? []

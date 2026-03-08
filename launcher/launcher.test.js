@@ -150,9 +150,21 @@ test('download rejects on network error', async (t) => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// ensureBinary
-// ---------------------------------------------------------------------------
+test('download rejects after too many redirects', async (t) => {
+  const origGet = https.get;
+  t.after(() => { https.get = origGet; });
+
+  https.get = (url, opts, cb) => {
+    cb(makeResponse(301, null, { location: url })); // always redirect to same URL
+    return { on: () => {} };
+  };
+
+  await assert.rejects(
+    download('https://example.com/f', '/tmp/out'),
+    /Too many redirects/
+  );
+});
+
 
 test('ensureBinary returns cached path when binary exists', async (t) => {
   const origExists = fs.existsSync;
@@ -213,9 +225,47 @@ test('ensureBinary downloads and extracts tar.gz when binary is missing', async 
     return { on: () => {} };
   };
 
-  childProcess.spawnSync = () => ({ status: 0 });
+  let spawnCalls = 0;
+  childProcess.spawnSync = (...args) => { spawnCalls++; return { status: 0 }; };
 
   const result = await ensureBinary();
   assert.ok(typeof result === 'string');
   assert.ok(result.endsWith('dolphin') || result.endsWith('dolphin.exe'));
+  assert.equal(spawnCalls, 1, 'spawnSync should have been called for extraction');
+});
+
+test('ensureBinary throws when tar extraction fails', async (t) => {
+  const origExists = fs.existsSync;
+  const origMkdir = fs.mkdirSync;
+  const origCWS = fs.createWriteStream;
+  const origGet = https.get;
+  const origSpawn = childProcess.spawnSync;
+
+  t.after(() => {
+    fs.existsSync = origExists;
+    fs.mkdirSync = origMkdir;
+    fs.createWriteStream = origCWS;
+    https.get = origGet;
+    childProcess.spawnSync = origSpawn;
+  });
+
+  let call = 0;
+  fs.existsSync = (p) => {
+    call++;
+    if (call === 1) return false;
+    if (p === '/usr/bin/tar') return true;
+    return false;
+  };
+
+  fs.mkdirSync = () => {};
+  fs.createWriteStream = () => makeSinkStream();
+
+  https.get = (url, opts, cb) => {
+    cb(makeResponse(200, 'archive'));
+    return { on: () => {} };
+  };
+
+  childProcess.spawnSync = () => ({ status: 1 });
+
+  await assert.rejects(ensureBinary(), /Failed to extract archive with tar/);
 });

@@ -3,7 +3,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Dolphin.Scanner;
 
 namespace Dolphin.Lsp;
@@ -25,9 +24,6 @@ public static class LspServer
 
     // Per-URI cancellation: cancels superseded validations on rapid edits.
     private static readonly ConcurrentDictionary<string, CancellationTokenSource> _validationCts = new();
-
-    // Last-known text per URI, used to serve documentSymbol requests.
-    private static readonly ConcurrentDictionary<string, string> _textCache = new();
 
     public static async Task RunAsync()
     {
@@ -83,7 +79,6 @@ public static class LspServer
                     w.WritePropertyName("capabilities");
                     w.WriteStartObject();
                     w.WriteNumber("textDocumentSync", 1); // full sync
-                    w.WriteBoolean("documentSymbolProvider", true);
                     w.WriteEndObject();
                     w.WriteEndObject();
                     w.WriteEndObject();
@@ -95,7 +90,6 @@ public static class LspServer
                 var td = p.GetProperty("textDocument");
                 var uri = td.GetProperty("uri").GetString() ?? "";
                 var text = td.GetProperty("text").GetString() ?? "";
-                _textCache[uri] = text;
                 _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
                 break;
             }
@@ -105,58 +99,16 @@ public static class LspServer
                 var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                 var changes = p.GetProperty("contentChanges");
                 if (changes.GetArrayLength() > 0)
-                {
-                    var text = changes[0].GetProperty("text").GetString() ?? "";
-                    _textCache[uri] = text;
-                    _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
-                }
+                    _ = ValidateAndPublishAsync(stdout, uri,
+                        changes[0].GetProperty("text").GetString() ?? "",
+                        CancelPrevious(uri));
                 break;
             }
 
             case "textDocument/didClose":
-            {
-                var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
-                _textCache.TryRemove(uri, out _);
-                await PublishDiagnosticsAsync(stdout, uri, []);
+                await PublishDiagnosticsAsync(stdout,
+                    p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "", []);
                 break;
-            }
-
-            case "textDocument/documentSymbol":
-            {
-                var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
-                var symbols = _textCache.TryGetValue(uri, out var cached)
-                    ? DocumentSymbols.Parse(uri, cached)
-                    : [];
-                await SendAsync(stdout, w =>
-                {
-                    w.WriteStartObject();
-                    w.WriteString("jsonrpc", "2.0");
-                    WriteId(w, id);
-                    w.WritePropertyName("result");
-                    w.WriteStartArray();
-                    foreach (var s in symbols)
-                    {
-                        w.WriteStartObject();
-                        w.WriteString("name", s.Name);
-                        w.WriteNumber("kind", 12); // Function
-                        w.WritePropertyName("location");
-                        w.WriteStartObject();
-                        w.WriteString("uri", uri);
-                        w.WritePropertyName("range");
-                        w.WriteStartObject();
-                        w.WritePropertyName("start");
-                        WritePosition(w, s.Start);
-                        w.WritePropertyName("end");
-                        WritePosition(w, s.End);
-                        w.WriteEndObject();
-                        w.WriteEndObject();
-                        w.WriteEndObject();
-                    }
-                    w.WriteEndArray();
-                    w.WriteEndObject();
-                });
-                break;
-            }
 
             case "shutdown":
                 _shutdownReceived = true;

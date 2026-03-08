@@ -20,7 +20,7 @@ public class LspDiagnosticsParserTests
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual("opengrep", diags[0].Source);
         Assert.AreEqual(1, diags[0].Severity);
-        Assert.AreEqual(7, diags[0].Range.Start.Line);    // 1-indexed 8 → 0-indexed 7
+        Assert.AreEqual(7, diags[0].Range.Start.Line);      // 1-indexed 8 → 0-indexed 7
         Assert.AreEqual(4, diags[0].Range.Start.Character); // 1-indexed 5 → 0-indexed 4
         Assert.IsTrue(diags[0].Message.Contains("missing required field"));
     }
@@ -136,59 +136,5 @@ public class LspDiagnosticsParserTests
         Assert.AreEqual("opengrep", diags[0].Source);
         Assert.AreEqual(0, diags[0].Range.Start.Line);
         StringAssert.Contains(diags[0].Message, "Something went completely sideways");
-    }
-}
-
-[TestClass]
-public class DocumentSymbolsTests
-{
-    [TestMethod]
-    public void Parse_SingleRule_ReturnsSymbol()
-    {
-        var text = """
-            rules:
-              - id: no-console-log
-                message: "Remove console.log"
-                severity: WARNING
-            """;
-
-        var symbols = DocumentSymbols.Parse("file:///rules.yaml", text);
-
-        Assert.AreEqual(1, symbols.Length);
-        Assert.AreEqual("no-console-log", symbols[0].Name);
-        Assert.AreEqual(1, symbols[0].Start.Line); // line index 1 (0-based)
-    }
-
-    [TestMethod]
-    public void Parse_MultipleRules_ReturnsAllSymbols()
-    {
-        var text = """
-            rules:
-              - id: rule-one
-                severity: ERROR
-              - id: rule-two
-                severity: WARNING
-            """;
-
-        var symbols = DocumentSymbols.Parse("file:///rules.yaml", text);
-
-        Assert.AreEqual(2, symbols.Length);
-        Assert.AreEqual("rule-one", symbols[0].Name);
-        Assert.AreEqual("rule-two", symbols[1].Name);
-    }
-
-    [TestMethod]
-    public void Parse_EmptyText_ReturnsEmpty()
-    {
-        var symbols = DocumentSymbols.Parse("file:///rules.yaml", "");
-        Assert.AreEqual(0, symbols.Length);
-    }
-
-    [TestMethod]
-    public void Parse_NoRules_ReturnsEmpty()
-    {
-        const string text = "# yaml-language-server: $schema=...\n# just a comment\n";
-        var symbols = DocumentSymbols.Parse("file:///rules.yaml", text);
-        Assert.AreEqual(0, symbols.Length);
     }
 }

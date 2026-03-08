@@ -16,7 +16,6 @@ src/Dolphin/
   Output/Formatter.cs      Text and JSON output formatting
   Lsp/LspServer.cs         LSP server: JSON-RPC over stdio; runs `opengrep validate` on YAML files under .dolphin/
   Lsp/LspDiagnosticsParser.cs  Parses `opengrep validate` output into LSP diagnostics
-  Lsp/DocumentSymbols.cs   Extracts rule IDs for the document outline (textDocument/documentSymbol)
 
 launcher/
   launcher.js              Downloads/caches the dolphin+opengrep binary from GitHub Releases

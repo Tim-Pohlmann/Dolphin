@@ -22,17 +22,7 @@ Then install the `dolphin` plugin. The plugin provides:
 - The `generate-rules` skill for interactive rule generation
 - An MCP server that Claude uses to run checks during conversations
 - The `dolphin` CLI binary
-- An LSP server for `.dolphin/rules.yaml` (schema validation, autocompletion, hover docs)
-
-#### LSP prerequisites
-
-The LSP feature requires `yaml-language-server` on your PATH:
-
-```bash
-npm install -g yaml-language-server
-```
-
-Once installed, Claude Code will automatically start the server when you open any `.yaml` file. The Opengrep/Semgrep rule schema is applied to all files under `.dolphin/`, giving you inline validation and autocompletion for rule fields.
+- An LSP server for `.dolphin/rules.yaml` — validates rules with `opengrep validate` and publishes diagnostics inline as you edit (no additional install required; the bundled opengrep binary is used)
 
 ### Manual CLI install
 

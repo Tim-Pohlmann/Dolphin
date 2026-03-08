@@ -5,18 +5,11 @@
   "author": { "name": "Tim Pohlmann" },
   "lspServers": {
     "opengrep-rules": {
-      "command": "yaml-language-server",
-      "args": ["--stdio"],
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/launcher/lsp.js"],
       "extensionToLanguage": {
         ".yaml": "yaml",
         ".yml": "yaml"
-      },
-      "settings": {
-        "yaml": {
-          "schemas": {
-            "https://json.schemastore.org/semgrep.json": ".dolphin/**"
-          }
-        }
       }
     }
   }

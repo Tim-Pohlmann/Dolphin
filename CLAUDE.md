@@ -15,13 +15,17 @@ src/Dolphin/
   Mcp/Tools/RunCheckTool.cs  MCP tool: run_check
   Output/Formatter.cs      Text and JSON output formatting
 
+launcher/
+  launcher.js              Downloads/caches the dolphin+opengrep binary from GitHub Releases
+  lsp.js                   LSP server: runs `opengrep validate` on .dolphin/*.yaml, publishes diagnostics
+
 tests/Dolphin.Tests/
   InstallerTests.cs        Tests for binary resolution
   RunnerTests.cs           Integration tests (skipped if no scanner on PATH)
   fixtures/                Sample rules.yaml and bad-file.ts for tests
 
 skills/generate-rules/     Claude Code skill for interactive rule generation
-.claude-plugin/plugin.json Plugin metadata
+.claude-plugin/plugin.json Plugin metadata (includes lspServers config)
 .mcp.json                  MCP server config (used when plugin is installed)
 .dolphin/rules.yaml        This project's own Dolphin rules
 ```

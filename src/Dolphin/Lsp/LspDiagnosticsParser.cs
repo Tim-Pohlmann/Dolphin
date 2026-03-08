@@ -17,7 +17,7 @@ namespace Dolphin.Lsp;
 internal static partial class LspDiagnosticsParser
 {
     // Anchored to EOL so paths with spaces/colons are handled correctly.
-    [GeneratedRegex(@"-->.+:(\d+)(?::(\d+))?\s*$", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"-->.*?:(\d+)(?::(\d+))?\s*$", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex LocationPattern();
 
     [GeneratedRegex(@"error|invalid|missing|required|unexpected", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]

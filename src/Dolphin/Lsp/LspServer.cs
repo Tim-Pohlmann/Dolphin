@@ -125,10 +125,7 @@ public static class LspServer
     private static async Task ValidateAndPublishAsync(Stream stdout, string uri, string text)
     {
         if (!IsDolphinRulesFile(uri))
-        {
-            await PublishDiagnosticsAsync(stdout, uri, []);
-            return;
-        }
+            return; // not a Dolphin rules file — ignore, don't touch other servers' diagnostics
 
         if (_opengrepBinary is null)
             return; // binary not ready; skip silently

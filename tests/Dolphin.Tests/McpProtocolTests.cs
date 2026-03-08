@@ -24,22 +24,10 @@ public class McpProtocolTests
         throw new InvalidOperationException("Could not locate src/Dolphin/Dolphin.csproj");
     }
 
-    /// <summary>
-    /// Finds the already-built Dolphin.dll — see CheckCommandTests for rationale.
-    /// </summary>
-    private static string FindDolphinDllPath()
-    {
-        var projectPath = FindDolphinProjectPath();
-        var baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var tfm = Path.GetFileName(baseDir);
-        var config = Path.GetFileName(Path.GetDirectoryName(baseDir)!);
-        return Path.Combine(projectPath, "bin", config, tfm, "dolphin.dll");
-    }
-
     private static Process StartServer()
     {
-        var dllPath = FindDolphinDllPath();
-        var psi = new ProcessStartInfo("dotnet", $"exec \"{dllPath}\" serve --stdio")
+        var projectPath = FindDolphinProjectPath();
+        var psi = new ProcessStartInfo("dotnet", $"run --no-build --project \"{projectPath}\" -- serve --stdio")
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,

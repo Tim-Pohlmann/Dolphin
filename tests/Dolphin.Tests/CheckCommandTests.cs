@@ -35,26 +35,13 @@ public class CheckCommandTests
         throw new InvalidOperationException("Could not locate src/Dolphin/Dolphin.csproj");
     }
 
-    /// <summary>
-    /// Finds the already-built Dolphin.dll by mirroring the current test output
-    /// directory's config and TFM (e.g. Release/net10.0) under src/Dolphin/bin/.
-    /// Using <c>dotnet exec</c> against this DLL is ~10× faster than
-    /// <c>dotnet run --project</c> because it skips recompilation.
-    /// </summary>
-    private static string FindDolphinDllPath()
-    {
-        var projectPath = FindDolphinProjectPath();
-        var baseDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var tfm = Path.GetFileName(baseDir);
-        var config = Path.GetFileName(Path.GetDirectoryName(baseDir)!);
-        return Path.Combine(projectPath, "bin", config, tfm, "dolphin.dll");
-    }
-
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDolphinAsync(
         string args, CancellationToken ct = default)
     {
-        var dllPath = FindDolphinDllPath();
-        var psi = new ProcessStartInfo("dotnet", $"exec \"{dllPath}\" {args}")
+        var projectPath = FindDolphinProjectPath();
+        // --no-build skips MSBuild recompilation while still resolving the output
+        // path correctly regardless of SelfContained/RID settings in the csproj.
+        var psi = new ProcessStartInfo("dotnet", $"run --no-build --project \"{projectPath}\" -- {args}")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

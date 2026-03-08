@@ -57,6 +57,8 @@ dotnet publish src/Dolphin -r win-x64     -c Release -o bin/
 
 Code quality and coverage are tracked via [SonarCloud](https://sonarcloud.io/project/overview?id=Tim-Pohlmann_Dolphin) (public project, no token needed to view results).
 
+SonarCloud integrates as Roslyn analyzers during the CI build, so its issues appear as **compiler warnings in the "Build" step of the GitHub Actions log** — no SonarCloud login required. Look at the `dotnet build` output in CI to see all current issues without needing browser access to sonarcloud.io.
+
 ## Key conventions
 
 - **Scanner binary**: Opengrep is bundled as `opengrep`/`opengrep.exe` at publish time via the `BundleOpengrep` MSBuild target. For dev/source runs, `opengrep` (then `semgrep` as fallback) is resolved from PATH.

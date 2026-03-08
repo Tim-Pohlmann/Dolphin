@@ -97,4 +97,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { getVersion, getRid };
+module.exports = { getVersion, getRid, download, ensureBinary };

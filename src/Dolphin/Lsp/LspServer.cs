@@ -41,9 +41,9 @@ public static class LspServer
         _shutdownReceived = false;
         // Drain atomically: TryRemove per key avoids losing a CTS inserted between
         // a foreach snapshot and a subsequent Clear().
-        foreach (var key in _validationCts.Keys.ToArray())
-            if (_validationCts.TryRemove(key, out var old))
-                old.Cancel(); // disposal is owned by each task's using(cts) block
+        var cancelTasks = _validationCts.Keys.ToArray()
+            .Select(key => _validationCts.TryRemove(key, out var old) ? old.CancelAsync() : Task.CompletedTask);
+        await Task.WhenAll(cancelTasks);
 
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
@@ -54,37 +54,9 @@ public static class LspServer
 
         while (true)
         {
-            string? header;
-            try { header = await reader.ReadHeaderAsync(); }
-            catch (Exception ex)
-            {
-                await Console.Error.WriteLineAsync($"[dolphin-lsp] error reading header: {ex.Message}");
-                break;
-            }
-            if (header is null) break; // stdin closed
-
-            // Case-insensitive per the LSP spec (HTTP-style headers).
-            var clMatch = Regex.Match(header, @"Content-Length:\s*(\d+)",
-                RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-            if (!clMatch.Success) continue; // no Content-Length — skip malformed header
-
-            // Parse as long to catch values that overflow int; treat as too-large → close.
-            if (!long.TryParse(clMatch.Groups[1].Value, out var lengthLong) || lengthLong > MaxBodyBytes)
-            {
-                await Console.Error.WriteLineAsync($"[dolphin-lsp] message body too large or malformed Content-Length; closing connection.");
-                break;
-            }
-            var length = (int)lengthLong;
-
-            byte[] body;
-            try { body = await reader.ReadBodyAsync(length); }
-            catch (EndOfStreamException) { break; } // stdin closed mid-message
-            catch (Exception ex)
-            {
-                await Console.Error.WriteLineAsync($"[dolphin-lsp] error reading body: {ex.Message}");
-                break;
-            }
-
+            var (close, body) = await TryReadNextMessageAsync(reader);
+            if (close) break;
+            if (body is null) continue; // no Content-Length — skip malformed header
             try
             {
                 using var doc = JsonDocument.Parse(body);
@@ -94,6 +66,44 @@ public static class LspServer
             {
                 await Console.Error.WriteLineAsync($"[dolphin-lsp] failed to parse message: {ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// Reads the next LSP header + body from <paramref name="reader"/>.
+    /// Returns <c>(Close: true, _)</c> when the loop should exit (stdin closed or fatal error).
+    /// Returns <c>(Close: false, null)</c> when the header had no Content-Length (skip).
+    /// Returns <c>(Close: false, body)</c> when a complete message was read.
+    /// </summary>
+    private static async Task<(bool Close, byte[]? Body)> TryReadNextMessageAsync(LspReader reader)
+    {
+        string? header;
+        try { header = await reader.ReadHeaderAsync(); }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] error reading header: {ex.Message}");
+            return (true, null);
+        }
+        if (header is null) return (true, null); // stdin closed
+
+        // Case-insensitive per the LSP spec (HTTP-style headers).
+        var clMatch = Regex.Match(header, @"Content-Length:\s*(\d+)",
+            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+        if (!clMatch.Success) return (false, null);
+
+        // Parse as long to catch values that overflow int; treat as too-large → close.
+        if (!long.TryParse(clMatch.Groups[1].Value, out var lengthLong) || lengthLong > MaxBodyBytes)
+        {
+            await Console.Error.WriteLineAsync("[dolphin-lsp] message body too large or malformed Content-Length; closing connection.");
+            return (true, null);
+        }
+
+        try { return (false, await reader.ReadBodyAsync((int)lengthLong)); }
+        catch (EndOfStreamException) { return (true, null); } // stdin closed mid-message
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] error reading body: {ex.Message}");
+            return (true, null);
         }
     }
 

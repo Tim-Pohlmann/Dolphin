@@ -1,17 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace Dolphin.Scanner;
 
 public static class Runner
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        NumberHandling = JsonNumberHandling.AllowReadingFromString
-    };
-
     /// <summary>
     /// Runs the scanner against <paramref name="cwd"/> using .dolphin/rules.yaml.
     /// Optionally filters to a single rule ID.

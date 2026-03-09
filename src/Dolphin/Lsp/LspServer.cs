@@ -26,6 +26,10 @@ public static class LspServer
     // Per-URI cancellation: cancels superseded validations on rapid edits.
     private static readonly ConcurrentDictionary<string, CancellationTokenSource> _validationCts = new();
 
+    // Safety caps to prevent OOM from malformed/hostile clients.
+    internal const int MaxHeaderBytes = 8 * 1024;        // 8 KB — headers are tiny
+    internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
+
     public static async Task RunAsync()
     {
         // Best-effort early resolution; if it fails we retry on first validate.
@@ -42,9 +46,15 @@ public static class LspServer
 
             // Case-insensitive per the LSP spec (HTTP-style headers).
             var clMatch = Regex.Match(header, @"Content-Length:\s*(\d+)",
-                RegexOptions.IgnoreCase);
+                RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
             if (!clMatch.Success || !int.TryParse(clMatch.Groups[1].Value, out var length))
                 continue;
+
+            if (length > MaxBodyBytes)
+            {
+                await Console.Error.WriteLineAsync($"[dolphin-lsp] message body too large ({length} bytes); skipping.");
+                continue;
+            }
 
             var body = await reader.ReadBodyAsync(length);
 
@@ -116,7 +126,9 @@ public static class LspServer
                 {
                     var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                     CancelAndRemove(uri);
-                    await PublishDiagnosticsAsync(stdout, uri, []);
+                    // Only clear diagnostics we published; don't stomp on other servers.
+                    if (IsDolphinRulesFile(uri))
+                        await PublishDiagnosticsAsync(stdout, uri, []);
                     break;
                 }
 
@@ -231,9 +243,14 @@ public static class LspServer
             using var proc = Process.Start(psi)!;
             try
             {
-                var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
-                var stderr = await proc.StandardError.ReadToEndAsync(ct);
+                // Read stdout and stderr concurrently to avoid deadlock when
+                // the child fills one pipe while we're blocked reading the other.
+                var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
+                var stderrTask = proc.StandardError.ReadToEndAsync(ct);
+                await Task.WhenAll(stdoutTask, stderrTask);
                 await proc.WaitForExitAsync(ct);
+                var stdout = await stdoutTask;
+                var stderr = await stderrTask;
 
                 return proc.ExitCode == 0
                     ? []
@@ -375,6 +392,9 @@ internal sealed class LspReader(Stream stream)
             if (b < 0) return null;
 
             header.Add((byte)b);
+
+            if (header.Count > LspServer.MaxHeaderBytes)
+                throw new InvalidDataException($"LSP header exceeds {LspServer.MaxHeaderBytes} bytes.");
 
             // Check if last four bytes are \r \n \r \n
             if (b == '\n' && b2 == '\r' && b1 == '\n' && b0 == '\r')

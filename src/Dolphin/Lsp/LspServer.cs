@@ -30,15 +30,20 @@ public static class LspServer
     internal const int MaxHeaderBytes = 8 * 1024;        // 8 KB — headers are tiny
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
 
+    private const int ProcessReaperTimeoutSeconds = 5;
+    private const int JsonRpcInternalError = -32603;
+
     private const string JsonRpc = "jsonrpc";
 
     public static async Task RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
         // Reset per-session state so in-process re-entry starts clean.
         _shutdownReceived = false;
-        foreach (var kv in _validationCts)
-            kv.Value.Cancel(); // disposal is owned by each task's using(cts) block
-        _validationCts.Clear();
+        // Drain atomically: TryRemove per key avoids losing a CTS inserted between
+        // a foreach snapshot and a subsequent Clear().
+        foreach (var key in _validationCts.Keys.ToArray())
+            if (_validationCts.TryRemove(key, out var old))
+                old.Cancel(); // disposal is owned by each task's using(cts) block
 
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
@@ -183,7 +188,7 @@ public static class LspServer
                     WriteId(w, id);
                     w.WritePropertyName("error");
                     w.WriteStartObject();
-                    w.WriteNumber("code", -32603); // InternalError
+                    w.WriteNumber("code", JsonRpcInternalError);
                     w.WriteString("message", ex.Message);
                     w.WriteEndObject();
                     w.WriteEndObject();
@@ -194,9 +199,9 @@ public static class LspServer
     // ── Validation ────────────────────────────────────────────────────────────
 
     private static bool IsDolphinRulesFile(string uri) =>
-        (uri.Contains("/.dolphin/") || uri.Contains("\\.dolphin\\")) &&
         (uri.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
-         uri.EndsWith(".yml",  StringComparison.OrdinalIgnoreCase));
+         uri.EndsWith(".yml",  StringComparison.OrdinalIgnoreCase)) &&
+        (uri.Contains("/.dolphin/") || uri.Contains("\\.dolphin\\"));
 
     /// <summary>
     /// Cancels any in-flight validation for <paramref name="uri"/> and returns a fresh
@@ -281,12 +286,10 @@ public static class LspServer
                 var stderrTask = proc.StandardError.ReadToEndAsync(ct);
                 await Task.WhenAll(stdoutTask, stderrTask);
                 await proc.WaitForExitAsync(ct);
-                var stdout = await stdoutTask;
-                var stderr = await stderrTask;
 
                 return proc.ExitCode == 0
                     ? []
-                    : LspDiagnosticsParser.Parse(stdout + stderr);
+                    : LspDiagnosticsParser.Parse(stdoutTask.Result + stderrTask.Result);
             }
             catch (OperationCanceledException)
             {
@@ -295,7 +298,7 @@ public static class LspServer
                 // Reap the child to avoid zombie processes on Unix.
                 try
                 {
-                    using var reaperCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    using var reaperCts = new CancellationTokenSource(TimeSpan.FromSeconds(ProcessReaperTimeoutSeconds));
                     await proc.WaitForExitAsync(reaperCts.Token);
                 }
                 catch { /* best-effort */ }

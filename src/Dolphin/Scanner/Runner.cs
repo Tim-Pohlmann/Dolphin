@@ -45,9 +45,14 @@ public static class Runner
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
         using var proc = Process.Start(psi)!;
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
+        // Read stdout and stderr concurrently to avoid deadlock when
+        // the child fills one pipe while we're blocked reading the other.
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        await Task.WhenAll(stdoutTask, stderrTask);
         await proc.WaitForExitAsync();
+        var stdout = stdoutTask.Result;
+        var stderr = stderrTask.Result;
 
         // Exit 0 = clean, 1 = findings present, 2+ = error
         if (proc.ExitCode >= 2)

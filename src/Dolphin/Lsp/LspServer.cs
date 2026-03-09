@@ -32,14 +32,14 @@ public static class LspServer
 
     private const string JsonRpc = "jsonrpc";
 
-    public static async Task RunAsync()
+    public static async Task RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
         catch { /* will retry lazily */ }
 
-        var reader = new LspReader(Console.OpenStandardInput());
-        var stdout = Console.OpenStandardOutput();
+        var reader = new LspReader(inputStream ?? Console.OpenStandardInput());
+        var stdout = outputStream ?? Console.OpenStandardOutput();
 
         while (true)
         {

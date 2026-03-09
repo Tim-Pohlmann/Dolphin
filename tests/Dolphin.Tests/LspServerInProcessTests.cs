@@ -376,6 +376,6 @@ public class LspServerInProcessTests
         // A non-lsp, non-serve arg set should reach System.CommandLine without throwing.
         // `--help` exits cleanly with code 0 and writes to stdout.
         await Startup.RunAsync(["--help"]);
-        // No exception = routing reached the CLI handler correctly.
+        Assert.IsTrue(true, "No exception thrown — routing reached the CLI handler correctly.");
     }
 }

@@ -101,9 +101,10 @@ public class LspServerInProcessTests
     }
 
     [TestMethod]
-    public async Task RunAsync_OversizedBodyHeader_SkipsThenProcessesNext()
+    public async Task RunAsync_OversizedBodyHeader_ClosesConnection()
     {
-        // Content-Length > MaxBodyBytes → logged to stderr, continue; next message processed.
+        // Content-Length > MaxBodyBytes → server breaks the loop immediately to avoid
+        // stream desynchronization; no response is sent for subsequent messages.
         var ms = new MemoryStream();
         ms.Write(Encoding.ASCII.GetBytes($"Content-Length: {LspServer.MaxBodyBytes + 1}\r\n\r\n"));
         var shutdownJson = """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""";
@@ -115,8 +116,8 @@ public class LspServerInProcessTests
         await LspServer.RunAsync(inputStream: new MemoryStream(ms.ToArray()), outputStream: output);
         var responses = ParseOutput(output.ToArray());
 
-        Assert.AreEqual(1, responses.Count);
-        Assert.IsTrue(responses[0].ContainsKey("result"));
+        // Server exited cleanly without processing the next message.
+        Assert.AreEqual(0, responses.Count);
     }
 
     [TestMethod]

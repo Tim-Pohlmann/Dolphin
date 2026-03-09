@@ -93,6 +93,10 @@ public class LspServerTests
             var m = Regex.Match(line, @"^Content-Length:\s*(\d+)$", RegexOptions.IgnoreCase);
             if (m.Success) contentLength = int.Parse(m.Groups[1].Value);
         }
+        // Content-Length is in bytes; we read chars here.  Mixing BaseStream reads
+        // with the StreamReader used for ReadLineAsync above is unsafe due to the
+        // StreamReader's internal buffer, so we read chars via the StreamReader instead.
+        // All LSP messages in these tests are pure ASCII JSON, so bytes == chars.
         var buf = new char[contentLength];
         int offset = 0;
         while (offset < contentLength)
@@ -105,6 +109,7 @@ public class LspServerTests
         using var cts = new CancellationTokenSource(timeoutMs);
         try { return await ReceiveLspMessageAsync(proc, cts.Token); }
         catch (OperationCanceledException) { return null; }
+        catch (EndOfStreamException) { return null; }
     }
 
     // ── Integration tests ──────────────────────────────────────────────────────
@@ -210,22 +215,24 @@ public class LspServerTests
     }
 
     [TestMethod]
-    public async Task LspServer_OversizedBody_SkipsMessageAndRemainsResponsive()
+    public async Task LspServer_OversizedBody_ClosesConnection()
     {
+        // When Content-Length exceeds MaxBodyBytes the server breaks the message
+        // loop immediately to avoid stream desynchronization.  The process must
+        // exit cleanly (no hang, no crash).
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         using var proc = StartLspServer();
         try
         {
-            // Claim a body far beyond MaxBodyBytes; send no body bytes so the
-            // server skips it and reads the next header from the stream.
             proc.StandardInput.Write("Content-Length: 20000000\r\n\r\n");
             proc.StandardInput.Flush();
 
-            SendLsp(proc, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
-            var response = await ReceiveLspMessageAsync(proc, cts.Token);
+            // Server should exit; attempting to read from its stdout gives null/EOF.
+            var msg = await TryReceiveLspMessageAsync(proc, timeoutMs: 5000);
+            Assert.IsNull(msg, "Expected no response after oversized-body disconnect");
 
-            Assert.IsNull(response["error"]);
-            Assert.IsNotNull(response["result"]?["capabilities"]);
+            using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await proc.WaitForExitAsync(exitCts.Token);
         }
         finally
         {

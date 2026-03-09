@@ -54,8 +54,8 @@ public static class LspServer
 
             if (length > MaxBodyBytes)
             {
-                await Console.Error.WriteLineAsync($"[dolphin-lsp] message body too large ({length} bytes); skipping.");
-                continue;
+                await Console.Error.WriteLineAsync($"[dolphin-lsp] message body too large ({length} bytes); closing connection.");
+                break;
             }
 
             var body = await reader.ReadBodyAsync(length);

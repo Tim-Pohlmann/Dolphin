@@ -36,6 +36,11 @@ public static class LspServer
     {
         // Reset per-session state so in-process re-entry starts clean.
         _shutdownReceived = false;
+        foreach (var kv in _validationCts)
+        {
+            kv.Value.Cancel();
+            kv.Value.Dispose();
+        }
         _validationCts.Clear();
 
         // Best-effort early resolution; if it fails we retry on first validate.
@@ -47,7 +52,13 @@ public static class LspServer
 
         while (true)
         {
-            var header = await reader.ReadHeaderAsync();
+            string? header;
+            try { header = await reader.ReadHeaderAsync(); }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"[dolphin-lsp] error reading header: {ex.Message}");
+                break;
+            }
             if (header is null) break; // stdin closed
 
             // Case-insensitive per the LSP spec (HTTP-style headers).
@@ -191,7 +202,10 @@ public static class LspServer
         _validationCts.AddOrUpdate(uri, cts, (_, prev) =>
         {
             prev.Cancel();
-            prev.Dispose();
+            // Do not dispose prev here: the in-flight validation task may still
+            // be awaiting with prev.Token (e.g. WaitForExitAsync), and calling
+            // Dispose() while Register() is in flight throws ObjectDisposedException.
+            // The CTS is collected by the GC once the task releases its reference.
             return cts;
         });
         return cts.Token;

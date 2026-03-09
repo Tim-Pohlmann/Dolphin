@@ -34,6 +34,10 @@ public static class LspServer
 
     public static async Task RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
+        // Reset per-session state so in-process re-entry starts clean.
+        _shutdownReceived = false;
+        _validationCts.Clear();
+
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
         catch { /* will retry lazily */ }
@@ -49,14 +53,15 @@ public static class LspServer
             // Case-insensitive per the LSP spec (HTTP-style headers).
             var clMatch = Regex.Match(header, @"Content-Length:\s*(\d+)",
                 RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-            if (!clMatch.Success || !int.TryParse(clMatch.Groups[1].Value, out var length))
-                continue;
+            if (!clMatch.Success) continue; // no Content-Length — skip malformed header
 
-            if (length > MaxBodyBytes)
+            // Parse as long to catch values that overflow int; treat as too-large → close.
+            if (!long.TryParse(clMatch.Groups[1].Value, out var lengthLong) || lengthLong > MaxBodyBytes)
             {
-                await Console.Error.WriteLineAsync($"[dolphin-lsp] message body too large ({length} bytes); closing connection.");
+                await Console.Error.WriteLineAsync($"[dolphin-lsp] message body too large or malformed Content-Length; closing connection.");
                 break;
             }
+            var length = (int)lengthLong;
 
             var body = await reader.ReadBodyAsync(length);
 

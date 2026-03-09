@@ -12,7 +12,7 @@ namespace Dolphin.Tests;
 /// instrument the server code directly — unlike the spawned-process integration tests.
 /// </summary>
 [TestClass]
-public class LspServerInProcessTests
+public partial class LspServerInProcessTests
 {
     // ── Wire-protocol helpers ─────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ public class LspServerInProcessTests
             int headerEnd = IndexOf(bytes, pos, "\r\n\r\n"u8);
             if (headerEnd < 0) break;
             var headerStr = Encoding.ASCII.GetString(bytes, pos, headerEnd - pos);
-            var m = Regex.Match(headerStr, @"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase);
+            var m = ContentLengthRegex().Match(headerStr);
             if (!m.Success) break;
             var length = int.Parse(m.Groups[1].Value);
             pos = headerEnd + 4;
@@ -379,4 +379,7 @@ public class LspServerInProcessTests
         var completed = await Task.WhenAny(task, Task.Delay(5000)) == task;
         Assert.IsTrue(completed, "RunAsync([\"--help\"]) must complete promptly — CLI routing hung or threw");
     }
+
+    [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex ContentLengthRegex();
 }

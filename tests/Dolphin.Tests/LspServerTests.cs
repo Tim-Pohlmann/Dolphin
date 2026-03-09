@@ -11,7 +11,7 @@ namespace Dolphin.Tests;
 /// Integration tests spawn `dolphin lsp` and speak the LSP wire protocol.
 /// </summary>
 [TestClass]
-public class LspServerTests
+public partial class LspServerTests
 {
     // ── LspReader unit tests ───────────────────────────────────────────────────
 
@@ -51,7 +51,7 @@ public class LspServerTests
 
         var header = await reader.ReadHeaderAsync();
         Assert.IsNotNull(header);
-        var len = int.Parse(Regex.Match(header, @"\d+").Value);
+        var len = int.Parse(FirstDigitsRegex().Match(header).Value);
         var body = await reader.ReadBodyAsync(len);
         Assert.AreEqual(json, Encoding.UTF8.GetString(body));
     }
@@ -86,7 +86,7 @@ public class LspServerTests
     {
         string header = await reader.ReadHeaderAsync().WaitAsync(ct)
                         ?? throw new EndOfStreamException("LSP server closed stdout");
-        var m = Regex.Match(header, @"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase);
+        var m = ContentLengthRegex().Match(header);
         int contentLength = m.Success ? int.Parse(m.Groups[1].Value) : 0;
         var body = await reader.ReadBodyAsync(contentLength).WaitAsync(ct);
         return (JsonObject)JsonNode.Parse(body)!;
@@ -361,7 +361,7 @@ public class LspServerTests
         Array.Fill(payload, (byte)'A');
         var reader = new LspReader(new MemoryStream(payload));
 
-        await Assert.ThrowsExceptionAsync<InvalidDataException>(() => reader.ReadHeaderAsync());
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => reader.ReadHeaderAsync());
     }
 
     [TestMethod]
@@ -369,7 +369,7 @@ public class LspServerTests
     {
         // Stream has only 3 bytes but we request 10.
         var reader = new LspReader(new MemoryStream(new byte[3]));
-        await Assert.ThrowsExceptionAsync<EndOfStreamException>(() => reader.ReadBodyAsync(10));
+        await Assert.ThrowsExactlyAsync<EndOfStreamException>(() => reader.ReadBodyAsync(10));
     }
 
     [TestMethod]
@@ -383,4 +383,10 @@ public class LspServerTests
         Assert.IsNotNull(header);
         StringAssert.Contains(header, "X-Custom");
     }
+
+    [GeneratedRegex(@"\d+")]
+    private static partial Regex FirstDigitsRegex();
+
+    [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]
+    private static partial Regex ContentLengthRegex();
 }

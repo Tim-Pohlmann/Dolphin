@@ -41,7 +41,7 @@ public static class LspServer
         _shutdownReceived = false;
         // Drain atomically: TryRemove per key avoids losing a CTS inserted between
         // a foreach snapshot and a subsequent Clear().
-        var cancelTasks = _validationCts.Keys.ToArray()
+        var cancelTasks = _validationCts.Keys
             .Select(key => _validationCts.TryRemove(key, out var old) ? old.CancelAsync() : Task.CompletedTask);
         await Task.WhenAll(cancelTasks);
 

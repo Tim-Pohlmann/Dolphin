@@ -88,6 +88,6 @@ internal static partial class LspDiagnosticsParser
     private static LspDiagnostic MakeFallbackDiagnostic(string output) =>
         new(Range: new LspRange(new LspPosition(0, 0), new LspPosition(0, int.MaxValue)),
             Severity: 1, Source: "opengrep",
-            Message: output.Trim().Split('\n')[0],
+            Message: output.Trim().Split('\n')[0].TrimEnd('\r'),
             Pending: false);
 }

@@ -122,6 +122,7 @@ public static class LspServer
             switch (method)
             {
                 case "initialize":
+                    if (id.ValueKind == JsonValueKind.Undefined) break; // notification — no response
                     await SendAsync(stdout, w =>
                     {
                         w.WriteStartObject();
@@ -171,6 +172,7 @@ public static class LspServer
 
                 case "shutdown":
                     _shutdownReceived = true;
+                    if (id.ValueKind == JsonValueKind.Undefined) break; // notification — no response
                     await SendAsync(stdout, w =>
                     {
                         w.WriteStartObject();
@@ -267,6 +269,12 @@ public static class LspServer
             }
             catch (OperationCanceledException) { /* superseded by a newer edit */ }
             catch { /* swallow — must not propagate from fire-and-forget */ }
+            finally
+            {
+                // Remove from the map before disposal; if CancelPrevious already replaced
+                // this CTS with a newer one the TryRemove is a no-op and the new CTS is safe.
+                _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
+            }
         }
     }
 

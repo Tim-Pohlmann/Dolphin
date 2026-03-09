@@ -30,6 +30,8 @@ public static class LspServer
     internal const int MaxHeaderBytes = 8 * 1024;        // 8 KB — headers are tiny
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
 
+    private const string JsonRpc = "jsonrpc";
+
     public static async Task RunAsync()
     {
         // Best-effort early resolution; if it fails we retry on first validate.
@@ -88,7 +90,7 @@ public static class LspServer
                     await SendAsync(stdout, w =>
                     {
                         w.WriteStartObject();
-                        w.WriteString("jsonrpc", "2.0");
+                        w.WriteString(JsonRpc, "2.0");
                         WriteId(w, id);
                         w.WritePropertyName("result");
                         w.WriteStartObject();
@@ -137,7 +139,7 @@ public static class LspServer
                     await SendAsync(stdout, w =>
                     {
                         w.WriteStartObject();
-                        w.WriteString("jsonrpc", "2.0");
+                        w.WriteString(JsonRpc, "2.0");
                         WriteId(w, id);
                         w.WriteNull("result");
                         w.WriteEndObject();
@@ -157,7 +159,7 @@ public static class LspServer
                 await SendAsync(stdout, w =>
                 {
                     w.WriteStartObject();
-                    w.WriteString("jsonrpc", "2.0");
+                    w.WriteString(JsonRpc, "2.0");
                     WriteId(w, id);
                     w.WritePropertyName("error");
                     w.WriteStartObject();
@@ -312,7 +314,7 @@ public static class LspServer
         await SendAsync(stdout, w =>
         {
             w.WriteStartObject();
-            w.WriteString("jsonrpc", "2.0");
+            w.WriteString(JsonRpc, "2.0");
             w.WriteString("method", "textDocument/publishDiagnostics");
             w.WritePropertyName("params");
             w.WriteStartObject();

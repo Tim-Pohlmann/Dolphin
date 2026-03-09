@@ -158,7 +158,7 @@ public class LspServerTests
             await ReceiveLspMessageAsync(proc, cts.Token);
 
             const string uri = "file:///tmp/.dolphin/rules.yaml";
-            SendLsp(proc, $$"""{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"{{uri}}"}}}""");
+            SendLsp(proc, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\"}}}");
 
             // didClose synchronously publishes empty diagnostics before the next message is read
             var notif = await ReceiveLspMessageAsync(proc, cts.Token);

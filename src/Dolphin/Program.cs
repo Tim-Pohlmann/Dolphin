@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Dolphin;
 using Dolphin.Cli;
 using Dolphin.Lsp;
 using Dolphin.Mcp;
@@ -9,28 +10,31 @@ using Dolphin.Mcp;
 
 await Startup.RunAsync(args);
 
-internal static class Startup
+namespace Dolphin
 {
-    internal static async Task RunAsync(string[] args, Stream? inputStream = null, Stream? outputStream = null)
+    internal static class Startup
     {
-        if (args is ["serve", "--stdio"])
+        internal static async Task RunAsync(string[] args, Stream? inputStream = null, Stream? outputStream = null)
         {
-            await McpServer.RunAsync();
-            return;
+            if (args is ["serve", "--stdio"])
+            {
+                await McpServer.RunAsync();
+                return;
+            }
+
+            if (args is ["lsp"])
+            {
+                await LspServer.RunAsync(inputStream, outputStream);
+                return;
+            }
+
+            var root = new RootCommand("Dolphin — custom static analysis powered by Opengrep")
+            {
+                CheckCommand.Build()
+            };
+
+            root.Name = "dolphin";
+            await root.InvokeAsync(args);
         }
-
-        if (args is ["lsp"])
-        {
-            await LspServer.RunAsync(inputStream, outputStream);
-            return;
-        }
-
-        var root = new RootCommand("Dolphin — custom static analysis powered by Opengrep")
-        {
-            CheckCommand.Build()
-        };
-
-        root.Name = "dolphin";
-        await root.InvokeAsync(args);
     }
 }

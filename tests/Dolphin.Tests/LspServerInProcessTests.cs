@@ -276,7 +276,7 @@ public class LspServerInProcessTests
     {
         const string uri = "file:///project/.dolphin/rules.yaml";
         var responses = await RunServerAsync(
-            $$$"""{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"{{{uri}}}"}}}""",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\"}}}",
             """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
         var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
@@ -303,8 +303,8 @@ public class LspServerInProcessTests
         // Open then immediately close the same URI: CancelPrevious then CancelAndRemove.
         const string uri = "file:///project/.dolphin/rules.yaml";
         var responses = await RunServerAsync(
-            $$$"""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"{{{uri}}}","languageId":"yaml","version":1,"text":"rules: []"}}}""",
-            $$$"""{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"{{{uri}}}"}}}""",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\"}}}",
             """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
         var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");

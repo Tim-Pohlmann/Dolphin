@@ -37,10 +37,7 @@ public static class LspServer
         // Reset per-session state so in-process re-entry starts clean.
         _shutdownReceived = false;
         foreach (var kv in _validationCts)
-        {
-            kv.Value.Cancel();
-            kv.Value.Dispose();
-        }
+            kv.Value.Cancel(); // disposal is owned by each task's using(cts) block
         _validationCts.Clear();
 
         // Best-effort early resolution; if it fails we retry on first validate.
@@ -202,22 +199,23 @@ public static class LspServer
          uri.EndsWith(".yml",  StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// Cancels any in-flight validation for <paramref name="uri"/>, disposes the old CTS,
-    /// and returns a fresh token for the new validation.
+    /// Cancels any in-flight validation for <paramref name="uri"/> and returns a fresh
+    /// <see cref="CancellationTokenSource"/> for the new validation.
+    /// The caller must pass the returned CTS to <see cref="ValidateAndPublishAsync"/>,
+    /// which owns its disposal via <c>using</c>.
     /// </summary>
-    private static CancellationToken CancelPrevious(string uri)
+    private static CancellationTokenSource CancelPrevious(string uri)
     {
         var cts = new CancellationTokenSource();
         _validationCts.AddOrUpdate(uri, cts, (_, prev) =>
         {
             prev.Cancel();
-            // Do not dispose prev here: the in-flight validation task may still
-            // be awaiting with prev.Token (e.g. WaitForExitAsync), and calling
-            // Dispose() while Register() is in flight throws ObjectDisposedException.
-            // The CTS is collected by the GC once the task releases its reference.
+            // Do not dispose prev here: disposal is owned by its associated
+            // ValidateAndPublishAsync task (via using(cts)), so the token remains
+            // valid for any in-flight WaitForExitAsync/Register calls.
             return cts;
         });
-        return cts.Token;
+        return cts;
     }
 
     /// <summary>
@@ -229,28 +227,32 @@ public static class LspServer
         if (_validationCts.TryRemove(uri, out var cts))
         {
             cts.Cancel();
-            cts.Dispose();
+            // Disposal is owned by the associated ValidateAndPublishAsync task.
         }
     }
 
     private static async Task ValidateAndPublishAsync(
-        Stream stdout, string uri, string text, CancellationToken ct)
+        Stream stdout, string uri, string text, CancellationTokenSource cts)
     {
-        try
+        using (cts) // owns disposal; keeps the token alive for the full duration
         {
-            // Lazy retry: attempt resolution if startup failed.
-            if (_opengrepBinary is null)
+            var ct = cts.Token;
+            try
             {
-                try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-                catch { return; }
-            }
+                // Lazy retry: attempt resolution if startup failed.
+                if (_opengrepBinary is null)
+                {
+                    try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
+                    catch { return; }
+                }
 
-            var diagnostics = await RunValidateAsync(text, ct);
-            ct.ThrowIfCancellationRequested(); // don't publish stale results
-            await PublishDiagnosticsAsync(stdout, uri, diagnostics);
+                var diagnostics = await RunValidateAsync(text, ct);
+                ct.ThrowIfCancellationRequested(); // don't publish stale results
+                await PublishDiagnosticsAsync(stdout, uri, diagnostics);
+            }
+            catch (OperationCanceledException) { /* superseded by a newer edit */ }
+            catch { /* swallow — must not propagate from fire-and-forget */ }
         }
-        catch (OperationCanceledException) { /* superseded by a newer edit */ }
-        catch { /* swallow — must not propagate from fire-and-forget */ }
     }
 
     private static async Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
@@ -289,7 +291,14 @@ public static class LspServer
             catch (OperationCanceledException)
             {
                 // Kill the process so it doesn't linger after a superseded validation.
-                try { proc.Kill(entireProcessTree: true); } catch (Exception) { /* best-effort */ }
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+                // Reap the child to avoid zombie processes on Unix.
+                try
+                {
+                    using var reaperCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    await proc.WaitForExitAsync(reaperCts.Token);
+                }
+                catch { /* best-effort */ }
                 return [];
             }
         }

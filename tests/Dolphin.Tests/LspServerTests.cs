@@ -100,6 +100,13 @@ public class LspServerTests
         return (JsonObject)JsonNode.Parse(new string(buf))!;
     }
 
+    private static async Task<JsonObject?> TryReceiveLspMessageAsync(Process proc, int timeoutMs)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        try { return await ReceiveLspMessageAsync(proc, cts.Token); }
+        catch (OperationCanceledException) { return null; }
+    }
+
     // ── Integration tests ──────────────────────────────────────────────────────
 
     [TestMethod]
@@ -200,5 +207,176 @@ public class LspServerTests
             using var killCts = new CancellationTokenSource(5000);
             try { await proc.WaitForExitAsync(killCts.Token); } catch { }
         }
+    }
+
+    [TestMethod]
+    public async Task LspServer_OversizedBody_SkipsMessageAndRemainsResponsive()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var proc = StartLspServer();
+        try
+        {
+            // Claim a body far beyond MaxBodyBytes; send no body bytes so the
+            // server skips it and reads the next header from the stream.
+            proc.StandardInput.Write("Content-Length: 20000000\r\n\r\n");
+            proc.StandardInput.Flush();
+
+            SendLsp(proc, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
+            var response = await ReceiveLspMessageAsync(proc, cts.Token);
+
+            Assert.IsNull(response["error"]);
+            Assert.IsNotNull(response["result"]?["capabilities"]);
+        }
+        finally
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            using var killCts = new CancellationTokenSource(5000);
+            try { await proc.WaitForExitAsync(killCts.Token); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public async Task LspServer_DidOpen_NonDolphinFile_NoPublishDiagnostics()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var proc = StartLspServer();
+        try
+        {
+            SendLsp(proc, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
+            await ReceiveLspMessageAsync(proc, cts.Token);
+
+            // Non-.dolphin/ URI — server should silently ignore the open.
+            SendLsp(proc, """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///src/main.ts","languageId":"typescript","version":1,"text":""}}}""");
+
+            // Server must immediately handle the next request without publishing diagnostics.
+            SendLsp(proc, """{"jsonrpc":"2.0","id":2,"method":"shutdown"}""");
+            var response = await ReceiveLspMessageAsync(proc, cts.Token);
+
+            // First message back must be the shutdown response, not a publishDiagnostics notification.
+            Assert.IsTrue(response.ContainsKey("result"), $"Expected shutdown result, got: {response}");
+        }
+        finally
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            using var killCts = new CancellationTokenSource(5000);
+            try { await proc.WaitForExitAsync(killCts.Token); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public async Task LspServer_DidChange_NonDolphinFile_NoPublishDiagnostics()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var proc = StartLspServer();
+        try
+        {
+            SendLsp(proc, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
+            await ReceiveLspMessageAsync(proc, cts.Token);
+
+            SendLsp(proc, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///src/main.ts","version":2},"contentChanges":[{"text":"x=1"}]}}""");
+
+            SendLsp(proc, """{"jsonrpc":"2.0","id":2,"method":"shutdown"}""");
+            var response = await ReceiveLspMessageAsync(proc, cts.Token);
+
+            Assert.IsTrue(response.ContainsKey("result"), $"Expected shutdown result, got: {response}");
+        }
+        finally
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            using var killCts = new CancellationTokenSource(5000);
+            try { await proc.WaitForExitAsync(killCts.Token); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public async Task LspServer_DidChange_DolphinFile_ServerRemainsResponsive()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var proc = StartLspServer();
+        try
+        {
+            SendLsp(proc, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
+            await ReceiveLspMessageAsync(proc, cts.Token);
+
+            // Fires the validation path; opengrep may or may not be present — either way
+            // the server must not crash.
+            SendLsp(proc, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///project/.dolphin/rules.yaml","version":2},"contentChanges":[{"text":"rules: []"}]}}""");
+
+            await Task.Delay(300, cts.Token); // let fire-and-forget settle
+
+            SendLsp(proc, """{"jsonrpc":"2.0","id":2,"method":"shutdown"}""");
+            var response = await ReceiveLspMessageAsync(proc, cts.Token);
+
+            // Drain any publishDiagnostics notification that may have arrived first.
+            if (response["method"]?.GetValue<string>() == "textDocument/publishDiagnostics")
+                response = await ReceiveLspMessageAsync(proc, cts.Token);
+
+            Assert.IsTrue(response.ContainsKey("result"), $"Expected shutdown result, got: {response}");
+        }
+        finally
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            using var killCts = new CancellationTokenSource(5000);
+            try { await proc.WaitForExitAsync(killCts.Token); } catch { }
+        }
+    }
+
+    [TestMethod]
+    public async Task LspServer_DidClose_NonDolphinFile_NoPublishDiagnostics()
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var proc = StartLspServer();
+        try
+        {
+            SendLsp(proc, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
+            await ReceiveLspMessageAsync(proc, cts.Token);
+
+            // Non-.dolphin/ URI — no publishDiagnostics should be sent.
+            SendLsp(proc, """{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///src/main.ts"}}}""");
+
+            SendLsp(proc, """{"jsonrpc":"2.0","id":2,"method":"shutdown"}""");
+            var response = await ReceiveLspMessageAsync(proc, cts.Token);
+
+            Assert.IsTrue(response.ContainsKey("result"), $"Expected shutdown result, got: {response}");
+        }
+        finally
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            using var killCts = new CancellationTokenSource(5000);
+            try { await proc.WaitForExitAsync(killCts.Token); } catch { }
+        }
+    }
+
+    // ── LspReader edge-case unit tests ────────────────────────────────────────
+
+    [TestMethod]
+    public async Task LspReader_ReadHeaderAsync_OversizedHeader_ThrowsInvalidDataException()
+    {
+        // Build a stream with more than MaxHeaderBytes before \r\n\r\n.
+        var payload = new byte[LspServer.MaxHeaderBytes + 1];
+        Array.Fill(payload, (byte)'A');
+        var reader = new LspReader(new MemoryStream(payload));
+
+        await Assert.ThrowsExceptionAsync<InvalidDataException>(() => reader.ReadHeaderAsync());
+    }
+
+    [TestMethod]
+    public async Task LspReader_ReadBodyAsync_StreamClosedMidMessage_ThrowsEndOfStreamException()
+    {
+        // Stream has only 3 bytes but we request 10.
+        var reader = new LspReader(new MemoryStream(new byte[3]));
+        await Assert.ThrowsExceptionAsync<EndOfStreamException>(() => reader.ReadBodyAsync(10));
+    }
+
+    [TestMethod]
+    public async Task LspReader_ReadHeaderAsync_BadHeader_NoContentLength_ReturnsHeader()
+    {
+        // A well-formed header sequence that has no Content-Length should still
+        // return the raw string (the loop in RunAsync then skips it via `continue`).
+        var bytes = Encoding.ASCII.GetBytes("X-Custom: value\r\n\r\n");
+        var reader = new LspReader(new MemoryStream(bytes));
+        var header = await reader.ReadHeaderAsync();
+        Assert.IsNotNull(header);
+        StringAssert.Contains(header, "X-Custom");
     }
 }

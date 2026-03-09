@@ -68,7 +68,7 @@ public class LspServerTests
         {
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
+            RedirectStandardError = false, // not consumed — redirecting without draining risks pipe deadlock
             UseShellExecute = false,
         };
         return Process.Start(psi)!;

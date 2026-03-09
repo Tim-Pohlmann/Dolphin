@@ -74,7 +74,14 @@ public static class LspServer
             }
             var length = (int)lengthLong;
 
-            var body = await reader.ReadBodyAsync(length);
+            byte[] body;
+            try { body = await reader.ReadBodyAsync(length); }
+            catch (EndOfStreamException) { break; } // stdin closed mid-message
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"[dolphin-lsp] error reading body: {ex.Message}");
+                break;
+            }
 
             try
             {
@@ -190,7 +197,9 @@ public static class LspServer
     // ── Validation ────────────────────────────────────────────────────────────
 
     private static bool IsDolphinRulesFile(string uri) =>
-        uri.Contains("/.dolphin/") || uri.Contains("\\.dolphin\\");
+        (uri.Contains("/.dolphin/") || uri.Contains("\\.dolphin\\")) &&
+        (uri.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
+         uri.EndsWith(".yml",  StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Cancels any in-flight validation for <paramref name="uri"/>, disposes the old CTS,

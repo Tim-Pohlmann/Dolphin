@@ -166,16 +166,15 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public async Task HandleMessage_Initialize_NoId_WritesNullId()
+    public async Task HandleMessage_Initialize_NoId_NoResponse()
     {
-        // When "id" is absent, WriteId should emit "id": null.
+        // Per JSON-RPC 2.0, a message without "id" is a notification; no response must be sent.
         var responses = await RunServerAsync(
-            """{"jsonrpc":"2.0","method":"initialize","params":{"capabilities":{}}}""");
+            """{"jsonrpc":"2.0","method":"initialize","params":{"capabilities":{}}}""",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-        Assert.AreEqual(1, responses.Count);
-        // JSON null maps to null JsonNode reference in System.Text.Json.Nodes.
-        Assert.IsTrue(responses[0].ContainsKey("id"), "'id' property must be present");
-        Assert.IsNull(responses[0]["id"], "'id' value must be JSON null");
+        Assert.AreEqual(1, responses.Count, "Only shutdown should produce a response");
+        Assert.AreEqual(1, responses[0]["id"]?.GetValue<int>());
     }
 
     [TestMethod]

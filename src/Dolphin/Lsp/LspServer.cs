@@ -122,8 +122,7 @@ public static class LspServer
             switch (method)
             {
                 case "initialize":
-                    if (id.ValueKind == JsonValueKind.Undefined) break; // notification — no response
-                    await SendAsync(stdout, w =>
+                    await MaybeSendAsync(stdout, id, w =>
                     {
                         w.WriteStartObject();
                         w.WriteString(JsonRpc, "2.0");
@@ -172,8 +171,7 @@ public static class LspServer
 
                 case "shutdown":
                     _shutdownReceived = true;
-                    if (id.ValueKind == JsonValueKind.Undefined) break; // notification — no response
-                    await SendAsync(stdout, w =>
+                    await MaybeSendAsync(stdout, id, w =>
                     {
                         w.WriteStartObject();
                         w.WriteString(JsonRpc, "2.0");
@@ -192,19 +190,7 @@ public static class LspServer
         catch (Exception ex)
         {
             await Console.Error.WriteLineAsync($"[dolphin-lsp] error handling '{method}': {ex.Message}");
-            if (id.ValueKind != JsonValueKind.Undefined)
-                await SendAsync(stdout, w =>
-                {
-                    w.WriteStartObject();
-                    w.WriteString(JsonRpc, "2.0");
-                    WriteId(w, id);
-                    w.WritePropertyName("error");
-                    w.WriteStartObject();
-                    w.WriteNumber("code", JsonRpcInternalError);
-                    w.WriteString("message", ex.Message);
-                    w.WriteEndObject();
-                    w.WriteEndObject();
-                });
+            await TrySendErrorAsync(stdout, id, ex);
         }
     }
 
@@ -264,8 +250,7 @@ public static class LspServer
                 }
 
                 var diagnostics = await RunValidateAsync(text, ct);
-                ct.ThrowIfCancellationRequested(); // don't publish stale results
-                await PublishDiagnosticsAsync(stdout, uri, diagnostics);
+                await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
             }
             catch (OperationCanceledException) { /* superseded by a newer edit */ }
             catch { /* swallow — must not propagate from fire-and-forget */ }
@@ -357,6 +342,28 @@ public static class LspServer
         }
     }
 
+    /// <summary>
+    /// Sends a response only when <paramref name="id"/> is present (i.e. the message is a
+    /// request, not a JSON-RPC notification).  Per JSON-RPC 2.0, notifications must not
+    /// be answered.
+    /// </summary>
+    private static Task MaybeSendAsync(Stream stdout, JsonElement id, Action<Utf8JsonWriter> write) =>
+        id.ValueKind == JsonValueKind.Undefined ? Task.CompletedTask : SendAsync(stdout, write);
+
+    private static Task TrySendErrorAsync(Stream stdout, JsonElement id, Exception ex) =>
+        MaybeSendAsync(stdout, id, w =>
+        {
+            w.WriteStartObject();
+            w.WriteString(JsonRpc, "2.0");
+            WriteId(w, id);
+            w.WritePropertyName("error");
+            w.WriteStartObject();
+            w.WriteNumber("code", JsonRpcInternalError);
+            w.WriteString("message", ex.Message);
+            w.WriteEndObject();
+            w.WriteEndObject();
+        });
+
     private static void WriteId(Utf8JsonWriter w, JsonElement id)
     {
         w.WritePropertyName("id");
@@ -367,8 +374,9 @@ public static class LspServer
     }
 
     private static async Task PublishDiagnosticsAsync(
-        Stream stdout, string uri, LspDiagnostic[] diagnostics)
+        Stream stdout, string uri, LspDiagnostic[] diagnostics, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested(); // guard against the window between validation and sending
         await SendAsync(stdout, w =>
         {
             w.WriteStartObject();

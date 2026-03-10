@@ -126,8 +126,8 @@ public static class LspServer
             RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
         if (!clMatch.Success) return (false, null);
 
-        // Parse as long to catch values that overflow int; treat as too-large → close.
-        if (!long.TryParse(clMatch.Groups[1].Value, out var lengthLong) || lengthLong > MaxBodyBytes)
+        // Parse as long to catch values that overflow int; reject zero/negative and too-large → close.
+        if (!long.TryParse(clMatch.Groups[1].Value, out var lengthLong) || lengthLong <= 0 || lengthLong > MaxBodyBytes)
         {
             await Console.Error.WriteLineAsync("[dolphin-lsp] message body too large or malformed Content-Length; closing connection.");
             return (true, null);

@@ -30,7 +30,8 @@ public static class LspServer
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
 
     private const int ProcessReaperTimeoutSeconds = 5;
-    private const int JsonRpcInternalError = -32603;
+    private const int JsonRpcMethodNotFound = -32601;
+    private const int JsonRpcInternalError  = -32603;
 
     private const string JsonRpc = "jsonrpc";
 
@@ -198,6 +199,23 @@ public static class LspServer
 
                 case "exit":
                     return MessageAction.ExitRequested;
+
+                default:
+                    // Notifications (no id) are silently ignored per JSON-RPC 2.0.
+                    // Requests (id present) must receive a response or the client hangs.
+                    await MaybeSendAsync(stdout, id, w =>
+                    {
+                        w.WriteStartObject();
+                        w.WriteString(JsonRpc, "2.0");
+                        WriteId(w, id);
+                        w.WritePropertyName("error");
+                        w.WriteStartObject();
+                        w.WriteNumber("code", JsonRpcMethodNotFound);
+                        w.WriteString("message", $"Method not found: {method}");
+                        w.WriteEndObject();
+                        w.WriteEndObject();
+                    });
+                    break;
             }
         }
         catch (Exception ex)

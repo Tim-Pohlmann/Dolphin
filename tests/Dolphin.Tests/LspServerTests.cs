@@ -73,7 +73,9 @@ public partial class LspServerTests
             StandardInputEncoding = Encoding.UTF8,
             StandardOutputEncoding = Encoding.UTF8,
         };
-        return Process.Start(psi)!;
+        return Process.Start(psi)
+            ?? throw new InvalidOperationException(
+                $"Failed to start LSP server process: dotnet {psi.Arguments}");
     }
 
     private static void SendLsp(Process proc, string json)

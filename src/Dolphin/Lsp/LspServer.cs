@@ -39,6 +39,9 @@ public static class LspServer
     private const string ErrorProperty   = "error";
     private const string MessageProperty = "message";
 
+    private static readonly Regex ContentLengthRegex =
+        new(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1));
+
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
         await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
@@ -122,8 +125,7 @@ public static class LspServer
         if (header is null) return (true, null); // stdin closed
 
         // Case-insensitive per the LSP spec (HTTP-style headers).
-        var clMatch = Regex.Match(header, @"Content-Length:\s*(\d+)",
-            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+        var clMatch = ContentLengthRegex.Match(header);
         if (!clMatch.Success) return (false, null);
 
         // Parse as long to catch values that overflow int; reject zero/negative and too-large → close.
@@ -425,13 +427,15 @@ public static class LspServer
     private static Task TrySendErrorAsync(Stream stdout, JsonElement id, Exception ex) =>
         MaybeSendAsync(stdout, id, w =>
         {
+            // Send a generic message; ex.Message may contain internal paths or details
+            // that should not be exposed over the LSP channel (already logged to stderr).
             w.WriteStartObject();
             w.WriteString(JsonRpc, "2.0");
             WriteId(w, id);
             w.WritePropertyName(ErrorProperty);
             w.WriteStartObject();
             w.WriteNumber("code", JsonRpcInternalError);
-            w.WriteString(MessageProperty, ex.Message);
+            w.WriteString(MessageProperty, "Internal error");
             w.WriteEndObject();
             w.WriteEndObject();
         });
@@ -439,10 +443,20 @@ public static class LspServer
     private static void WriteId(Utf8JsonWriter w, JsonElement id)
     {
         w.WritePropertyName("id");
-        if (id.ValueKind == JsonValueKind.Undefined)
-            w.WriteNullValue();
-        else
-            id.WriteTo(w);
+        // JSON-RPC 2.0: id must be a string, number, or null.
+        // Echo it back only for those kinds; fall back to null for anything else
+        // (object/array/bool) so we never emit an invalid response payload.
+        switch (id.ValueKind)
+        {
+            case JsonValueKind.String:
+            case JsonValueKind.Number:
+            case JsonValueKind.Null:
+                id.WriteTo(w);
+                break;
+            default:
+                w.WriteNullValue();
+                break;
+        }
     }
 
     private static async Task PublishDiagnosticsAsync(

@@ -340,14 +340,14 @@ public partial class LspServerInProcessTests
     public async Task HandleMessage_MalformedParams_WithId_SendsErrorResponse()
     {
         // didOpen with a dolphin URI but missing "text" field → KeyNotFoundException in dispatch.
-        // Since id is present, an error response with code -32603 must be sent.
+        // Since id is present, an error response with code -32602 (Invalid params) must be sent.
         var responses = await RunServerAsync(
             """{"jsonrpc":"2.0","id":7,"method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///project/.dolphin/rules.yaml"}}}""",
             """{"jsonrpc":"2.0","id":8,"method":"shutdown"}""");
 
         var error = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 7 && r.ContainsKey("error"));
         Assert.IsNotNull(error, "Error response expected for malformed params with id");
-        Assert.AreEqual(-32603, error["error"]!["code"]!.GetValue<int>());
+        Assert.AreEqual(-32602, error["error"]!["code"]!.GetValue<int>());
     }
 
     [TestMethod]

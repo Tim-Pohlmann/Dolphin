@@ -340,12 +340,15 @@ public static class LspServer
         var header = $"Content-Length: {buf.WrittenCount}\r\n\r\n";
         var headerBytes = Encoding.ASCII.GetBytes(header);
 
-        await _stdoutLock.WaitAsync(ct); // honour cancellation before acquiring the lock
+        // Honour cancellation before acquiring the lock; once we hold it we must
+        // write atomically — passing ct to WriteAsync/FlushAsync risks a partial
+        // header+body write that would permanently desync the LSP stream.
+        await _stdoutLock.WaitAsync(ct);
         try
         {
-            await stdout.WriteAsync(headerBytes, ct);
-            await stdout.WriteAsync(buf.WrittenMemory, ct);
-            await stdout.FlushAsync(ct);
+            await stdout.WriteAsync(headerBytes, CancellationToken.None);
+            await stdout.WriteAsync(buf.WrittenMemory, CancellationToken.None);
+            await stdout.FlushAsync(CancellationToken.None);
         }
         finally
         {

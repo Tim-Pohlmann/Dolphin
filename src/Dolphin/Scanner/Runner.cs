@@ -44,8 +44,8 @@ public static class Runner
         var stderrTask = proc.StandardError.ReadToEndAsync();
         await Task.WhenAll(stdoutTask, stderrTask);
         await proc.WaitForExitAsync();
-        var stdout = stdoutTask.Result;
-        var stderr = stderrTask.Result;
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
 
         // Exit 0 = clean, 1 = findings present, 2+ = error
         if (proc.ExitCode >= 2)

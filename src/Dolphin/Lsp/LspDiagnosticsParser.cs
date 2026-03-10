@@ -68,7 +68,7 @@ internal static partial class LspDiagnosticsParser
             {
                 Range = new LspRange(
                     new LspPosition(lineNum, colNum),
-                    new LspPosition(lineNum, int.MaxValue)),
+                    new LspPosition(lineNum + 1, 0)),
                 Pending = false,
             };
         }
@@ -82,11 +82,11 @@ internal static partial class LspDiagnosticsParser
     }
 
     private static LspDiagnostic MakePendingDiagnostic(string message) =>
-        new(Range: new LspRange(new LspPosition(0, 0), new LspPosition(0, int.MaxValue)),
+        new(Range: new LspRange(new LspPosition(0, 0), new LspPosition(1, 0)),
             Severity: 1, Source: "opengrep", Message: message, Pending: true);
 
     private static LspDiagnostic MakeFallbackDiagnostic(string output) =>
-        new(Range: new LspRange(new LspPosition(0, 0), new LspPosition(0, int.MaxValue)),
+        new(Range: new LspRange(new LspPosition(0, 0), new LspPosition(1, 0)),
             Severity: 1, Source: "opengrep",
             Message: output.Trim().Split('\n')[0].TrimEnd('\r'),
             Pending: false);

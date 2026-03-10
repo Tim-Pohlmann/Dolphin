@@ -302,7 +302,7 @@ public static class LspServer
 
                 return proc.ExitCode == 0
                     ? []
-                    : LspDiagnosticsParser.Parse(stdoutTask.Result + stderrTask.Result);
+                    : LspDiagnosticsParser.Parse(await stdoutTask + await stderrTask);
             }
             catch (OperationCanceledException)
             {

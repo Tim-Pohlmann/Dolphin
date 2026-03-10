@@ -63,14 +63,11 @@ internal static partial class LspDiagnosticsParser
         }
 
         int col1Based = 0;
-        if (m.Groups[2].Success)
+        if (m.Groups[2].Success && !int.TryParse(m.Groups[2].Value, out col1Based))
         {
-            if (!int.TryParse(m.Groups[2].Value, out col1Based))
-            {
-                lineNum = 0;
-                colNum = 0;
-                return false;
-            }
+            lineNum = 0;
+            colNum = 0;
+            return false;
         }
 
         lineNum = Math.Max(0, line1Based - 1);

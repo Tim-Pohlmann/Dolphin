@@ -54,7 +54,6 @@ public static class LspServer
         var reader = new LspReader(inputStream ?? Console.OpenStandardInput());
         var stdout = outputStream ?? Console.OpenStandardOutput();
 
-        bool shutdownReceived = false;
         while (true)
         {
             var (close, body) = await TryReadNextMessageAsync(reader);
@@ -64,8 +63,7 @@ public static class LspServer
             {
                 using var doc = JsonDocument.Parse(body);
                 var action = await HandleMessageAsync(doc.RootElement, stdout);
-                if (action == MessageAction.ShutdownReceived) shutdownReceived = true;
-                else if (action == MessageAction.ExitRequested) break;
+                if (action == MessageAction.ExitRequested) break;
             }
             catch (JsonException ex)
             {

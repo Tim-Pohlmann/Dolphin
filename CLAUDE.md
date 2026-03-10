@@ -6,7 +6,7 @@ Custom static code analysis powered by [Opengrep](https://opengrep.dev), distrib
 
 ```
 src/Dolphin/
-  Program.cs               Entry point: routes to MCP server or CLI
+  Program.cs               Entry point: routes to MCP server, LSP server, or CLI
   Cli/CheckCommand.cs      `dolphin check` command
   Scanner/Installer.cs     Locates the Opengrep binary (bundled or PATH)
   Scanner/Runner.cs        Invokes Opengrep, parses JSON output

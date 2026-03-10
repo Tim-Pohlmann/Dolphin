@@ -197,6 +197,11 @@ public partial class LspServerTests
                 $"Content-Length: {Encoding.UTF8.GetByteCount(garbage)}\r\n\r\n{garbage}");
             proc.StandardInput.Flush();
 
+            // First response: parse error for the garbage body (JSON-RPC -32700, id: null).
+            var parseError = await ReceiveLspMessageAsync(reader, cts.Token);
+            Assert.IsNull(parseError["id"]);
+            Assert.AreEqual(-32700, parseError["error"]!["code"]!.GetValue<int>());
+
             SendLsp(proc, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
             var response = await ReceiveLspMessageAsync(reader, cts.Token);
 

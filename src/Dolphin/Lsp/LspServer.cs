@@ -35,15 +35,11 @@ public static class LspServer
 
     private const string JsonRpc = "jsonrpc";
 
-    public static async Task RunAsync(Stream? inputStream = null, Stream? outputStream = null)
+    public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
         // Reset per-session state so in-process re-entry starts clean.
         _shutdownReceived = false;
-        // Drain atomically: TryRemove per key avoids losing a CTS inserted between
-        // a foreach snapshot and a subsequent Clear().
-        var cancelTasks = _validationCts.Keys
-            .Select(key => _validationCts.TryRemove(key, out var old) ? old.CancelAsync() : Task.CompletedTask);
-        await Task.WhenAll(cancelTasks);
+        await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
 
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
@@ -60,13 +56,27 @@ public static class LspServer
             try
             {
                 using var doc = JsonDocument.Parse(body);
-                await HandleMessageAsync(doc.RootElement, stdout);
+                if (await HandleMessageAsync(doc.RootElement, stdout)) break; // exit requested
             }
             catch (Exception ex)
             {
                 await Console.Error.WriteLineAsync($"[dolphin-lsp] failed to parse message: {ex.Message}");
             }
         }
+
+        await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
+        return _shutdownReceived ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Atomically cancels all in-flight validations.  TryRemove per key avoids losing a CTS
+    /// inserted between a Keys snapshot and a subsequent Clear().
+    /// </summary>
+    private static Task DrainValidationsAsync()
+    {
+        var tasks = _validationCts.Keys
+            .Select(key => _validationCts.TryRemove(key, out var old) ? old.CancelAsync() : Task.CompletedTask);
+        return Task.WhenAll(tasks);
     }
 
     /// <summary>
@@ -109,9 +119,10 @@ public static class LspServer
 
     // ── Message dispatch ──────────────────────────────────────────────────────
 
-    private static async Task HandleMessageAsync(JsonElement msg, Stream stdout)
+    /// <returns><c>true</c> when the "exit" notification is received and the loop should stop.</returns>
+    private static async Task<bool> HandleMessageAsync(JsonElement msg, Stream stdout)
     {
-        if (!msg.TryGetProperty("method", out var methodEl)) return;
+        if (!msg.TryGetProperty("method", out var methodEl)) return false;
         var method = methodEl.GetString();
 
         msg.TryGetProperty("id", out var id);
@@ -182,9 +193,7 @@ public static class LspServer
                     break;
 
                 case "exit":
-                    // LSP spec: exit 0 if preceded by shutdown, 1 otherwise.
-                    Environment.Exit(_shutdownReceived ? 0 : 1);
-                    break;
+                    return true; // caller (RunAsync) exits with 0 if shutdown was received, 1 otherwise
             }
         }
         catch (Exception ex)
@@ -192,6 +201,7 @@ public static class LspServer
             await Console.Error.WriteLineAsync($"[dolphin-lsp] error handling '{method}': {ex.Message}");
             await TrySendErrorAsync(stdout, id, ex);
         }
+        return false;
     }
 
     // ── Validation ────────────────────────────────────────────────────────────
@@ -320,7 +330,8 @@ public static class LspServer
 
     // ── Wire protocol helpers ─────────────────────────────────────────────────
 
-    private static async Task SendAsync(Stream stdout, Action<Utf8JsonWriter> write)
+    private static async Task SendAsync(Stream stdout, Action<Utf8JsonWriter> write,
+        CancellationToken ct = default)
     {
         var buf = new ArrayBufferWriter<byte>();
         using (var w = new Utf8JsonWriter(buf))
@@ -329,12 +340,12 @@ public static class LspServer
         var header = $"Content-Length: {buf.WrittenCount}\r\n\r\n";
         var headerBytes = Encoding.ASCII.GetBytes(header);
 
-        await _stdoutLock.WaitAsync();
+        await _stdoutLock.WaitAsync(ct); // honour cancellation before acquiring the lock
         try
         {
-            await stdout.WriteAsync(headerBytes);
-            await stdout.WriteAsync(buf.WrittenMemory);
-            await stdout.FlushAsync();
+            await stdout.WriteAsync(headerBytes, ct);
+            await stdout.WriteAsync(buf.WrittenMemory, ct);
+            await stdout.FlushAsync(ct);
         }
         finally
         {
@@ -376,7 +387,6 @@ public static class LspServer
     private static async Task PublishDiagnosticsAsync(
         Stream stdout, string uri, LspDiagnostic[] diagnostics, CancellationToken ct = default)
     {
-        ct.ThrowIfCancellationRequested(); // guard against the window between validation and sending
         await SendAsync(stdout, w =>
         {
             w.WriteStartObject();
@@ -405,7 +415,7 @@ public static class LspServer
             w.WriteEndArray();
             w.WriteEndObject();
             w.WriteEndObject();
-        });
+        }, ct);
     }
 
     private static void WritePosition(Utf8JsonWriter w, LspPosition pos)

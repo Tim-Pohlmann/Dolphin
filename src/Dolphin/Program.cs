@@ -8,25 +8,22 @@ using Dolphin.Mcp;
 // `dolphin lsp`           → LSP server mode (Claude Code plugin uses this)
 // `dolphin check`         → CLI analysis mode
 
-await Startup.RunAsync(args);
+Environment.Exit(await Startup.RunAsync(args));
 
 namespace Dolphin
 {
     internal static class Startup
     {
-        internal static async Task RunAsync(string[] args, Stream? inputStream = null, Stream? outputStream = null)
+        internal static async Task<int> RunAsync(string[] args, Stream? inputStream = null, Stream? outputStream = null)
         {
             if (args is ["serve", "--stdio"])
             {
                 await McpServer.RunAsync();
-                return;
+                return 0;
             }
 
             if (args is ["lsp"])
-            {
-                await LspServer.RunAsync(inputStream, outputStream);
-                return;
-            }
+                return await LspServer.RunAsync(inputStream, outputStream);
 
             var root = new RootCommand("Dolphin — custom static analysis powered by Opengrep")
             {
@@ -34,7 +31,7 @@ namespace Dolphin
             };
 
             root.Name = "dolphin";
-            await root.InvokeAsync(args);
+            return await root.InvokeAsync(args);
         }
     }
 }

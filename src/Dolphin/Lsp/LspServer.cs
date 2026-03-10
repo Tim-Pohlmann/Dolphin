@@ -30,9 +30,10 @@ public static class LspServer
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
 
     private const int ProcessReaperTimeoutSeconds = 5;
-    private const int JsonRpcParseError     = -32700;
-    private const int JsonRpcMethodNotFound = -32601;
-    private const int JsonRpcInternalError  = -32603;
+    private const int JsonRpcParseError      = -32700;
+    private const int JsonRpcInvalidRequest  = -32600;
+    private const int JsonRpcMethodNotFound  = -32601;
+    private const int JsonRpcInternalError   = -32603;
 
     private const string JsonRpc = "jsonrpc";
 
@@ -144,13 +145,29 @@ public static class LspServer
     private static async Task<MessageAction> HandleMessageAsync(JsonElement msg, Stream stdout)
     {
         if (!msg.TryGetProperty("method", out var methodEl)) return MessageAction.Continue;
-        var method = methodEl.GetString();
 
         msg.TryGetProperty("id", out var id);
         msg.TryGetProperty("params", out var p);
 
         try
         {
+            if (methodEl.ValueKind != JsonValueKind.String)
+            {
+                await MaybeSendAsync(stdout, id, w =>
+                {
+                    w.WriteStartObject();
+                    w.WriteString(JsonRpc, "2.0");
+                    WriteId(w, id);
+                    w.WritePropertyName("error");
+                    w.WriteStartObject();
+                    w.WriteNumber("code", JsonRpcInvalidRequest);
+                    w.WriteString("message", "Invalid Request: 'method' must be a string");
+                    w.WriteEndObject();
+                    w.WriteEndObject();
+                });
+                return MessageAction.Continue;
+            }
+            var method = methodEl.GetString();
             switch (method)
             {
                 case "initialize":
@@ -235,7 +252,7 @@ public static class LspServer
         }
         catch (Exception ex)
         {
-            await Console.Error.WriteLineAsync($"[dolphin-lsp] error handling '{method}': {ex.Message}");
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] error handling '{methodEl.GetRawText()}': {ex.Message}");
             await TrySendErrorAsync(stdout, id, ex);
         }
         return MessageAction.Continue;

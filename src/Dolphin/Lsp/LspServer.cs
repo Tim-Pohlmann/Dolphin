@@ -154,9 +154,25 @@ public static class LspServer
 
     private static async Task<MessageAction> HandleMessageAsync(JsonElement msg, Stream stdout)
     {
-        if (!msg.TryGetProperty("method", out var methodEl)) return MessageAction.Continue;
-
         msg.TryGetProperty("id", out var id);
+
+        if (!msg.TryGetProperty("method", out var methodEl))
+        {
+            // No "method" field — always an Invalid Request; reply when id is present.
+            await MaybeSendAsync(stdout, id, w =>
+            {
+                w.WriteStartObject();
+                w.WriteString(JsonRpc, "2.0");
+                WriteId(w, id);
+                w.WritePropertyName(ErrorProperty);
+                w.WriteStartObject();
+                w.WriteNumber("code", JsonRpcInvalidRequest);
+                w.WriteString(MessageProperty, "Invalid Request: 'method' is required");
+                w.WriteEndObject();
+                w.WriteEndObject();
+            });
+            return MessageAction.Continue;
+        }
         msg.TryGetProperty("params", out var p);
 
         try

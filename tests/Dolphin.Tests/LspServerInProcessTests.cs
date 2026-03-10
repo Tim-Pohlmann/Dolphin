@@ -358,6 +358,32 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
+    public async Task HandleMessage_MissingMethod_WithId_SendsInvalidRequestError()
+    {
+        // Object with an id but no "method" field → must reply with -32600 (Invalid Request).
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":5,"result":"unexpected"}""",
+            """{"jsonrpc":"2.0","id":6,"method":"shutdown"}""");
+
+        var error = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 5 && r.ContainsKey("error"));
+        Assert.IsNotNull(error, "Error response expected when 'method' is absent and id is present");
+        Assert.AreEqual(-32600, error["error"]!["code"]!.GetValue<int>());
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_MissingMethod_NoId_NoErrorResponse()
+    {
+        // Object with no "method" and no id (pure notification-like garbage) → no response.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","result":"unexpected"}""",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        var error = responses.FirstOrDefault(r => r.ContainsKey("error"));
+        Assert.IsNull(error, "No error response expected when 'method' is absent and id is absent");
+        Assert.AreEqual(1, responses.Count, "Only shutdown response expected");
+    }
+
+    [TestMethod]
     public async Task HandleMessage_InvalidMethodType_WithId_SendsInvalidRequestError()
     {
         // "method" is a number, not a string → should reply with -32600 (Invalid Request).

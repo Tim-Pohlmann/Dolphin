@@ -149,16 +149,21 @@ public partial class LspServerInProcessTests
     // ── HandleMessageAsync dispatch paths ─────────────────────────────────────
 
     [TestMethod]
-    public async Task HandleMessage_NoMethodProperty_WithId_SendsInvalidRequestError()
+    public async Task HandleMessage_NoMethodProperty_WithId_ProducesInvalidRequestError()
     {
-        // A JSON object with no "method" field but with an id → -32600 (Invalid Request).
+        // A JSON object with an "id" but no "method" field → Invalid Request error response.
         var responses = await RunServerAsync(
             """{"jsonrpc":"2.0","id":1,"params":{}}""",
             """{"jsonrpc":"2.0","id":2,"method":"shutdown"}""");
 
-        var error = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("error"));
-        Assert.IsNotNull(error, "Error response expected when 'method' is absent and id is present");
-        Assert.AreEqual(-32600, error["error"]!["code"]!.GetValue<int>());
+        Assert.AreEqual(2, responses.Count, "Invalid request and shutdown should both produce responses");
+        // First response: -32600 Invalid Request for the message missing a 'method'.
+        Assert.IsTrue(responses[0].ContainsKey("error"));
+        Assert.AreEqual(-32600, responses[0]["error"]!["code"]!.GetValue<int>());
+        Assert.AreEqual(1, responses[0]["id"]!.GetValue<int>());
+        // Second response: normal result for the shutdown request.
+        Assert.IsTrue(responses[1].ContainsKey("result"));
+        Assert.AreEqual(2, responses[1]["id"]!.GetValue<int>());
     }
 
     [TestMethod]

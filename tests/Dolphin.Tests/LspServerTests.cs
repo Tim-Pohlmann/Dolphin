@@ -91,7 +91,10 @@ public partial class LspServerTests
         string header = await reader.ReadHeaderAsync().WaitAsync(ct)
                         ?? throw new EndOfStreamException("LSP server closed stdout");
         var m = ContentLengthRegex().Match(header);
-        int contentLength = m.Success ? int.Parse(m.Groups[1].Value) : 0;
+        if (!m.Success || !int.TryParse(m.Groups[1].Value, out var contentLength) || contentLength <= 0)
+        {
+            throw new System.IO.InvalidDataException($"Invalid LSP header, missing or malformed Content-Length: '{header}'");
+        }
         var body = await reader.ReadBodyAsync(contentLength).WaitAsync(ct);
         return (JsonObject)JsonNode.Parse(body)!;
     }

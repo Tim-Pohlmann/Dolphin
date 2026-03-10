@@ -70,6 +70,8 @@ public partial class LspServerTests
             RedirectStandardOutput = true,
             RedirectStandardError = false, // not consumed — redirecting without draining risks pipe deadlock
             UseShellExecute = false,
+            StandardInputEncoding = Encoding.UTF8,
+            StandardOutputEncoding = Encoding.UTF8,
         };
         return Process.Start(psi)!;
     }

@@ -149,14 +149,16 @@ public partial class LspServerInProcessTests
     // ── HandleMessageAsync dispatch paths ─────────────────────────────────────
 
     [TestMethod]
-    public async Task HandleMessage_NoMethodProperty_SilentlyIgnored()
+    public async Task HandleMessage_NoMethodProperty_WithId_SendsInvalidRequestError()
     {
-        // A JSON object with no "method" field → early return, no response.
+        // A JSON object with no "method" field but with an id → -32600 (Invalid Request).
         var responses = await RunServerAsync(
             """{"jsonrpc":"2.0","id":1,"params":{}}""",
             """{"jsonrpc":"2.0","id":2,"method":"shutdown"}""");
 
-        Assert.AreEqual(1, responses.Count, "Only shutdown should produce a response");
+        var error = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("error"));
+        Assert.IsNotNull(error, "Error response expected when 'method' is absent and id is present");
+        Assert.AreEqual(-32600, error["error"]!["code"]!.GetValue<int>());
     }
 
     [TestMethod]

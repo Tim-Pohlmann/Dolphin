@@ -197,8 +197,6 @@ public partial class LspServerTests
                 $"Content-Length: {Encoding.UTF8.GetByteCount(garbage)}\r\n\r\n{garbage}");
             proc.StandardInput.Flush();
 
-            await Task.Delay(200, cts.Token);
-
             SendLsp(proc, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
             var response = await ReceiveLspMessageAsync(reader, cts.Token);
 

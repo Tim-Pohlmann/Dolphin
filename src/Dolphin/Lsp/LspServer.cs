@@ -35,7 +35,9 @@ public static class LspServer
     private const int JsonRpcMethodNotFound  = -32601;
     private const int JsonRpcInternalError   = -32603;
 
-    private const string JsonRpc = "jsonrpc";
+    private const string JsonRpc        = "jsonrpc";
+    private const string ErrorProperty   = "error";
+    private const string MessageProperty = "message";
 
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
@@ -71,10 +73,10 @@ public static class LspServer
                     w.WriteStartObject();
                     w.WriteString(JsonRpc, "2.0");
                     w.WriteNull("id");
-                    w.WritePropertyName("error");
+                    w.WritePropertyName(ErrorProperty);
                     w.WriteStartObject();
                     w.WriteNumber("code", JsonRpcParseError);
-                    w.WriteString("message", "Parse error");
+                    w.WriteString(MessageProperty, "Parse error");
                     w.WriteEndObject();
                     w.WriteEndObject();
                 });
@@ -158,10 +160,10 @@ public static class LspServer
                     w.WriteStartObject();
                     w.WriteString(JsonRpc, "2.0");
                     WriteId(w, id);
-                    w.WritePropertyName("error");
+                    w.WritePropertyName(ErrorProperty);
                     w.WriteStartObject();
                     w.WriteNumber("code", JsonRpcInvalidRequest);
-                    w.WriteString("message", "Invalid Request: 'method' must be a string");
+                    w.WriteString(MessageProperty, "Invalid Request: 'method' must be a string");
                     w.WriteEndObject();
                     w.WriteEndObject();
                 });
@@ -240,10 +242,10 @@ public static class LspServer
                         w.WriteStartObject();
                         w.WriteString(JsonRpc, "2.0");
                         WriteId(w, id);
-                        w.WritePropertyName("error");
+                        w.WritePropertyName(ErrorProperty);
                         w.WriteStartObject();
                         w.WriteNumber("code", JsonRpcMethodNotFound);
-                        w.WriteString("message", $"Method not found: {method}");
+                        w.WriteString(MessageProperty, $"Method not found: {method}");
                         w.WriteEndObject();
                         w.WriteEndObject();
                     });
@@ -426,10 +428,10 @@ public static class LspServer
             w.WriteStartObject();
             w.WriteString(JsonRpc, "2.0");
             WriteId(w, id);
-            w.WritePropertyName("error");
+            w.WritePropertyName(ErrorProperty);
             w.WriteStartObject();
             w.WriteNumber("code", JsonRpcInternalError);
-            w.WriteString("message", ex.Message);
+            w.WriteString(MessageProperty, ex.Message);
             w.WriteEndObject();
             w.WriteEndObject();
         });
@@ -468,7 +470,7 @@ public static class LspServer
                 w.WriteEndObject();
                 w.WriteNumber("severity", d.Severity);
                 w.WriteString("source", d.Source);
-                w.WriteString("message", d.Message);
+                w.WriteString(MessageProperty, d.Message);
                 w.WriteEndObject();
             }
             w.WriteEndArray();

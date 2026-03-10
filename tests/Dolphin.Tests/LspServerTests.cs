@@ -310,14 +310,17 @@ public partial class LspServerTests
             // the server must not crash.
             SendLsp(proc, """{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///project/.dolphin/rules.yaml","version":2},"contentChanges":[{"text":"rules: []"}]}}""");
 
-            await Task.Delay(300, cts.Token); // let fire-and-forget settle
-
             SendLsp(proc, """{"jsonrpc":"2.0","id":2,"method":"shutdown"}""");
-            var response = await ReceiveLspMessageAsync(reader, cts.Token);
 
-            // Drain any publishDiagnostics notification that may have arrived first.
-            if (response["method"]?.GetValue<string>() == "textDocument/publishDiagnostics")
+            // Drain any publishDiagnostics notifications that may arrive before the shutdown response.
+            JsonObject response;
+            while (true)
+            {
                 response = await ReceiveLspMessageAsync(reader, cts.Token);
+                if (response["method"]?.GetValue<string>() == "textDocument/publishDiagnostics")
+                    continue;
+                break;
+            }
 
             Assert.IsTrue(response.ContainsKey("result"), $"Expected shutdown result, got: {response}");
         }

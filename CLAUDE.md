@@ -6,7 +6,8 @@ Custom static code analysis powered by [Opengrep](https://opengrep.dev), distrib
 
 ```
 src/Dolphin/
-  Program.cs               Entry point: routes to MCP server, LSP server, or CLI
+  Program.cs               Entry point: delegates to Startup.RunAsync and exits with its code
+  Startup.cs               Routes args to MCP server, LSP server, or CLI
   Cli/CheckCommand.cs      `dolphin check` command
   Scanner/Installer.cs     Locates the Opengrep binary (bundled or PATH)
   Scanner/Runner.cs        Invokes Opengrep, parses JSON output
@@ -65,5 +66,5 @@ SonarCloud integrates as Roslyn analyzers during the CI build, so its issues app
 - **Rules file**: `.dolphin/rules.yaml` in the scanned project root. Must contain only ASCII characters — Opengrep's Python layer reads it as ASCII.
 - **Exit codes**: `0` = no ERROR findings, `1` = at least one ERROR finding, `2` = fatal error.
 - **Trimmed publish**: `PublishTrimmed=true` — use source-generated JSON (`[JsonSerializable]`) and avoid reflection-based serialization.
-- **MCP server**: `dolphin serve --stdio` — no args other than that exact pair; matched by pattern in `Program.cs`.
-- **LSP server**: `dolphin lsp` — matched by pattern in `Program.cs`; called by Claude Code via `launcher.js lsp`.
+- **MCP server**: `dolphin serve --stdio` — no args other than that exact pair; matched by pattern in `Startup.cs`.
+- **LSP server**: `dolphin lsp` — matched by pattern in `Startup.cs`; called by Claude Code via `launcher.js lsp`.

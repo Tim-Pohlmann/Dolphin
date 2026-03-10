@@ -18,7 +18,6 @@ namespace Dolphin.Lsp;
 public static class LspServer
 {
     private static string? _opengrepBinary;
-    private static bool _shutdownReceived;
 
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
@@ -37,8 +36,6 @@ public static class LspServer
 
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
-        // Reset per-session state so in-process re-entry starts clean.
-        _shutdownReceived = false;
         await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
 
         // Best-effort early resolution; if it fails we retry on first validate.
@@ -48,6 +45,7 @@ public static class LspServer
         var reader = new LspReader(inputStream ?? Console.OpenStandardInput());
         var stdout = outputStream ?? Console.OpenStandardOutput();
 
+        bool shutdownReceived = false;
         while (true)
         {
             var (close, body) = await TryReadNextMessageAsync(reader);
@@ -56,7 +54,9 @@ public static class LspServer
             try
             {
                 using var doc = JsonDocument.Parse(body);
-                if (await HandleMessageAsync(doc.RootElement, stdout)) break; // exit requested
+                var action = await HandleMessageAsync(doc.RootElement, stdout);
+                if (action == MessageAction.ShutdownReceived) shutdownReceived = true;
+                else if (action == MessageAction.ExitRequested) break;
             }
             catch (Exception ex)
             {
@@ -65,7 +65,7 @@ public static class LspServer
         }
 
         await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
-        return _shutdownReceived ? 0 : 1;
+        return shutdownReceived ? 0 : 1;
     }
 
     /// <summary>
@@ -119,10 +119,9 @@ public static class LspServer
 
     // ── Message dispatch ──────────────────────────────────────────────────────
 
-    /// <returns><c>true</c> when the "exit" notification is received and the loop should stop.</returns>
-    private static async Task<bool> HandleMessageAsync(JsonElement msg, Stream stdout)
+    private static async Task<MessageAction> HandleMessageAsync(JsonElement msg, Stream stdout)
     {
-        if (!msg.TryGetProperty("method", out var methodEl)) return false;
+        if (!msg.TryGetProperty("method", out var methodEl)) return MessageAction.Continue;
         var method = methodEl.GetString();
 
         msg.TryGetProperty("id", out var id);
@@ -181,7 +180,6 @@ public static class LspServer
                 }
 
                 case "shutdown":
-                    _shutdownReceived = true;
                     await MaybeSendAsync(stdout, id, w =>
                     {
                         w.WriteStartObject();
@@ -190,10 +188,10 @@ public static class LspServer
                         w.WriteNull("result");
                         w.WriteEndObject();
                     });
-                    break;
+                    return MessageAction.ShutdownReceived;
 
                 case "exit":
-                    return true; // caller (RunAsync) exits with 0 if shutdown was received, 1 otherwise
+                    return MessageAction.ExitRequested;
             }
         }
         catch (Exception ex)
@@ -201,8 +199,10 @@ public static class LspServer
             await Console.Error.WriteLineAsync($"[dolphin-lsp] error handling '{method}': {ex.Message}");
             await TrySendErrorAsync(stdout, id, ex);
         }
-        return false;
+        return MessageAction.Continue;
     }
+
+    private enum MessageAction { Continue, ShutdownReceived, ExitRequested }
 
     // ── Validation ────────────────────────────────────────────────────────────
 

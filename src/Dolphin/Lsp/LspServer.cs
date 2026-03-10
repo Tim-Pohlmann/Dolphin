@@ -69,14 +69,20 @@ public static class LspServer
     }
 
     /// <summary>
-    /// Atomically cancels all in-flight validations.  TryRemove per key avoids losing a CTS
-    /// inserted between a Keys snapshot and a subsequent Clear().
+    /// Best-effort cancellation of all in-flight validations.  A single Keys snapshot would
+    /// miss entries inserted concurrently, so we loop until the dictionary appears empty.
+    /// This is still not strictly atomic — a new entry can arrive between the IsEmpty check
+    /// and the next iteration — but it is sufficient for the two call-sites (session start/end),
+    /// which run outside the message loop where new validations are enqueued.
     /// </summary>
     private static Task DrainValidationsAsync()
     {
-        var tasks = _validationCts.Keys
-            .Select(key => _validationCts.TryRemove(key, out var old) ? old.CancelAsync() : Task.CompletedTask);
-        return Task.WhenAll(tasks);
+        var tasks = new List<Task>();
+        while (!_validationCts.IsEmpty)
+            foreach (var key in _validationCts.Keys)
+                if (_validationCts.TryRemove(key, out var old))
+                    tasks.Add(old.CancelAsync());
+        return tasks.Count == 0 ? Task.CompletedTask : Task.WhenAll(tasks);
     }
 
     /// <summary>

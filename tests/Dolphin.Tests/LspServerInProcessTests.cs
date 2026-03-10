@@ -137,8 +137,13 @@ public partial class LspServerInProcessTests
         await LspServer.RunAsync(inputStream: new MemoryStream(ms.ToArray()), outputStream: output);
         var responses = ParseOutput(output.ToArray());
 
-        Assert.AreEqual(1, responses.Count);
-        Assert.IsTrue(responses[0].ContainsKey("result"));
+        Assert.AreEqual(2, responses.Count);
+        // First response: parse error for the invalid JSON body.
+        Assert.IsTrue(responses[0].ContainsKey("error"));
+        Assert.AreEqual(-32700, responses[0]["error"]!["code"]!.GetValue<int>());
+        Assert.IsNull(responses[0]["id"]);
+        // Second response: normal result for the shutdown request.
+        Assert.IsTrue(responses[1].ContainsKey("result"));
     }
 
     // ── HandleMessageAsync dispatch paths ─────────────────────────────────────

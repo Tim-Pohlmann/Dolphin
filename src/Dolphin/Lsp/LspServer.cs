@@ -33,6 +33,7 @@ public static class LspServer
     private const int JsonRpcParseError      = -32700;
     private const int JsonRpcInvalidRequest  = -32600;
     private const int JsonRpcMethodNotFound  = -32601;
+    private const int JsonRpcInvalidParams   = -32602;
     private const int JsonRpcInternalError   = -32603;
 
     private const string JsonRpc        = "jsonrpc";
@@ -279,12 +280,42 @@ public static class LspServer
         catch (Exception ex)
         {
             await Console.Error.WriteLineAsync($"[dolphin-lsp] error handling '{methodEl.GetRawText()}': {ex.Message}");
-            await TrySendErrorAsync(stdout, id);
+            if (IsParamsError(ex))
+            {
+                await MaybeSendAsync(stdout, id, w =>
+                {
+                    w.WriteStartObject();
+                    w.WriteString(JsonRpc, "2.0");
+                    WriteId(w, id);
+                    w.WritePropertyName(ErrorProperty);
+                    w.WriteStartObject();
+                    w.WriteNumber("code", JsonRpcInvalidParams);
+                    w.WriteString(MessageProperty, $"Invalid params: {ex.Message}");
+                    w.WriteEndObject();
+                    w.WriteEndObject();
+                });
+            }
+            else
+            {
+                await TrySendErrorAsync(stdout, id);
+            }
         }
         return MessageAction.Continue;
     }
 
     private enum MessageAction { Continue, ShutdownReceived, ExitRequested }
+
+    /// <summary>
+    /// Heuristically determines whether an exception was likely caused by invalid
+    /// or malformed JSON-RPC params rather than an internal server fault.
+    /// </summary>
+    private static bool IsParamsError(Exception ex) =>
+        ex is JsonException ||
+        ex is FormatException ||
+        ex is ArgumentException ||
+        ex is KeyNotFoundException ||
+        (ex is InvalidOperationException ioe &&
+         ioe.Message.Contains("property", StringComparison.OrdinalIgnoreCase));
 
     // ── Validation ────────────────────────────────────────────────────────────
 

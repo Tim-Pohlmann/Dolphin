@@ -55,8 +55,26 @@ internal static partial class LspDiagnosticsParser
         var m = LocationPattern().Match(raw);
         if (!m.Success) { lineNum = 0; colNum = 0; return false; }
 
-        lineNum = Math.Max(0, int.Parse(m.Groups[1].Value) - 1);
-        colNum  = m.Groups[2].Success ? Math.Max(0, int.Parse(m.Groups[2].Value) - 1) : 0;
+        if (!int.TryParse(m.Groups[1].Value, out var line1Based))
+        {
+            lineNum = 0;
+            colNum = 0;
+            return false;
+        }
+
+        int col1Based = 0;
+        if (m.Groups[2].Success)
+        {
+            if (!int.TryParse(m.Groups[2].Value, out col1Based))
+            {
+                lineNum = 0;
+                colNum = 0;
+                return false;
+            }
+        }
+
+        lineNum = Math.Max(0, line1Based - 1);
+        colNum = m.Groups[2].Success ? Math.Max(0, col1Based - 1) : 0;
         return true;
     }
 

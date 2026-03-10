@@ -377,6 +377,8 @@ public partial class LspServerInProcessTests
         var task = Startup.RunAsync(["--help"]);
         var completed = await Task.WhenAny(task, Task.Delay(5000)) == task;
         Assert.IsTrue(completed, "RunAsync([\"--help\"]) must complete promptly — CLI routing hung or threw");
+        var exitCode = await task; // surface any exception and verify the exit code
+        Assert.AreEqual(0, exitCode, "\"--help\" must exit with code 0");
     }
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]

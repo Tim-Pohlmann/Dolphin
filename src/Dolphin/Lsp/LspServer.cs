@@ -30,6 +30,7 @@ public static class LspServer
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
 
     private const int ProcessReaperTimeoutSeconds = 5;
+    private const int JsonRpcParseError     = -32700;
     private const int JsonRpcMethodNotFound = -32601;
     private const int JsonRpcInternalError  = -32603;
 
@@ -62,6 +63,20 @@ public static class LspServer
             catch (Exception ex)
             {
                 await Console.Error.WriteLineAsync($"[dolphin-lsp] failed to parse message: {ex.Message}");
+                // Per JSON-RPC 2.0, a parse/invalid-request error must be answered with
+                // id: null because we cannot recover the id from a malformed message.
+                await SendAsync(stdout, w =>
+                {
+                    w.WriteStartObject();
+                    w.WriteString(JsonRpc, "2.0");
+                    w.WriteNull("id");
+                    w.WritePropertyName("error");
+                    w.WriteStartObject();
+                    w.WriteNumber("code", JsonRpcParseError);
+                    w.WriteString("message", "Parse error");
+                    w.WriteEndObject();
+                    w.WriteEndObject();
+                });
             }
         }
 

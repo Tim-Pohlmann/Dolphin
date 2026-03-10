@@ -357,6 +357,45 @@ public partial class LspServerInProcessTests
         Assert.AreEqual(1, responses.Count);
     }
 
+    [TestMethod]
+    public async Task HandleMessage_InvalidMethodType_WithId_SendsInvalidRequestError()
+    {
+        // "method" is a number, not a string → should reply with -32600 (Invalid Request).
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":10,"method":42}""",
+            """{"jsonrpc":"2.0","id":11,"method":"shutdown"}""");
+
+        var error = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 10 && r.ContainsKey("error"));
+        Assert.IsNotNull(error, "Error response expected for non-string method");
+        Assert.AreEqual(-32600, error["error"]!["code"]!.GetValue<int>());
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_UnknownMethod_WithId_SendsMethodNotFoundError()
+    {
+        // Unknown method with an id → should reply with -32601 (Method Not Found).
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":20,"method":"unknown/method"}""",
+            """{"jsonrpc":"2.0","id":21,"method":"shutdown"}""");
+
+        var error = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 20 && r.ContainsKey("error"));
+        Assert.IsNotNull(error, "Error response expected for unknown method with id");
+        Assert.AreEqual(-32601, error["error"]!["code"]!.GetValue<int>());
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_UnknownMethod_NoId_NoErrorResponse()
+    {
+        // Unknown method without an id is a notification → per JSON-RPC 2.0 no response is sent.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","method":"unknown/notification"}""",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        var error = responses.FirstOrDefault(r => r.ContainsKey("error"));
+        Assert.IsNull(error, "No error response expected for unknown-method notification");
+        Assert.AreEqual(1, responses.Count, "Only shutdown response expected");
+    }
+
     // ── Program.cs routing (via Startup.RunAsync) ─────────────────────────────
 
     [TestMethod]

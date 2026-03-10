@@ -66,11 +66,11 @@ public static class LspServer
                 if (action == MessageAction.ShutdownReceived) shutdownReceived = true;
                 else if (action == MessageAction.ExitRequested) break;
             }
-            catch (Exception ex)
+            catch (JsonException ex)
             {
                 await Console.Error.WriteLineAsync($"[dolphin-lsp] failed to parse message: {ex.Message}");
-                // Per JSON-RPC 2.0, a parse/invalid-request error must be answered with
-                // id: null because we cannot recover the id from a malformed message.
+                // Per JSON-RPC 2.0, a parse error must be answered with id: null because
+                // we cannot recover the id from a malformed message.
                 await SendAsync(stdout, w =>
                 {
                     w.WriteStartObject();
@@ -83,6 +83,12 @@ public static class LspServer
                     w.WriteEndObject();
                     w.WriteEndObject();
                 });
+            }
+            catch (Exception ex)
+            {
+                // Non-parse exceptions (e.g. I/O failure writing to stdout) escaping
+                // HandleMessageAsync — log and keep the loop running.
+                await Console.Error.WriteLineAsync($"[dolphin-lsp] unexpected error: {ex.Message}");
             }
         }
 
@@ -269,7 +275,8 @@ public static class LspServer
     private static bool IsDolphinRulesFile(string uri) =>
         (uri.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
          uri.EndsWith(".yml",  StringComparison.OrdinalIgnoreCase)) &&
-        (uri.Contains("/.dolphin/") || uri.Contains("\\.dolphin\\"));
+        (uri.Contains("/.dolphin/", StringComparison.OrdinalIgnoreCase) ||
+         uri.Contains("\\.dolphin\\", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Cancels any in-flight validation for <paramref name="uri"/> and returns a fresh

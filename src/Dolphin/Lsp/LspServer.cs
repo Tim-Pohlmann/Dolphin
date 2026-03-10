@@ -257,7 +257,7 @@ public static class LspServer
         catch (Exception ex)
         {
             await Console.Error.WriteLineAsync($"[dolphin-lsp] error handling '{methodEl.GetRawText()}': {ex.Message}");
-            await TrySendErrorAsync(stdout, id, ex);
+            await TrySendErrorAsync(stdout, id);
         }
         return MessageAction.Continue;
     }
@@ -424,11 +424,11 @@ public static class LspServer
     private static Task MaybeSendAsync(Stream stdout, JsonElement id, Action<Utf8JsonWriter> write) =>
         id.ValueKind == JsonValueKind.Undefined ? Task.CompletedTask : SendAsync(stdout, write);
 
-    private static Task TrySendErrorAsync(Stream stdout, JsonElement id, Exception ex) =>
+    private static Task TrySendErrorAsync(Stream stdout, JsonElement id) =>
         MaybeSendAsync(stdout, id, w =>
         {
-            // Send a generic message; ex.Message may contain internal paths or details
-            // that should not be exposed over the LSP channel (already logged to stderr).
+            // Send a generic message; full details are already logged to stderr.
+            // Avoid leaking internal paths or exception details over the LSP channel.
             w.WriteStartObject();
             w.WriteString(JsonRpc, "2.0");
             WriteId(w, id);

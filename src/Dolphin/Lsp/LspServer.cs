@@ -94,7 +94,7 @@ public static class LspServer
         }
 
         await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
-        return shutdownReceived ? 0 : 1;
+        return 0;
     }
 
     /// <summary>
@@ -460,6 +460,10 @@ public static class LspServer
         await _stdoutLock.WaitAsync(ct);
         try
         {
+            // Re-check after acquiring: the token may have fired while we waited,
+            // so skip the write to avoid publishing stale diagnostics.
+            if (ct.IsCancellationRequested) return;
+
             await stdout.WriteAsync(headerBytes, CancellationToken.None);
             await stdout.WriteAsync(buf.WrittenMemory, CancellationToken.None);
             await stdout.FlushAsync(CancellationToken.None);

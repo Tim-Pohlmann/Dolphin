@@ -20,7 +20,7 @@ internal static partial class LspDiagnosticsParser
     [GeneratedRegex(@"-->.*?:(\d+)(?::(\d+))?\s*$", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex LocationPattern();
 
-    [GeneratedRegex(@"error|invalid|missing|required|unexpected", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    [GeneratedRegex(@"\b(error|invalid|missing|required|unexpected)\b", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ErrorKeywordPattern();
 
     public static LspDiagnostic[] Parse(string output)

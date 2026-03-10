@@ -78,9 +78,11 @@ public partial class LspServerTests
 
     private static void SendLsp(Process proc, string json)
     {
-        var bytes = Encoding.UTF8.GetBytes(json);
-        proc.StandardInput.Write($"Content-Length: {bytes.Length}\r\n\r\n{json}");
-        proc.StandardInput.Flush();
+        var bodyBytes = Encoding.UTF8.GetBytes(json);
+        var headerBytes = Encoding.ASCII.GetBytes($"Content-Length: {bodyBytes.Length}\r\n\r\n");
+        proc.StandardInput.BaseStream.Write(headerBytes);
+        proc.StandardInput.BaseStream.Write(bodyBytes);
+        proc.StandardInput.BaseStream.Flush();
     }
 
     /// <summary>Reads the next LSP message (response or notification) from the server.</summary>

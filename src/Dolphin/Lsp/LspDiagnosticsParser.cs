@@ -83,7 +83,7 @@ internal static partial class LspDiagnosticsParser
             {
                 Range = new LspRange(
                     new LspPosition(lineNum, colNum),
-                    new LspPosition(lineNum + 1, 0)),
+                    new LspPosition(lineNum, colNum)),
                 Pending = false,
             };
         }

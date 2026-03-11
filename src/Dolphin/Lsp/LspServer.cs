@@ -72,18 +72,25 @@ public static partial class LspServer
                 await Console.Error.WriteLineAsync($"[dolphin-lsp] failed to parse message: {ex.Message}");
                 // Per JSON-RPC 2.0, a parse error must be answered with id: null because
                 // we cannot recover the id from a malformed message.
-                await SendAsync(stdout, w =>
+                try
                 {
-                    w.WriteStartObject();
-                    w.WriteString(JsonRpc, "2.0");
-                    w.WriteNull("id");
-                    w.WritePropertyName(ErrorProperty);
-                    w.WriteStartObject();
-                    w.WriteNumber("code", JsonRpcParseError);
-                    w.WriteString(MessageProperty, "Parse error");
-                    w.WriteEndObject();
-                    w.WriteEndObject();
-                });
+                    await SendAsync(stdout, w =>
+                    {
+                        w.WriteStartObject();
+                        w.WriteString(JsonRpc, "2.0");
+                        w.WriteNull("id");
+                        w.WritePropertyName(ErrorProperty);
+                        w.WriteStartObject();
+                        w.WriteNumber("code", JsonRpcParseError);
+                        w.WriteString(MessageProperty, "Parse error");
+                        w.WriteEndObject();
+                        w.WriteEndObject();
+                    });
+                }
+                catch (Exception writeEx) when (writeEx is IOException or ObjectDisposedException)
+                {
+                    break; // client disconnected while we were writing — close cleanly
+                }
             }
             catch (Exception ex)
             {

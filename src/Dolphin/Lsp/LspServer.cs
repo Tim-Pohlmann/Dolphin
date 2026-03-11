@@ -497,8 +497,8 @@ public static partial class LspServer
             psi.ArgumentList.Add(tmp);
 
             using var proc = Process.Start(psi)!;
-            Task<string>? stdoutTask = null;
-            Task<string>? stderrTask = null;
+            Task<string> stdoutTask = Task.FromResult("");
+            Task<string> stderrTask = Task.FromResult("");
             try
             {
                 // Read stdout and stderr concurrently to avoid deadlock when

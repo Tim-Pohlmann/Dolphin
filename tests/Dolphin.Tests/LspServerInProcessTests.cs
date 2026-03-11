@@ -493,11 +493,14 @@ public partial class LspServerInProcessTests
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         Assert.IsNotNull(method, "FindNonAsciiDiagnostic method should exist");
 
-        var diags = (System.Array?)method!.Invoke(null, [textWithNonAscii]);
+        object? result = method!.Invoke(null, [textWithNonAscii]);
+        var diags = result as System.Array;
         Assert.IsNotNull(diags, "Non-ASCII text should produce a diagnostic array");
         Assert.AreEqual(1, diags.Length);
 
-        dynamic diag = diags.GetValue(0);
+        object? diagObj = diags.GetValue(0);
+        Assert.IsNotNull(diagObj);
+        dynamic diag = diagObj;
         Assert.IsTrue(diag.Message.Contains("Non-ASCII"), "Message should mention non-ASCII");
         Assert.IsTrue(diag.Message.Contains("U+2708"), "Message should include Unicode codepoint");
     }

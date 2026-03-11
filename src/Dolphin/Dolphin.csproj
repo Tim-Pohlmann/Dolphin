@@ -14,9 +14,9 @@
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(Configuration)' != 'Release'">
-    <!-- Test-only: grants Dolphin.Tests access to internal members.
-         Excluded from Release builds so production binaries don't expose internals. -->
+  <ItemGroup>
+    <!-- Grants Dolphin.Tests access to internal members for white-box testing.
+         Strong-naming is not used, so this is name-only (no PublicKey enforcement). -->
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
       <_Parameter1>Dolphin.Tests</_Parameter1>
     </AssemblyAttribute>

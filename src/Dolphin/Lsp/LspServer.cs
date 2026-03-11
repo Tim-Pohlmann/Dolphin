@@ -72,25 +72,7 @@ public static partial class LspServer
                 await Console.Error.WriteLineAsync($"[dolphin-lsp] failed to parse message: {ex.Message}");
                 // Per JSON-RPC 2.0, a parse error must be answered with id: null because
                 // we cannot recover the id from a malformed message.
-                try
-                {
-                    await SendAsync(stdout, w =>
-                    {
-                        w.WriteStartObject();
-                        w.WriteString(JsonRpc, "2.0");
-                        w.WriteNull("id");
-                        w.WritePropertyName(ErrorProperty);
-                        w.WriteStartObject();
-                        w.WriteNumber("code", JsonRpcParseError);
-                        w.WriteString(MessageProperty, "Parse error");
-                        w.WriteEndObject();
-                        w.WriteEndObject();
-                    });
-                }
-                catch (Exception e) when (e is IOException or ObjectDisposedException)
-                {
-                    break; // client disconnected while we were writing — close cleanly
-                }
+                if (!await TrySendParseErrorAsync(stdout)) break;
             }
             catch (Exception ex)
             {
@@ -103,6 +85,34 @@ public static partial class LspServer
         await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
         // Per LSP spec, exit without a prior shutdown is an error (code 1).
         return shutdownReceived ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Sends a JSON-RPC parse-error response with <c>id: null</c>.
+    /// Returns <c>false</c> if the write fails due to a broken pipe (client disconnected).
+    /// </summary>
+    private static async Task<bool> TrySendParseErrorAsync(Stream stdout)
+    {
+        try
+        {
+            await SendAsync(stdout, w =>
+            {
+                w.WriteStartObject();
+                w.WriteString(JsonRpc, "2.0");
+                w.WriteNull("id");
+                w.WritePropertyName(ErrorProperty);
+                w.WriteStartObject();
+                w.WriteNumber("code", JsonRpcParseError);
+                w.WriteString(MessageProperty, "Parse error");
+                w.WriteEndObject();
+                w.WriteEndObject();
+            });
+            return true;
+        }
+        catch (Exception e) when (e is IOException or ObjectDisposedException)
+        {
+            return false; // client disconnected while we were writing
+        }
     }
 
     /// <summary>

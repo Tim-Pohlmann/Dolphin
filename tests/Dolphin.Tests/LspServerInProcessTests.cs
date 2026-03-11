@@ -83,9 +83,10 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public async Task RunAsync_HeaderWithNoContentLength_SkipsThenProcessesNext()
+    public async Task RunAsync_HeaderWithNoContentLength_ClosesConnection()
     {
-        // A valid header sequence with no Content-Length → the continue branch fires.
+        // Missing Content-Length is a protocol error per LSP spec → close immediately.
+        // Any subsequent messages are ignored because the connection closes.
         var ms = new MemoryStream();
         ms.Write(Encoding.ASCII.GetBytes("X-Unknown: whatever\r\n\r\n"));
         var shutdownJson = """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""";
@@ -97,8 +98,8 @@ public partial class LspServerInProcessTests
         await LspServer.RunAsync(inputStream: new MemoryStream(ms.ToArray()), outputStream: output);
         var responses = ParseOutput(output.ToArray());
 
-        Assert.AreEqual(1, responses.Count);
-        Assert.IsTrue(responses[0].ContainsKey("result"));
+        // No responses because connection closes on missing Content-Length, before shutdown is read.
+        Assert.AreEqual(0, responses.Count);
     }
 
     [TestMethod]

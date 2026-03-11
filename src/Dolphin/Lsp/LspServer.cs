@@ -169,7 +169,11 @@ public static partial class LspServer
 
         // Case-insensitive per the LSP spec (HTTP-style headers).
         var clMatch = ContentLengthRegex().Match(header);
-        if (!clMatch.Success) return (false, null);
+        if (!clMatch.Success)
+        {
+            await Console.Error.WriteLineAsync("[dolphin-lsp] Content-Length header missing; closing connection.");
+            return (true, null);
+        }
 
         // Parse as long to catch values that overflow int; reject zero/negative and too-large → close.
         if (!long.TryParse(clMatch.Groups[1].Value, out var lengthLong) || lengthLong <= 0 || lengthLong > MaxBodyBytes)
@@ -445,8 +449,25 @@ public static partial class LspServer
                     Pending: false)];
             }
 
-            if (ch == '\n') { line++; col = 0; }
-            else col++;
+            if (ch == '\r')
+            {
+                // Treat CRLF as a single newline, and bare CR as a newline as well.
+                line++;
+                col = 0;
+                if (i + 1 < text.Length && text[i + 1] == '\n')
+                {
+                    i++; // skip the LF in a CRLF sequence
+                }
+            }
+            else if (ch == '\n')
+            {
+                line++;
+                col = 0;
+            }
+            else
+            {
+                col++;
+            }
         }
         return null;
     }

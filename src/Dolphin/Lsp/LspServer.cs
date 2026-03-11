@@ -438,7 +438,7 @@ public static partial class LspServer
                 return [];
             }
         }
-        catch
+        catch (OperationCanceledException)
         {
             return [];
         }

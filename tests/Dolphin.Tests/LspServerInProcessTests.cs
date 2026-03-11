@@ -36,7 +36,8 @@ public partial class LspServerInProcessTests
         int pos = 0;
         while (pos < bytes.Length)
         {
-            int headerEnd = IndexOf(bytes, pos, "\r\n\r\n"u8);
+            int rel = bytes.AsSpan(pos).IndexOf("\r\n\r\n"u8);
+            int headerEnd = rel < 0 ? -1 : pos + rel;
             if (headerEnd < 0) break;
             var headerStr = Encoding.ASCII.GetString(bytes, pos, headerEnd - pos);
             var m = ContentLengthRegex().Match(headerStr);
@@ -50,19 +51,7 @@ public partial class LspServerInProcessTests
         return results;
     }
 
-    private static int IndexOf(byte[] src, int start, ReadOnlySpan<byte> pattern)
-    {
-        for (int i = start; i <= src.Length - pattern.Length; i++)
-        {
-            bool ok = true;
-            for (int j = 0; j < pattern.Length && ok; j++)
-                if (src[i + j] != pattern[j]) ok = false;
-            if (ok) return i;
-        }
-        return -1;
-    }
-
-    /// <summary>Runs the server in-process with the given JSON messages and returns all output messages.</summary>
+/// <summary>Runs the server in-process with the given JSON messages and returns all output messages.</summary>
     private static async Task<List<JsonObject>> RunServerAsync(params string[] messages)
     {
         var input = new MemoryStream(BuildInput(messages));
@@ -509,21 +498,12 @@ public partial class LspServerInProcessTests
         // We test this directly rather than through LSP protocol because validation is async/fire-and-forget.
         var textWithNonAscii = "rules: []\n# Comment with \u2708 emoji"; // ✈ is non-ASCII
 
-        // Use reflection to call the private FindNonAsciiDiagnostic method
-        var method = typeof(LspServer).GetMethod("FindNonAsciiDiagnostic",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-        Assert.IsNotNull(method, "FindNonAsciiDiagnostic method should exist");
+        var diags = LspServer.FindNonAsciiDiagnostic(textWithNonAscii);
 
-        object? result = method!.Invoke(null, [textWithNonAscii]);
-        var diags = result as System.Array;
         Assert.IsNotNull(diags, "Non-ASCII text should produce a diagnostic array");
         Assert.AreEqual(1, diags.Length);
-
-        object? diagObj = diags.GetValue(0);
-        Assert.IsNotNull(diagObj);
-        dynamic diag = diagObj;
-        Assert.IsTrue(diag.Message.Contains("Non-ASCII"), "Message should mention non-ASCII");
-        Assert.IsTrue(diag.Message.Contains("U+2708"), "Message should include Unicode codepoint");
+        Assert.IsTrue(diags[0].Message.Contains("Non-ASCII"), "Message should mention non-ASCII");
+        Assert.IsTrue(diags[0].Message.Contains("U+2708"), "Message should include Unicode codepoint");
     }
 
     // ── Program.cs routing (via Startup.RunAsync) ─────────────────────────────

@@ -448,7 +448,7 @@ public static partial class LspServer
     /// Scans <paramref name="text"/> in a single pass and returns a one-element diagnostic array
     /// pointing at the first non-ASCII character, or <c>null</c> if all characters are ASCII.
     /// </summary>
-    private static LspDiagnostic[]? FindNonAsciiDiagnostic(string text)
+    internal static LspDiagnostic[]? FindNonAsciiDiagnostic(string text)
     {
         int line = 0, col = 0;
         bool skipNextLf = false; // Skip LF if we just saw CR (handles CRLF as single newline)
@@ -528,8 +528,8 @@ public static partial class LspServer
                 await Task.WhenAll(stdoutTask, stderrTask);
                 await proc.WaitForExitAsync(ct);
 
-                var stdout = await stdoutTask;
-                var stderr = await stderrTask;
+                var stdout = stdoutTask.Result;
+                var stderr = stderrTask.Result;
                 var combined = (stdout.Length > 0 && stderr.Length > 0 && !stdout.EndsWith('\n'))
                     ? stdout + '\n' + stderr
                     : stdout + stderr;

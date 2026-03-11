@@ -432,6 +432,27 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
+    public async Task RunAsync_NonObjectMessage_SendsInvalidRequestError()
+    {
+        // JSON-RPC messages must be JSON objects. A JSON array (batch) is not supported.
+        // The server must send -32600 (Invalid Request) with id: null and keep the loop running.
+        var input = new MemoryStream(BuildInput(
+            """[{"jsonrpc":"2.0","id":1,"method":"shutdown"}]""",
+            """{"jsonrpc":"2.0","id":2,"method":"shutdown"}"""));
+        var output = new MemoryStream();
+
+        await LspServer.RunAsync(input, output);
+
+        var responses = ParseOutput(output.ToArray());
+        Assert.IsTrue(responses.Count >= 2, "Error response + shutdown response expected");
+        var error = responses[0];
+        Assert.IsTrue(error.ContainsKey("error"), "First response should be an error");
+        Assert.AreEqual(-32600, error["error"]?["code"]?.GetValue<int>());
+        Assert.IsTrue(error.ContainsKey("id"), "Error must have an id field");
+        Assert.IsNull(error["id"]?.GetValue<object?>(), "id must be null for non-object messages");
+    }
+
+    [TestMethod]
     public async Task RunAsync_MethodNotString_SendsInvalidRequestError()
     {
         // "method" field must be a string, not a number or other type.

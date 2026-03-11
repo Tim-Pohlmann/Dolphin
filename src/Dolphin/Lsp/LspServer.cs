@@ -196,7 +196,7 @@ public static partial class LspServer
         // Ensure message is a JSON object; TryGetProperty throws if it's not.
         if (msg.ValueKind != JsonValueKind.Object)
         {
-            await MaybeSendAsync(stdout, default, w =>
+            await SendAsync(stdout, w =>
             {
                 w.WriteStartObject();
                 w.WriteString(JsonRpc, "2.0");

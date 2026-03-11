@@ -149,6 +149,7 @@ public partial class LspServerTests
 
             Assert.IsNull(response["error"], $"Unexpected error: {response["error"]}");
             Assert.IsTrue(response.ContainsKey("result"), "Shutdown response must have a result key");
+            Assert.IsNull(response["result"], "Shutdown result must be JSON null");
         }
         finally
         {

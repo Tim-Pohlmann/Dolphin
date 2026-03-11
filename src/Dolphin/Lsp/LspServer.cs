@@ -415,9 +415,14 @@ public static partial class LspServer
                 await Task.WhenAll(stdoutTask, stderrTask);
                 await proc.WaitForExitAsync(ct);
 
+                var stdout = await stdoutTask;
+                var stderr = await stderrTask;
+                var combined = (stdout.Length > 0 && stderr.Length > 0 && !stdout.EndsWith('\n'))
+                    ? stdout + '\n' + stderr
+                    : stdout + stderr;
                 return proc.ExitCode == 0
                     ? []
-                    : LspDiagnosticsParser.Parse(await stdoutTask + await stderrTask);
+                    : LspDiagnosticsParser.Parse(combined);
             }
             catch (OperationCanceledException)
             {

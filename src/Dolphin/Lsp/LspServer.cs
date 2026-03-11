@@ -54,6 +54,7 @@ public static class LspServer
         var reader = new LspReader(inputStream ?? Console.OpenStandardInput());
         var stdout = outputStream ?? Console.OpenStandardOutput();
 
+        bool shutdownReceived = false;
         while (true)
         {
             var (close, body) = await TryReadNextMessageAsync(reader);
@@ -63,7 +64,8 @@ public static class LspServer
             {
                 using var doc = JsonDocument.Parse(body);
                 var action = await HandleMessageAsync(doc.RootElement, stdout);
-                if (action == MessageAction.ExitRequested) break;
+                if (action == MessageAction.ShutdownReceived) shutdownReceived = true;
+                else if (action == MessageAction.ExitRequested) break;
             }
             catch (JsonException ex)
             {
@@ -92,7 +94,8 @@ public static class LspServer
         }
 
         await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
-        return 0;
+        // Per LSP spec, exit without a prior shutdown is an error (code 1).
+        return shutdownReceived ? 0 : 1;
     }
 
     /// <summary>
@@ -375,7 +378,7 @@ public static class LspServer
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
             }
             catch (OperationCanceledException) { /* superseded by a newer edit */ }
-            catch { /* swallow — must not propagate from fire-and-forget */ }
+            catch (Exception ex) { await Console.Error.WriteLineAsync($"[dolphin-lsp] validation error for {uri}: {ex.Message}"); }
             finally
             {
                 // Remove from the map before disposal; if CancelPrevious already replaced

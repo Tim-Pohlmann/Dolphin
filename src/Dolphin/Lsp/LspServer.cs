@@ -153,7 +153,6 @@ public static partial class LspServer
     /// <summary>
     /// Reads the next LSP header + body from <paramref name="reader"/>.
     /// Returns <c>(Close: true, _)</c> when the loop should exit (stdin closed or fatal error).
-    /// Returns <c>(Close: false, null)</c> when the header had no Content-Length (skip).
     /// Returns <c>(Close: false, body)</c> when a complete message was read.
     /// </summary>
     private static async Task<(bool Close, byte[]? Body)> TryReadNextMessageAsync(LspReader reader)

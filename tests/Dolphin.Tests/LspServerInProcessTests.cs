@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Dolphin;
 using Dolphin.Lsp;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 

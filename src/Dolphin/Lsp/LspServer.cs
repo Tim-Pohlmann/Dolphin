@@ -435,6 +435,7 @@ public static partial class LspServer
     private static LspDiagnostic[]? FindNonAsciiDiagnostic(string text)
     {
         int line = 0, col = 0;
+        bool skipNextLf = false; // Skip LF if we just saw CR (handles CRLF as single newline)
         for (int i = 0; i < text.Length; i++)
         {
             char ch = text[i];
@@ -449,15 +450,20 @@ public static partial class LspServer
                     Pending: false)];
             }
 
+            // Skip LF that follows CR (CRLF sequence)
+            if (skipNextLf && ch == '\n')
+            {
+                skipNextLf = false;
+                continue;
+            }
+            skipNextLf = false;
+
             if (ch == '\r')
             {
-                // Treat CRLF as a single newline, and bare CR as a newline as well.
+                // Treat CR and CRLF as single newline.
                 line++;
                 col = 0;
-                if (i + 1 < text.Length && text[i + 1] == '\n')
-                {
-                    i++; // skip the LF in a CRLF sequence
-                }
+                skipNextLf = true;
             }
             else if (ch == '\n')
             {

@@ -60,26 +60,10 @@ public static partial class LspServer
             var (close, body) = await TryReadNextMessageAsync(reader);
             if (close) break;
             if (body is null) continue; // no Content-Length — skip malformed header
-            try
-            {
-                using var doc = JsonDocument.Parse(body);
-                var action = await HandleMessageAsync(doc.RootElement, stdout);
-                if (action == MessageAction.ShutdownReceived) shutdownReceived = true;
-                else if (action == MessageAction.ExitRequested) break;
-            }
-            catch (JsonException ex)
-            {
-                await Console.Error.WriteLineAsync($"[dolphin-lsp] failed to parse message: {ex.Message}");
-                // Per JSON-RPC 2.0, a parse error must be answered with id: null because
-                // we cannot recover the id from a malformed message.
-                if (!await TrySendParseErrorAsync(stdout)) break;
-            }
-            catch (Exception ex)
-            {
-                // Non-parse exceptions (e.g. I/O failure writing to stdout) escaping
-                // HandleMessageAsync — log and keep the loop running.
-                await Console.Error.WriteLineAsync($"[dolphin-lsp] unexpected error: {ex.Message}");
-            }
+            var (action, continueLoop) = await HandleBodyAsync(stdout, body);
+            if (!continueLoop) break;
+            if (action == MessageAction.ShutdownReceived) shutdownReceived = true;
+            else if (action == MessageAction.ExitRequested) break;
         }
 
         await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
@@ -112,6 +96,36 @@ public static partial class LspServer
         catch (Exception e) when (e is IOException or ObjectDisposedException)
         {
             return false; // client disconnected while we were writing
+        }
+    }
+
+    /// <summary>
+    /// Parses and handles one JSON-RPC message body.
+    /// Returns the resulting <see cref="MessageAction"/> and a flag indicating whether the
+    /// message loop should continue (<c>true</c>) or break (<c>false</c>, i.e. broken pipe).
+    /// </summary>
+    private static async Task<(MessageAction action, bool continueLoop)> HandleBodyAsync(
+        Stream stdout, string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return (await HandleMessageAsync(doc.RootElement, stdout), true);
+        }
+        catch (JsonException ex)
+        {
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] failed to parse message: {ex.Message}");
+            // Per JSON-RPC 2.0, a parse error must be answered with id: null because
+            // we cannot recover the id from a malformed message.
+            bool sent = await TrySendParseErrorAsync(stdout);
+            return (MessageAction.Continue, sent);
+        }
+        catch (Exception ex)
+        {
+            // Non-parse exceptions (e.g. I/O failure writing to stdout) escaping
+            // HandleMessageAsync — log and keep the loop running.
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] unexpected error: {ex.Message}");
+            return (MessageAction.Continue, true);
         }
     }
 
@@ -406,30 +420,37 @@ public static partial class LspServer
         }
     }
 
-    private static async Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
+    /// <summary>
+    /// Scans <paramref name="text"/> in a single pass and returns a one-element diagnostic array
+    /// pointing at the first non-ASCII character, or <c>null</c> if all characters are ASCII.
+    /// </summary>
+    private static LspDiagnostic[]? FindNonAsciiDiagnostic(string text)
     {
-        // Detect non-ASCII content before writing the temp file.
-        // Opengrep's Python layer reads rules files as ASCII; writing with Encoding.ASCII
-        // would silently replace non-ASCII characters with '?' and produce misleading results.
+        int line = 0, col = 0;
         for (int i = 0; i < text.Length; i++)
         {
-            if (text[i] > 127)
+            char ch = text[i];
+            if (ch > 127)
             {
-                int line = 0, col = 0;
-                for (int j = 0; j < i; j++)
-                {
-                    if (text[j] == '\n') { line++; col = 0; }
-                    else col++;
-                }
                 var pos = new LspPosition(line, col);
                 return [new LspDiagnostic(
                     Range: new LspRange(pos, new LspPosition(line, col + 1)),
                     Severity: 1,
                     Source: "dolphin",
-                    Message: $"Non-ASCII character '{text[i]}' (U+{(int)text[i]:X4}): .dolphin/rules.yaml must contain only ASCII characters.",
+                    Message: $"Non-ASCII character '{ch}' (U+{(int)ch:X4}): .dolphin/rules.yaml must contain only ASCII characters.",
                     Pending: false)];
             }
+
+            if (ch == '\n') { line++; col = 0; }
+            else col++;
         }
+        return null;
+    }
+
+    private static async Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
+    {
+        var nonAscii = FindNonAsciiDiagnostic(text);
+        if (nonAscii is not null) return nonAscii;
 
         var tmp = Path.Combine(Path.GetTempPath(), $"dolphin-lsp-{Guid.NewGuid():N}.yaml");
         try

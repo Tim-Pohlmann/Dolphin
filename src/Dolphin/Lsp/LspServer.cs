@@ -193,6 +193,24 @@ public static partial class LspServer
 
     private static async Task<MessageAction> HandleMessageAsync(JsonElement msg, Stream stdout)
     {
+        // Ensure message is a JSON object; TryGetProperty throws if it's not.
+        if (msg.ValueKind != JsonValueKind.Object)
+        {
+            await MaybeSendAsync(stdout, default, w =>
+            {
+                w.WriteStartObject();
+                w.WriteString(JsonRpc, "2.0");
+                w.WriteNull("id");
+                w.WritePropertyName(ErrorProperty);
+                w.WriteStartObject();
+                w.WriteNumber("code", JsonRpcInvalidRequest);
+                w.WriteString(MessageProperty, "Invalid Request: message must be a JSON object");
+                w.WriteEndObject();
+                w.WriteEndObject();
+            });
+            return MessageAction.Continue;
+        }
+
         msg.TryGetProperty("id", out var id);
 
         if (!msg.TryGetProperty("method", out var methodEl))

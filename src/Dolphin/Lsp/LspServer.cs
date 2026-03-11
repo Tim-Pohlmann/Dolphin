@@ -87,7 +87,7 @@ public static partial class LspServer
                         w.WriteEndObject();
                     });
                 }
-                catch (Exception writeEx) when (writeEx is IOException or ObjectDisposedException)
+                catch (Exception e) when (e is IOException or ObjectDisposedException)
                 {
                     break; // client disconnected while we were writing — close cleanly
                 }
@@ -323,7 +323,8 @@ public static partial class LspServer
         ex is ArgumentException ||
         ex is KeyNotFoundException ||
         (ex is InvalidOperationException ioe &&
-         ioe.Message.Contains("property", StringComparison.OrdinalIgnoreCase));
+         (ioe.Message.Contains("property", StringComparison.OrdinalIgnoreCase) ||
+          ioe.Message.Contains("requires an element of type", StringComparison.OrdinalIgnoreCase)));
 
     // ── Validation ────────────────────────────────────────────────────────────
 
@@ -447,7 +448,7 @@ public static partial class LspServer
         }
         catch (OperationCanceledException)
         {
-            return [];
+            return []; // validation was superseded — caller ignores the result
         }
         finally
         {

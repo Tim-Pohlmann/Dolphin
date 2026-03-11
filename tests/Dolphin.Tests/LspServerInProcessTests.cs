@@ -452,11 +452,16 @@ public partial class LspServerInProcessTests
     {
         // A non-lsp, non-serve arg set should reach System.CommandLine without throwing.
         // `--help` exits cleanly with code 0 and writes to stdout.
-        var task = Startup.RunAsync(["--help"]);
-        var completed = await Task.WhenAny(task, Task.Delay(5000)) == task;
-        Assert.IsTrue(completed, "RunAsync([\"--help\"]) must complete promptly — CLI routing hung or threw");
-        var exitCode = await task; // surface any exception and verify the exit code
-        Assert.AreEqual(0, exitCode, "\"--help\" must exit with code 0");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try
+        {
+            var exitCode = await Startup.RunAsync(["--help"]).WaitAsync(cts.Token);
+            Assert.AreEqual(0, exitCode, "\"--help\" must exit with code 0");
+        }
+        catch (OperationCanceledException)
+        {
+            Assert.Fail("RunAsync([\"--help\"]) must complete promptly — CLI routing hung or threw");
+        }
     }
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]

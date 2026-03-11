@@ -501,10 +501,10 @@ public static partial class LspServer
             {
                 // Read stdout and stderr concurrently to avoid deadlock when
                 // the child fills one pipe while we're blocked reading the other.
-                // Use CancellationToken.None: if we need to cancel, kill the process
-                // and let stream reads complete naturally without propagating ct.
-                var stdoutTask = proc.StandardOutput.ReadToEndAsync(CancellationToken.None);
-                var stderrTask = proc.StandardError.ReadToEndAsync(CancellationToken.None);
+                // Pass ct so that if validation is cancelled, reads are interrupted
+                // and we can kill the process even if it hangs.
+                var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
+                var stderrTask = proc.StandardError.ReadToEndAsync(ct);
                 await Task.WhenAll(stdoutTask, stderrTask);
                 await proc.WaitForExitAsync(ct);
 

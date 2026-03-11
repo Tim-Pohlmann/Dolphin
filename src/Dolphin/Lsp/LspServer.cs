@@ -105,7 +105,7 @@ public static partial class LspServer
     /// message loop should continue (<c>true</c>) or break (<c>false</c>, i.e. broken pipe).
     /// </summary>
     private static async Task<(MessageAction action, bool continueLoop)> HandleBodyAsync(
-        Stream stdout, string body)
+        Stream stdout, byte[] body)
     {
         try
         {

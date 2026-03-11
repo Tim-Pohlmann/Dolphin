@@ -339,10 +339,10 @@ public static partial class LspServer
     // ── Validation ────────────────────────────────────────────────────────────
 
     private static bool IsDolphinRulesFile(string uri) =>
-        (uri.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase) ||
-         uri.EndsWith(".yml",  StringComparison.OrdinalIgnoreCase)) &&
-        (uri.Contains("/.dolphin/", StringComparison.OrdinalIgnoreCase) ||
-         uri.Contains("\\.dolphin\\", StringComparison.OrdinalIgnoreCase));
+        uri.EndsWith("/.dolphin/rules.yaml",  StringComparison.OrdinalIgnoreCase) ||
+        uri.EndsWith("/.dolphin/rules.yml",   StringComparison.OrdinalIgnoreCase) ||
+        uri.EndsWith("\\.dolphin\\rules.yaml", StringComparison.OrdinalIgnoreCase) ||
+        uri.EndsWith("\\.dolphin\\rules.yml",  StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Cancels any in-flight validation for <paramref name="uri"/> and returns a fresh
@@ -408,11 +408,32 @@ public static partial class LspServer
 
     private static async Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
     {
+        // Detect non-ASCII content before writing the temp file.
+        // Opengrep's Python layer reads rules files as ASCII; writing with Encoding.ASCII
+        // would silently replace non-ASCII characters with '?' and produce misleading results.
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (text[i] > 127)
+            {
+                int line = 0, col = 0;
+                for (int j = 0; j < i; j++)
+                {
+                    if (text[j] == '\n') { line++; col = 0; }
+                    else col++;
+                }
+                var pos = new LspPosition(line, col);
+                return [new LspDiagnostic(
+                    Range: new LspRange(pos, new LspPosition(line, col + 1)),
+                    Severity: 1,
+                    Source: "dolphin",
+                    Message: $"Non-ASCII character '{text[i]}' (U+{(int)text[i]:X4}): .dolphin/rules.yaml must contain only ASCII characters.",
+                    Pending: false)];
+            }
+        }
+
         var tmp = Path.Combine(Path.GetTempPath(), $"dolphin-lsp-{Guid.NewGuid():N}.yaml");
         try
         {
-            // Opengrep's Python layer reads rules files as ASCII; use ASCII here
-            // so temp-file validation matches the constraint documented in CLAUDE.md.
             await File.WriteAllTextAsync(tmp, text, Encoding.ASCII, ct);
 
             var psi = new ProcessStartInfo(_opengrepBinary!)

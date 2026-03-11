@@ -431,6 +431,56 @@ public partial class LspServerInProcessTests
         Assert.AreEqual(1, responses.Count, "Only shutdown response expected");
     }
 
+    [TestMethod]
+    public async Task RunAsync_MethodNotString_SendsInvalidRequestError()
+    {
+        // "method" field must be a string, not a number or other type.
+        var input = new MemoryStream(BuildInput(
+            """{"jsonrpc":"2.0","id":1,"method":123}""",
+            """{"jsonrpc":"2.0","id":2,"method":"shutdown"}"""));
+        var output = new MemoryStream();
+
+        await LspServer.RunAsync(input, output);
+
+        var responses = ParseOutput(output.ToArray());
+        Assert.IsTrue(responses.Count >= 2, "Error response + shutdown response expected");
+        Assert.AreEqual(-32600, responses[0]["error"]?["code"]?.GetValue<int>());
+        Assert.AreEqual(1, responses[0]["id"]?.GetValue<int>());
+    }
+
+    [TestMethod]
+    public async Task RunAsync_UnknownMethod_SendsMethodNotFoundError()
+    {
+        var input = new MemoryStream(BuildInput(
+            """{"jsonrpc":"2.0","id":1,"method":"unknown_method","params":{}}""",
+            """{"jsonrpc":"2.0","id":2,"method":"shutdown"}"""));
+        var output = new MemoryStream();
+
+        await LspServer.RunAsync(input, output);
+
+        var responses = ParseOutput(output.ToArray());
+        Assert.IsTrue(responses.Count >= 2);
+        Assert.AreEqual(-32601, responses[0]["error"]?["code"]?.GetValue<int>());
+        Assert.AreEqual(1, responses[0]["id"]?.GetValue<int>());
+    }
+
+    [TestMethod]
+    public async Task RunAsync_DidOpenInvalidParams_SendsInvalidParamsError()
+    {
+        // didOpen with missing required params should trigger InvalidOperationException (missing property).
+        var input = new MemoryStream(BuildInput(
+            """{"jsonrpc":"2.0","id":1,"method":"textDocument/didOpen","params":{}}""",
+            """{"jsonrpc":"2.0","id":2,"method":"shutdown"}"""));
+        var output = new MemoryStream();
+
+        await LspServer.RunAsync(input, output);
+
+        var responses = ParseOutput(output.ToArray());
+        Assert.IsTrue(responses.Count >= 2);
+        Assert.AreEqual(-32602, responses[0]["error"]?["code"]?.GetValue<int>());
+        Assert.AreEqual(1, responses[0]["id"]?.GetValue<int>());
+    }
+
     // ── Program.cs routing (via Startup.RunAsync) ─────────────────────────────
 
     [TestMethod]

@@ -481,6 +481,27 @@ public partial class LspServerInProcessTests
         Assert.AreEqual(1, responses[0]["id"]?.GetValue<int>());
     }
 
+    [TestMethod]
+    public void FindNonAsciiDiagnostic_WithNonAsciiCharacter_ReturnsDiagnostic()
+    {
+        // Rules files must be ASCII-only. Verify the synchronous non-ASCII detection works.
+        // We test this directly rather than through LSP protocol because validation is async/fire-and-forget.
+        var textWithNonAscii = "rules: []\n# Comment with \u2708 emoji"; // ✈ is non-ASCII
+
+        // Use reflection to call the private FindNonAsciiDiagnostic method
+        var method = typeof(LspServer).GetMethod("FindNonAsciiDiagnostic",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.IsNotNull(method, "FindNonAsciiDiagnostic method should exist");
+
+        var diags = (System.Array?)method!.Invoke(null, [textWithNonAscii]);
+        Assert.IsNotNull(diags, "Non-ASCII text should produce a diagnostic array");
+        Assert.AreEqual(1, diags.Length);
+
+        dynamic diag = diags.GetValue(0);
+        Assert.IsTrue(diag.Message.Contains("Non-ASCII"), "Message should mention non-ASCII");
+        Assert.IsTrue(diag.Message.Contains("U+2708"), "Message should include Unicode codepoint");
+    }
+
     // ── Program.cs routing (via Startup.RunAsync) ─────────────────────────────
 
     [TestMethod]

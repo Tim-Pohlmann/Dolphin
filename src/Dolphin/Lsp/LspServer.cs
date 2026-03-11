@@ -120,10 +120,14 @@ public static partial class LspServer
             bool sent = await TrySendParseErrorAsync(stdout);
             return (MessageAction.Continue, sent);
         }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // Broken stdout pipe — no point continuing if we can't send responses.
+            return (MessageAction.Continue, false);
+        }
         catch (Exception ex)
         {
-            // Non-parse exceptions (e.g. I/O failure writing to stdout) escaping
-            // HandleMessageAsync — log and keep the loop running.
+            // Non-parse exceptions escaping HandleMessageAsync — log and keep the loop running.
             await Console.Error.WriteLineAsync($"[dolphin-lsp] unexpected error: {ex.Message}");
             return (MessageAction.Continue, true);
         }

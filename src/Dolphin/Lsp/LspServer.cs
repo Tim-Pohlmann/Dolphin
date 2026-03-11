@@ -497,14 +497,16 @@ public static partial class LspServer
             psi.ArgumentList.Add(tmp);
 
             using var proc = Process.Start(psi)!;
+            Task<string>? stdoutTask = null;
+            Task<string>? stderrTask = null;
             try
             {
                 // Read stdout and stderr concurrently to avoid deadlock when
                 // the child fills one pipe while we're blocked reading the other.
                 // Pass ct so that if validation is cancelled, reads are interrupted
                 // and we can kill the process even if it hangs.
-                var stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-                var stderrTask = proc.StandardError.ReadToEndAsync(ct);
+                stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
+                stderrTask = proc.StandardError.ReadToEndAsync(ct);
                 await Task.WhenAll(stdoutTask, stderrTask);
                 await proc.WaitForExitAsync(ct);
 
@@ -521,6 +523,12 @@ public static partial class LspServer
             {
                 // Kill the process so it doesn't linger after a superseded validation.
                 try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+
+                // Observe any exceptions from the reads. If one read threw the cancellation,
+                // the other might still be in-flight; awaiting them ensures both are properly observed.
+                try { await Task.WhenAll(stdoutTask, stderrTask); }
+                catch { /* suppressed: reads failed due to process being killed */ }
+
                 // Reap the child to avoid zombie processes on Unix.
                 try
                 {

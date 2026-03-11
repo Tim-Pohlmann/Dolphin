@@ -401,7 +401,9 @@ public static partial class LspServer
         var tmp = Path.Combine(Path.GetTempPath(), $"dolphin-lsp-{Guid.NewGuid():N}.yaml");
         try
         {
-            await File.WriteAllTextAsync(tmp, text, Encoding.UTF8, ct);
+            // Opengrep's Python layer reads rules files as ASCII; use ASCII here
+            // so temp-file validation matches the constraint documented in CLAUDE.md.
+            await File.WriteAllTextAsync(tmp, text, Encoding.ASCII, ct);
 
             var psi = new ProcessStartInfo(_opengrepBinary!)
             {

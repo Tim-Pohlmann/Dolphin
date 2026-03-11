@@ -15,7 +15,7 @@ namespace Dolphin.Lsp;
 /// `opengrep validate` and publishes LSP diagnostics. All JSON is written
 /// with Utf8JsonWriter so this is fully trim-safe (no reflection).
 /// </summary>
-public static class LspServer
+public static partial class LspServer
 {
     private static string? _opengrepBinary;
 
@@ -40,8 +40,8 @@ public static class LspServer
     private const string ErrorProperty   = "error";
     private const string MessageProperty = "message";
 
-    private static readonly Regex ContentLengthRegex =
-        new(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled, TimeSpan.FromSeconds(1));
+    [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex ContentLengthRegex();
 
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
@@ -133,7 +133,7 @@ public static class LspServer
         if (header is null) return (true, null); // stdin closed
 
         // Case-insensitive per the LSP spec (HTTP-style headers).
-        var clMatch = ContentLengthRegex.Match(header);
+        var clMatch = ContentLengthRegex().Match(header);
         if (!clMatch.Success) return (false, null);
 
         // Parse as long to catch values that overflow int; reject zero/negative and too-large → close.

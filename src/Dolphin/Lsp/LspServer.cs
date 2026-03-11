@@ -59,8 +59,7 @@ public static partial class LspServer
         {
             var (close, body) = await TryReadNextMessageAsync(reader);
             if (close) break;
-            if (body is null) continue; // no Content-Length — skip malformed header
-            var (action, continueLoop) = await HandleBodyAsync(stdout, body);
+            var (action, continueLoop) = await HandleBodyAsync(stdout, body!);
             if (!continueLoop) break;
             if (action == MessageAction.ShutdownReceived) shutdownReceived = true;
             else if (action == MessageAction.ExitRequested) break;

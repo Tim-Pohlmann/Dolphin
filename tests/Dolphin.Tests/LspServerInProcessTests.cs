@@ -51,7 +51,7 @@ public partial class LspServerInProcessTests
         return results;
     }
 
-/// <summary>Runs the server in-process with the given JSON messages and returns all output messages.</summary>
+    /// <summary>Runs the server in-process with the given JSON messages and returns all output messages.</summary>
     private static async Task<List<JsonObject>> RunServerAsync(params string[] messages)
     {
         var input = new MemoryStream(BuildInput(messages));

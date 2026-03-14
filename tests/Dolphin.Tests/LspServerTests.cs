@@ -392,7 +392,7 @@ public partial class LspServerTests
     public async Task LspReader_ReadHeaderAsync_BadHeader_NoContentLength_ReturnsHeader()
     {
         // A well-formed header sequence that has no Content-Length should still
-        // return the raw string (the loop in RunAsync then skips it via `continue`).
+        // return the raw string (TryReadNextMessageAsync then closes the connection).
         var bytes = Encoding.ASCII.GetBytes("X-Custom: value\r\n\r\n");
         var reader = new LspReader(new MemoryStream(bytes));
         var header = await reader.ReadHeaderAsync();

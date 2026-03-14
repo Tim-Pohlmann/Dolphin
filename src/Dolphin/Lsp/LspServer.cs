@@ -458,12 +458,17 @@ public static partial class LspServer
             char ch = text[i];
             if (ch > 127)
             {
+                // Decode the full Unicode scalar so we report the correct codepoint and
+                // range length for non-BMP characters (surrogate pairs).
+                var rune = char.IsHighSurrogate(ch) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])
+                    ? new Rune(ch, text[i + 1])
+                    : new Rune(ch);
                 var pos = new LspPosition(line, col);
                 return [new LspDiagnostic(
-                    Range: new LspRange(pos, new LspPosition(line, col + 1)),
+                    Range: new LspRange(pos, new LspPosition(line, col + rune.Utf16SequenceLength)),
                     Severity: 1,
                     Source: "dolphin",
-                    Message: $"Non-ASCII character '{ch}' (U+{(int)ch:X4}): .dolphin/rules.yaml must contain only ASCII characters.",
+                    Message: $"Non-ASCII character (U+{rune.Value:X4}): .dolphin/rules.yaml must contain only ASCII characters.",
                     Pending: false)];
             }
 

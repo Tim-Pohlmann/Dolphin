@@ -122,6 +122,7 @@ public static partial class LspServer
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
             // Broken stdout pipe — no point continuing if we can't send responses.
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] stdout pipe closed: {ex.Message}");
             return (MessageAction.Continue, false);
         }
         catch (Exception ex)

@@ -1,11 +1,12 @@
 ---
 name: generate-rules
-description: Analyze this codebase and generate static analysis rules for .dolphin/rules.yaml
-argument-hint: "[focus-area] (optional — e.g. 'security', 'style', or 'performance')"
+description: Scan this codebase for established patterns and generate Dolphin rules that prevent drift from those conventions
+argument-hint: "[focus-area] (optional — e.g. 'logging', 'error-handling', 'naming', or 'api-responses')"
 allowed-tools: Agent(generate-rules-recon), Bash(mkdir *), Bash(test *), Write
 ---
 
 You are orchestrating static analysis rule generation for the Dolphin tool.
+The goal is **drift prevention**: encode the patterns the team already uses consistently so that future code stays aligned with those conventions.
 The user's optional focus area is: $ARGUMENTS
 
 ---
@@ -14,7 +15,7 @@ The user's optional focus area is: $ARGUMENTS
 
 Invoke the `generate-rules-recon` agent with the following prompt:
 
-> "Scan this codebase for candidate Dolphin/Opengrep rules. Focus area: $ARGUMENTS (if empty, cover security, style, and correctness broadly)."
+> "Scan this codebase for established patterns to protect against drift. Focus area: $ARGUMENTS (if empty, cover the most common drift vectors: logging, error handling, naming conventions, API/response patterns, and dependency usage)."
 
 Wait for the agent to return its `RECON_RESULT` block. Parse out the `CANDIDATE_RULES` entries — each has: `id`, `severity`, `languages`, `pattern`, `message`, `why`.
 
@@ -29,8 +30,8 @@ Rule N: <rule-id>
   Severity:  ERROR | WARNING | INFO
   Languages: <comma-separated list>
   Pattern:   <the pattern>
-  Message:   <violation message shown to the developer>
-  Why:       <1-2 sentences on why this is relevant to THIS codebase>
+  Message:   <message shown to the developer>
+  Why:       <1-2 sentences on what pattern this enforces in THIS codebase>
 
 Keep (k), Skip (s), or Modify (m)?
 ```
@@ -88,4 +89,4 @@ Once the user confirms:
 
 5. **Confirm success:**
    > "Written N rule(s) to `.dolphin/rules.yaml`.
-   > Run `dolphin check` to run your first scan."
+   > Run `dolphin check` to see drift from your conventions."

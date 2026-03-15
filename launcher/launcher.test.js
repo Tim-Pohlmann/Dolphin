@@ -270,7 +270,7 @@ test('ensureBinary throws when tar extraction fails', async (t) => {
 
   childProcess.spawnSync = () => ({ status: 1 });
 
-  await assert.rejects(ensureBinary(), /Failed to extract archive with tar/);
+  await assert.rejects(ensureBinary(), /Failed to extract archive with (tar|PowerShell)/);
 });
 
 test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {

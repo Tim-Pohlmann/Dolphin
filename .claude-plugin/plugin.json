@@ -1,6 +1,16 @@
 {
   "name": "dolphin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Custom static analysis powered by Opengrep. Generate rules with Claude, run them in CI.",
-  "author": { "name": "Tim Pohlmann" }
+  "author": { "name": "Tim Pohlmann" },
+  "lspServers": {
+    "opengrep-rules": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/launcher/launcher.js", "lsp"],
+      "extensionToLanguage": {
+        ".yaml": "yaml",
+        ".yml": "yaml"
+      }
+    }
+  }
 }

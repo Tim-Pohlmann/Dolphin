@@ -460,15 +460,31 @@ public static partial class LspServer
             {
                 // Decode the full Unicode scalar so we report the correct codepoint and
                 // range length for non-BMP characters (surrogate pairs).
-                var rune = char.IsHighSurrogate(ch) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1])
-                    ? new Rune(ch, text[i + 1])
-                    : new Rune(ch);
+                // Use TryCreate to avoid throwing on unpaired surrogates.
+                int codePoint;
+                int utf16Len;
+                if (char.IsHighSurrogate(ch) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                {
+                    codePoint = char.ConvertToUtf32(ch, text[i + 1]);
+                    utf16Len = 2;
+                }
+                else if (Rune.TryCreate(ch, out var rune))
+                {
+                    codePoint = rune.Value;
+                    utf16Len = rune.Utf16SequenceLength;
+                }
+                else
+                {
+                    // Unpaired surrogate — report the raw UTF-16 code unit.
+                    codePoint = ch;
+                    utf16Len = 1;
+                }
                 var pos = new LspPosition(line, col);
                 return [new LspDiagnostic(
-                    Range: new LspRange(pos, new LspPosition(line, col + rune.Utf16SequenceLength)),
+                    Range: new LspRange(pos, new LspPosition(line, col + utf16Len)),
                     Severity: 1,
                     Source: "dolphin",
-                    Message: $"Non-ASCII character (U+{rune.Value:X4}): .dolphin/rules.yaml must contain only ASCII characters.",
+                    Message: $"Non-ASCII character (U+{codePoint:X4}): .dolphin/rules.yaml must contain only ASCII characters.",
                     Pending: false)];
             }
 

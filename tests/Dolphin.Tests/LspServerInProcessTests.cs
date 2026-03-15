@@ -310,7 +310,9 @@ public partial class LspServerInProcessTests
             "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\"}}}",
             """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+        // Use LastOrDefault: the async didOpen validation may publish a non-empty
+        // diagnostics notification before didClose publishes the empty one.
+        var publish = responses.LastOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
         Assert.IsNotNull(publish, "didClose should publish empty diagnostics");
         Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
     }
@@ -504,6 +506,19 @@ public partial class LspServerInProcessTests
         Assert.AreEqual(1, diags.Length);
         Assert.IsTrue(diags[0].Message.Contains("Non-ASCII"), "Message should mention non-ASCII");
         Assert.IsTrue(diags[0].Message.Contains("U+2708"), "Message should include Unicode codepoint");
+    }
+
+    [TestMethod]
+    public void FindNonAsciiDiagnostic_WithUnpairedSurrogate_DoesNotThrow()
+    {
+        // An unpaired high surrogate must not crash the server (new Rune(char) would throw).
+        var text = "rules: []\n# " + "\uD800"; // lone high surrogate
+
+        var diags = LspServer.FindNonAsciiDiagnostic(text);
+
+        Assert.IsNotNull(diags, "Unpaired surrogate is non-ASCII and should produce a diagnostic");
+        Assert.AreEqual(1, diags.Length);
+        Assert.IsTrue(diags[0].Message.Contains("Non-ASCII"));
     }
 
     // ── Program.cs routing (via Startup.RunAsync) ─────────────────────────────

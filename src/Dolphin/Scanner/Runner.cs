@@ -1,17 +1,10 @@
 using System.Diagnostics;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 namespace Dolphin.Scanner;
 
 public static class Runner
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        NumberHandling = JsonNumberHandling.AllowReadingFromString
-    };
-
     /// <summary>
     /// Runs the scanner against <paramref name="cwd"/> using .dolphin/rules.yaml.
     /// Optionally filters to a single rule ID.
@@ -45,9 +38,14 @@ public static class Runner
         foreach (var arg in args) psi.ArgumentList.Add(arg);
 
         using var proc = Process.Start(psi)!;
-        var stdout = await proc.StandardOutput.ReadToEndAsync();
-        var stderr = await proc.StandardError.ReadToEndAsync();
+        // Read stdout and stderr concurrently to avoid deadlock when
+        // the child fills one pipe while we're blocked reading the other.
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
+        await Task.WhenAll(stdoutTask, stderrTask);
         await proc.WaitForExitAsync();
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
 
         // Exit 0 = clean, 1 = findings present, 2+ = error
         if (proc.ExitCode >= 2)

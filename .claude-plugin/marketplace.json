@@ -1,0 +1,15 @@
+{
+  "name": "dolphin-dev",
+  "owner": {
+    "name": "Local Development"
+  },
+  "metadata": {
+    "description": "Dolphin local development marketplace"
+  },
+  "plugins": [
+    {
+      "name": "dolphin",
+      "source": "./"
+    }
+  ]
+}

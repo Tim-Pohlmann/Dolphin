@@ -14,11 +14,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest, windows-latest]
         include:
-          - os: ubuntu-latest
-            opengrep_asset: opengrep_manylinux_x86
-            opengrep_binary: opengrep
           - os: macos-latest
             opengrep_asset: opengrep_osx_arm64
             opengrep_binary: opengrep
@@ -55,14 +52,10 @@ jobs:
 
       - name: Get latest opengrep version
         id: opengrep-version
-        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=$(curl -fsSL --proto '=https' --tlsv1.2 \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/opengrep/opengrep/releases/latest" \
-            | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+          VERSION=$(gh api repos/opengrep/opengrep/releases/latest --jq '.tag_name')
           test -n "$VERSION" || { echo "Failed to determine opengrep version" >&2; exit 1; }
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
@@ -156,7 +149,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=$(curl -fsSL --proto '=https' --tlsv1.2 -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/opengrep/opengrep/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+          VERSION=$(gh api repos/opengrep/opengrep/releases/latest --jq '.tag_name')
           test -n "$VERSION" || { echo "Failed to determine opengrep version" >&2; exit 1; }
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 

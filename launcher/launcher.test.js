@@ -238,6 +238,7 @@ test('ensureBinary downloads and extracts tar.gz when binary is missing', async 
 });
 
 test('ensureBinary throws when tar extraction fails', async (t) => {
+  const origPlatform = process.platform;
   const origExists = fs.existsSync;
   const origMkdir = fs.mkdirSync;
   const origCWS = fs.createWriteStream;
@@ -245,12 +246,15 @@ test('ensureBinary throws when tar extraction fails', async (t) => {
   const origSpawn = childProcess.spawnSync;
 
   t.after(() => {
+    Object.defineProperty(process, 'platform', { value: origPlatform, configurable: true });
     fs.existsSync = origExists;
     fs.mkdirSync = origMkdir;
     fs.createWriteStream = origCWS;
     https.get = origGet;
     childProcess.spawnSync = origSpawn;
   });
+
+  Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 
   let call = 0;
   fs.existsSync = (p) => {
@@ -270,7 +274,7 @@ test('ensureBinary throws when tar extraction fails', async (t) => {
 
   childProcess.spawnSync = () => ({ status: 1 });
 
-  await assert.rejects(ensureBinary(), /Failed to extract archive with (tar|PowerShell)/);
+  await assert.rejects(ensureBinary(), /Failed to extract archive with tar/);
 });
 
 test('ensureBinary uses PowerShell to extract zip on Windows', async (t) => {

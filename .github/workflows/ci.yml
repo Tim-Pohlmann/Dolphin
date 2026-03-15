@@ -7,8 +7,104 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
-    name: Build and Test
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            opengrep_asset: opengrep_manylinux_x86
+            opengrep_binary: opengrep
+          - os: macos-latest
+            opengrep_asset: opengrep_osx_arm64
+            opengrep_binary: opengrep
+          - os: windows-latest
+            opengrep_asset: opengrep_windows_x86.exe
+            opengrep_binary: opengrep.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          check-latest: true
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore Dolphin.slnx
+
+      - name: Build
+        run: dotnet build Dolphin.slnx --no-restore -c Release
+
+      - name: Get latest opengrep version
+        id: opengrep-version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(curl -fsSL --proto '=https' --tlsv1.2 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/opengrep/opengrep/releases/latest" \
+            | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+          test -n "$VERSION" || { echo "Failed to determine opengrep version" >&2; exit 1; }
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Cache opengrep
+        id: cache-opengrep
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/opengrep-cache
+          key: opengrep-${{ runner.os }}-${{ steps.opengrep-version.outputs.version }}
+
+      - name: Download opengrep
+        if: steps.cache-opengrep.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/opengrep-cache"
+          VERSION="${{ steps.opengrep-version.outputs.version }}"
+          curl -fsSL --proto '=https' --tlsv1.2 \
+            "https://github.com/opengrep/opengrep/releases/download/${VERSION}/${{ matrix.opengrep_asset }}" \
+            -o "${{ runner.temp }}/opengrep-cache/${{ matrix.opengrep_binary }}"
+
+      - name: Install opengrep (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          sudo cp "${{ runner.temp }}/opengrep-cache/${{ matrix.opengrep_binary }}" /usr/local/bin/opengrep
+          sudo chmod +x /usr/local/bin/opengrep
+
+      - name: Install opengrep (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\opengrep | Out-Null
+          Copy-Item "${{ runner.temp }}\opengrep-cache\${{ matrix.opengrep_binary }}" -Destination "C:\opengrep\opengrep.exe"
+          "C:\opengrep" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Test (launcher)
+        run: node --test launcher/launcher.test.js
+
+      - name: Test (.NET)
+        run: dotnet test Dolphin.slnx --no-build -c Release --verbosity normal
+
+  analyze:
+    name: Analyze
     runs-on: ubuntu-latest
 
     steps:

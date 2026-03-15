@@ -458,33 +458,13 @@ public static partial class LspServer
             char ch = text[i];
             if (ch > 127)
             {
-                // Decode the full Unicode scalar so we report the correct codepoint and
-                // range length for non-BMP characters (surrogate pairs).
-                // Use TryCreate to avoid throwing on unpaired surrogates.
-                int codePoint;
-                int utf16Len;
-                if (char.IsHighSurrogate(ch) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
-                {
-                    codePoint = char.ConvertToUtf32(ch, text[i + 1]);
-                    utf16Len = 2;
-                }
-                else if (Rune.TryCreate(ch, out var rune))
-                {
-                    codePoint = rune.Value;
-                    utf16Len = rune.Utf16SequenceLength;
-                }
-                else
-                {
-                    // Unpaired surrogate — report the raw UTF-16 code unit.
-                    codePoint = ch;
-                    utf16Len = 1;
-                }
+                var (codePoint, utf16Len) = DecodeNonAscii(ch, text, i);
                 var pos = new LspPosition(line, col);
                 return [new LspDiagnostic(
                     Range: new LspRange(pos, new LspPosition(line, col + utf16Len)),
                     Severity: 1,
                     Source: "dolphin",
-                    Message: $"Non-ASCII character (U+{codePoint:X4}): .dolphin/rules.yaml must contain only ASCII characters.",
+                    Message: $"Non-ASCII character (U+{codePoint:X4}): Dolphin rules files must contain only ASCII characters.",
                     Pending: false)];
             }
 
@@ -514,6 +494,21 @@ public static partial class LspServer
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Decodes a non-ASCII char at position <paramref name="i"/> in <paramref name="text"/>,
+    /// returning the Unicode code point and UTF-16 sequence length. Handles surrogate pairs
+    /// and gracefully falls back for unpaired surrogates.
+    /// </summary>
+    private static (int CodePoint, int Utf16Len) DecodeNonAscii(char ch, string text, int i)
+    {
+        if (char.IsHighSurrogate(ch) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            return (char.ConvertToUtf32(ch, text[i + 1]), 2);
+        if (Rune.TryCreate(ch, out var rune))
+            return (rune.Value, rune.Utf16SequenceLength);
+        // Unpaired surrogate — report the raw UTF-16 code unit.
+        return (ch, 1);
     }
 
     private static async Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)

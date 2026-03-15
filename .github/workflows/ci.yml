@@ -14,8 +14,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         include:
+          - os: ubuntu-latest
+            opengrep_asset: opengrep_manylinux_x86
+            opengrep_binary: opengrep
           - os: macos-latest
             opengrep_asset: opengrep_osx_arm64
             opengrep_binary: opengrep

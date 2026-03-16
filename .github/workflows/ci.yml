@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  OPENGREP_VERSION: 'v1.16.4'
+
 jobs:
   test:
     name: Test (${{ matrix.os }})
@@ -53,31 +56,20 @@ jobs:
       - name: Build
         run: dotnet build Dolphin.slnx --no-restore -c Release
 
-      - name: Get latest opengrep version
-        id: opengrep-version
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=$(gh api repos/opengrep/opengrep/releases/latest --jq '.tag_name')
-          test -n "$VERSION" || { echo "Failed to determine opengrep version" >&2; exit 1; }
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Cache opengrep
         id: cache-opengrep
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/opengrep-cache
-          key: opengrep-${{ runner.os }}-${{ steps.opengrep-version.outputs.version }}
+          key: opengrep-${{ runner.os }}-${{ env.OPENGREP_VERSION }}
 
       - name: Download opengrep
         if: steps.cache-opengrep.outputs.cache-hit != 'true'
         shell: bash
         run: |
           mkdir -p "${{ runner.temp }}/opengrep-cache"
-          VERSION="${{ steps.opengrep-version.outputs.version }}"
           curl -fsSL --proto '=https' --tlsv1.2 \
-            "https://github.com/opengrep/opengrep/releases/download/${VERSION}/${{ matrix.opengrep_asset }}" \
+            "https://github.com/opengrep/opengrep/releases/download/${{ env.OPENGREP_VERSION }}/${{ matrix.opengrep_asset }}" \
             -o "${{ runner.temp }}/opengrep-cache/${{ matrix.opengrep_binary }}"
 
       - name: Install opengrep (Linux/macOS)
@@ -148,29 +140,18 @@ jobs:
       - name: Build
         run: dotnet build Dolphin.slnx --no-restore -c Release
 
-      - name: Get latest opengrep version
-        id: opengrep-version
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=$(gh api repos/opengrep/opengrep/releases/latest --jq '.tag_name')
-          test -n "$VERSION" || { echo "Failed to determine opengrep version" >&2; exit 1; }
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Cache opengrep
         id: cache-opengrep
         uses: actions/cache@v4
         with:
           path: ~/.cache/opengrep
-          key: opengrep-${{ runner.os }}-${{ steps.opengrep-version.outputs.version }}
+          key: opengrep-${{ runner.os }}-${{ env.OPENGREP_VERSION }}
 
       - name: Download opengrep
         if: steps.cache-opengrep.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/.cache/opengrep
-          VERSION="${{ steps.opengrep-version.outputs.version }}"
-          curl -fsSL --proto '=https' --tlsv1.2 "https://github.com/opengrep/opengrep/releases/download/${VERSION}/opengrep_manylinux_x86" -o ~/.cache/opengrep/opengrep
+          curl -fsSL --proto '=https' --tlsv1.2 "https://github.com/opengrep/opengrep/releases/download/${{ env.OPENGREP_VERSION }}/opengrep_manylinux_x86" -o ~/.cache/opengrep/opengrep
 
       - name: Install opengrep
         run: |

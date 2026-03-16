@@ -63,14 +63,23 @@ jobs:
           path: ${{ runner.temp }}/opengrep-cache
           key: opengrep-${{ runner.os }}-${{ env.OPENGREP_VERSION }}
 
-      - name: Download opengrep
-        if: steps.cache-opengrep.outputs.cache-hit != 'true'
+      - name: Download opengrep (Linux/macOS)
+        if: steps.cache-opengrep.outputs.cache-hit != 'true' && runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p "${{ runner.temp }}/opengrep-cache"
           curl -fsSL --proto '=https' --tlsv1.2 \
             "https://github.com/opengrep/opengrep/releases/download/${{ env.OPENGREP_VERSION }}/${{ matrix.opengrep_asset }}" \
             -o "${{ runner.temp }}/opengrep-cache/${{ matrix.opengrep_binary }}"
+
+      - name: Download opengrep (Windows)
+        if: steps.cache-opengrep.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\opengrep-cache" | Out-Null
+          curl.exe -fsSL --proto '=https' --tlsv1.2 `
+            "https://github.com/opengrep/opengrep/releases/download/${{ env.OPENGREP_VERSION }}/${{ matrix.opengrep_asset }}" `
+            -o "${{ runner.temp }}\opengrep-cache\${{ matrix.opengrep_binary }}"
 
       - name: Install opengrep (Linux/macOS)
         if: runner.os != 'Windows'

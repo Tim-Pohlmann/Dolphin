@@ -19,7 +19,7 @@ public class CheckCommandTests
     );
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDolphinAsync(
-        string args, CancellationToken ct = default)
+        string args, string? prependPath = null, CancellationToken ct = default)
     {
         var projectPath = TestProcessHelper.FindDolphinProjectPath();
         var config = TestProcessHelper.CurrentConfiguration();
@@ -31,6 +31,8 @@ public class CheckCommandTests
             RedirectStandardError = true,
             UseShellExecute = false,
         };
+        if (prependPath != null)
+            psi.Environment["PATH"] = prependPath + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
 
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start dotnet process");
@@ -188,6 +190,42 @@ public class CheckCommandTests
         finally
         {
             Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task Check_PrintsWarningToStderr_WhenScannerExitsCode2()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        var fakeBinDir = Path.Combine(Path.GetTempPath(), $"dolphin-fakebin-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        Directory.CreateDirectory(fakeBinDir);
+        File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+
+        // Fake opengrep: responds to --version normally, returns exit code 2 for scans
+        var fakeScript = Path.Combine(fakeBinDir, "opengrep");
+#pragma warning disable CA1416
+        File.WriteAllText(fakeScript,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '1.0.0'; exit 0; fi\n" +
+            "echo '{\"results\":[]}'\necho 'scan warning' >&2\nexit 2\n");
+        File.SetUnixFileMode(fakeScript,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+#pragma warning restore CA1416
+
+        try
+        {
+            var (exitCode, _, stderr) = await RunDolphinAsync(
+                $"check --cwd \"{tmpDir}\"", prependPath: fakeBinDir);
+
+            Assert.AreEqual(0, exitCode, "Exit code should be 0 (no ERROR findings)");
+            StringAssert.Contains(stderr, "Warning:");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+            Directory.Delete(fakeBinDir, recursive: true);
         }
     }
 }

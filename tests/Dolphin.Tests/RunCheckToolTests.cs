@@ -3,6 +3,46 @@ using Dolphin.Scanner;
 
 namespace Dolphin.Tests;
 
+[TestClass]
+public class RunCheckToolBuildOutputTests
+{
+    [TestMethod]
+    public void BuildOutput_NoFindings_NoWarning_ReturnsCleanMessage()
+    {
+        var result = new RunResult([], HasFindings: false);
+        Assert.AreEqual("✓ No violations found.", RunCheckTool.BuildOutput(result));
+    }
+
+    [TestMethod]
+    public void BuildOutput_NoFindings_WithWarning_IncludesWarningPrefix()
+    {
+        var result = new RunResult([], HasFindings: false, ScannerWarning: "partial scan");
+        var output = RunCheckTool.BuildOutput(result);
+        StringAssert.Contains(output, "⚠ Scanner warning: partial scan");
+        StringAssert.Contains(output, "✓ No violations found.");
+    }
+
+    [TestMethod]
+    public void BuildOutput_WithFindings_WithWarning_IncludesWarningAndViolations()
+    {
+        var finding = new Finding("my-rule", Severity.Error, "src/foo.ts", 1, 1, "bad code", "foo()");
+        var result = new RunResult([finding], HasFindings: true, ScannerWarning: "scan incomplete");
+        var output = RunCheckTool.BuildOutput(result);
+        StringAssert.Contains(output, "⚠ Scanner warning: scan incomplete");
+        StringAssert.Contains(output, "violation(s)");
+        StringAssert.Contains(output, "my-rule");
+    }
+
+    [TestMethod]
+    public void BuildOutput_WithFindings_NoWarning_DoesNotContainWarningPrefix()
+    {
+        var finding = new Finding("my-rule", Severity.Warning, "src/foo.ts", 1, 1, "msg", "");
+        var result = new RunResult([finding], HasFindings: true);
+        var output = RunCheckTool.BuildOutput(result);
+        Assert.IsFalse(output.Contains("⚠"), "Should not contain warning symbol when ScannerWarning is null");
+    }
+}
+
 /// <summary>
 /// Tests for the RunCheckTool MCP tool method — the string it returns is
 /// exactly what Claude receives when it calls the run_check tool.

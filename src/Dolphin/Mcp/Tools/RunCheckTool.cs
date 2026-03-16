@@ -54,8 +54,7 @@ public sealed class RunCheckTool
             return $"{warning}✓ No violations found.";
 
         var sb = new StringBuilder();
-        if (result.ScannerWarning != null)
-            sb.AppendLine($"⚠ Scanner warning: {result.ScannerWarning}\n");
+        sb.Append(warning);
         sb.AppendLine($"Found {result.Findings.Count} violation(s):\n");
 
         foreach (var f in result.Findings)

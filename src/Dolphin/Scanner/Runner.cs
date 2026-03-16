@@ -47,7 +47,11 @@ public static class Runner
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
 
-        // Exit 0 = clean, 1 = findings present, 2 = non-fatal scanner warning
+        // Exit 0 = clean, 1 = findings present, 2 = non-fatal scanner warning, 3+ = error
+        if (proc.ExitCode > 2)
+            throw new InvalidOperationException(
+                $"Scanner exited with code {proc.ExitCode}.\n{stderr}");
+
         var scannerWarning = proc.ExitCode == 2
             ? $"Scanner exited with code 2 (non-fatal).\n{stderr}".Trim()
             : null;

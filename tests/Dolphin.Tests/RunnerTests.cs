@@ -219,4 +219,62 @@ public class RunnerTests
             Directory.Delete(tmpDir, recursive: true);
         }
     }
+
+    [TestMethod]
+    public async Task RunAsync_ExitCode2_ReturnsScannerWarning()
+    {
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 2, stderr: "some warning");
+        try
+        {
+            var result = await Runner.RunAsync(fakeBinary, tmpDir);
+
+            Assert.IsNotNull(result.ScannerWarning, "Expected ScannerWarning to be set for exit code 2");
+            StringAssert.Contains(result.ScannerWarning, "some warning");
+            Assert.AreEqual(0, result.Findings.Count);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RunAsync_ExitCodeAbove2_Throws()
+    {
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 3, stderr: "fatal error");
+        try
+        {
+            await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Creates a temp directory with a minimal .dolphin/rules.yaml and a fake scanner script
+    /// that writes empty JSON results to stdout and exits with the given code.
+    /// </summary>
+    private static (string tmpDir, string fakeBinary) CreateFakeScannerEnv(int exitCode, string stderr = "")
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+
+        // Write a shell script that prints empty JSON results and exits with the given code
+        var script = Path.Combine(tmpDir, "fake-scanner.sh");
+        File.WriteAllText(script,
+            $"#!/bin/sh\necho '{{\"results\":[]}}'\necho '{stderr}' >&2\nexit {exitCode}\n");
+#pragma warning disable CA1416 // SetUnixFileMode is not supported on Windows; these tests are Unix-only
+        File.SetUnixFileMode(script,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+#pragma warning restore CA1416
+
+        return (tmpDir, script);
+    }
 }

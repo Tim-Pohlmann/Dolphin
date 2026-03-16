@@ -46,6 +46,11 @@ public sealed class RunCheckTool
             return $"Error running scanner: {ex.Message}";
         }
 
+        return BuildOutput(result);
+    }
+
+    internal static string BuildOutput(RunResult result)
+    {
         var warning = result.ScannerWarning != null
             ? $"⚠ Scanner warning: {result.ScannerWarning}\n\n"
             : "";

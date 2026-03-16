@@ -1,6 +1,6 @@
 {
   "name": "dolphin",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "Custom static analysis powered by Opengrep. Generate rules with Claude, run them in CI.",
   "author": { "name": "Tim Pohlmann" },
   "lspServers": {

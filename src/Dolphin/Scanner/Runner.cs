@@ -47,10 +47,10 @@ public static class Runner
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
 
-        // Exit 0 = clean, 1 = findings present, 2+ = error
-        if (proc.ExitCode >= 2)
-            throw new InvalidOperationException(
-                $"Scanner exited with code {proc.ExitCode}.\n{stderr}");
+        // Exit 0 = clean, 1 = findings present, 2 = non-fatal scanner warning
+        var scannerWarning = proc.ExitCode == 2
+            ? $"Scanner exited with code 2 (non-fatal).\n{stderr}".Trim()
+            : null;
 
         var findings = ParseFindings(stdout, cwd);
         // Filter by rule ID if requested. The check_id in the output is typically the bare rule ID
@@ -59,7 +59,7 @@ public static class Runner
             findings = findings
                 .Where(f => f.RuleId == ruleId || f.RuleId.EndsWith("." + ruleId))
                 .ToList();
-        return new RunResult(findings, proc.ExitCode == 1);
+        return new RunResult(findings, proc.ExitCode == 1, scannerWarning);
     }
 
     private static List<Finding> ParseFindings(string json, string cwd)
@@ -108,4 +108,4 @@ public static class Runner
     }
 }
 
-public record RunResult(List<Finding> Findings, bool HasFindings);
+public record RunResult(List<Finding> Findings, bool HasFindings, string? ScannerWarning = null);

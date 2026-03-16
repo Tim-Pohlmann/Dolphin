@@ -83,6 +83,13 @@ public static class CheckCommand
                 return;
             }
 
+            if (result.ScannerWarning != null)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.Error.WriteLine($"Warning: {result.ScannerWarning}");
+                Console.ResetColor();
+            }
+
             Formatter.Print(result.Findings, format);
 
             // Exit 1 if any ERROR-severity findings, 0 otherwise

@@ -46,10 +46,16 @@ public sealed class RunCheckTool
             return $"Error running scanner: {ex.Message}";
         }
 
+        var warning = result.ScannerWarning != null
+            ? $"⚠ Scanner warning: {result.ScannerWarning}\n\n"
+            : "";
+
         if (result.Findings.Count == 0)
-            return "✓ No violations found.";
+            return $"{warning}✓ No violations found.";
 
         var sb = new StringBuilder();
+        if (result.ScannerWarning != null)
+            sb.AppendLine($"⚠ Scanner warning: {result.ScannerWarning}\n");
         sb.AppendLine($"Found {result.Findings.Count} violation(s):\n");
 
         foreach (var f in result.Findings)

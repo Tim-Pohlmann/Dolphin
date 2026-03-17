@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  OPENGREP_VERSION: 'v1.16.4'
-
 jobs:
   test:
     name: Test (${{ matrix.os }})
@@ -31,6 +28,14 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Get opengrep version
+        id: opengrep-version
+        shell: bash
+        run: |
+          VERSION=$(grep -oP '(?<=<OpengrepVersion>)[^<]+' src/Dolphin/Dolphin.csproj)
+          test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -61,7 +66,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/opengrep-cache
-          key: opengrep-${{ runner.os }}-${{ env.OPENGREP_VERSION }}
+          key: opengrep-${{ runner.os }}-${{ steps.opengrep-version.outputs.version }}
 
       - name: Download opengrep (Linux/macOS)
         if: steps.cache-opengrep.outputs.cache-hit != 'true' && runner.os != 'Windows'
@@ -69,7 +74,7 @@ jobs:
         run: |
           mkdir -p "${{ runner.temp }}/opengrep-cache"
           curl -fsSL --proto '=https' --tlsv1.2 \
-            "https://github.com/opengrep/opengrep/releases/download/${{ env.OPENGREP_VERSION }}/${{ matrix.opengrep_asset }}" \
+            "https://github.com/opengrep/opengrep/releases/download/${{ steps.opengrep-version.outputs.version }}/${{ matrix.opengrep_asset }}" \
             -o "${{ runner.temp }}/opengrep-cache/${{ matrix.opengrep_binary }}"
 
       - name: Download opengrep (Windows)
@@ -78,7 +83,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\opengrep-cache" | Out-Null
           curl.exe -fsSL --proto '=https' --tlsv1.2 `
-            "https://github.com/opengrep/opengrep/releases/download/${{ env.OPENGREP_VERSION }}/${{ matrix.opengrep_asset }}" `
+            "https://github.com/opengrep/opengrep/releases/download/${{ steps.opengrep-version.outputs.version }}/${{ matrix.opengrep_asset }}" `
             -o "${{ runner.temp }}\opengrep-cache\${{ matrix.opengrep_binary }}"
 
       - name: Install opengrep (Linux/macOS)
@@ -109,6 +114,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Required for SonarQube blame information
+
+      - name: Get opengrep version
+        id: opengrep-version
+        shell: bash
+        run: |
+          VERSION=$(grep -oP '(?<=<OpengrepVersion>)[^<]+' src/Dolphin/Dolphin.csproj)
+          test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -154,13 +167,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/opengrep
-          key: opengrep-${{ runner.os }}-${{ env.OPENGREP_VERSION }}
+          key: opengrep-${{ runner.os }}-${{ steps.opengrep-version.outputs.version }}
 
       - name: Download opengrep
         if: steps.cache-opengrep.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/.cache/opengrep
-          curl -fsSL --proto '=https' --tlsv1.2 "https://github.com/opengrep/opengrep/releases/download/${{ env.OPENGREP_VERSION }}/opengrep_manylinux_x86" -o ~/.cache/opengrep/opengrep
+          curl -fsSL --proto '=https' --tlsv1.2 "https://github.com/opengrep/opengrep/releases/download/${{ steps.opengrep-version.outputs.version }}/opengrep_manylinux_x86" -o ~/.cache/opengrep/opengrep
 
       - name: Install opengrep
         run: |

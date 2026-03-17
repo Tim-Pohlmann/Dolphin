@@ -196,6 +196,7 @@ public class CheckCommandTests
     [TestMethod]
     public async Task Check_PrintsWarningToStderr_WhenScannerExitsCode2()
     {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         var fakeBinDir = Path.Combine(Path.GetTempPath(), $"dolphin-fakebin-{Guid.NewGuid()}");
         Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));

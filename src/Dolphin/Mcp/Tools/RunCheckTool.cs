@@ -64,10 +64,15 @@ public sealed class RunCheckTool
 
         foreach (var f in result.Findings)
         {
-            var sev = f.Severity.ToString().ToUpper();
-            sb.AppendLine($"  {f.FilePath}:{f.Line}  [{sev}]  {f.Message}  [{f.RuleId}]");
+            var sev = f.Severity switch
+            {
+                Severity.Error => "error",
+                Severity.Info => "note",
+                _ => "warning"
+            };
+            sb.AppendLine($"{f.FilePath}:{f.Line}:{f.Column}: {sev}: {f.Message} [{f.RuleId}]");
             if (!string.IsNullOrEmpty(f.MatchedText))
-                sb.AppendLine($"    {f.MatchedText}");
+                sb.AppendLine($"  {f.MatchedText}");
         }
 
         var errors = result.Findings.Count(f => f.Severity == Severity.Error);

@@ -150,8 +150,8 @@ public class RunCheckToolTests
             StringAssert.Contains(result, "violation(s)");
             StringAssert.Contains(result, "no-hardcoded-secret");
             StringAssert.Contains(result, "no-console-log");
-            StringAssert.Contains(result, "[ERROR]");
-            StringAssert.Contains(result, "[WARNING]");
+            StringAssert.Contains(result, ": error:");
+            StringAssert.Contains(result, ": warning:");
         }
         finally
         {

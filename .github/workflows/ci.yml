@@ -29,14 +29,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get opengrep version
-        id: opengrep-version
-        shell: bash
-        run: |
-          VERSION=$(dotnet msbuild src/Dolphin/Dolphin.csproj -getProperty:OpengrepVersion)
-          test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -47,6 +39,14 @@ jobs:
         with:
           node-version: '22'
           check-latest: true
+
+      - name: Get opengrep version
+        id: opengrep-version
+        shell: bash
+        run: |
+          VERSION=$(dotnet msbuild src/Dolphin/Dolphin.csproj -getProperty:OpengrepVersion)
+          test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
@@ -115,14 +115,6 @@ jobs:
         with:
           fetch-depth: 0  # Required for SonarQube blame information
 
-      - name: Get opengrep version
-        id: opengrep-version
-        shell: bash
-        run: |
-          VERSION=$(dotnet msbuild src/Dolphin/Dolphin.csproj -getProperty:OpengrepVersion)
-          test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -133,6 +125,14 @@ jobs:
         with:
           node-version: '22'
           check-latest: true
+
+      - name: Get opengrep version
+        id: opengrep-version
+        shell: bash
+        run: |
+          VERSION=$(dotnet msbuild src/Dolphin/Dolphin.csproj -getProperty:OpengrepVersion)
+          test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Cache NuGet packages
         uses: actions/cache@v4

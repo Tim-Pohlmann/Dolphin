@@ -33,7 +33,7 @@ jobs:
         id: opengrep-version
         shell: bash
         run: |
-          VERSION=$(grep -oP '(?<=<OpengrepVersion>)[^<]+' src/Dolphin/Dolphin.csproj)
+          VERSION=$(sed -n 's/.*<OpengrepVersion>\([^<]*\)<\/OpengrepVersion>.*/\1/p' src/Dolphin/Dolphin.csproj)
           test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
@@ -119,7 +119,7 @@ jobs:
         id: opengrep-version
         shell: bash
         run: |
-          VERSION=$(grep -oP '(?<=<OpengrepVersion>)[^<]+' src/Dolphin/Dolphin.csproj)
+          VERSION=$(sed -n 's/.*<OpengrepVersion>\([^<]*\)<\/OpengrepVersion>.*/\1/p' src/Dolphin/Dolphin.csproj)
           test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 

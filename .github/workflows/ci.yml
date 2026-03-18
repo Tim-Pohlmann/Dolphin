@@ -44,7 +44,7 @@ jobs:
         id: opengrep-version
         shell: bash
         run: |
-          VERSION=$(dotnet msbuild src/Dolphin/Dolphin.csproj -getProperty:OpengrepVersion)
+          VERSION=$(dotnet msbuild src/Dolphin/Dolphin.csproj -getProperty:OpengrepVersion | tr -d '\r')
           test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
@@ -130,7 +130,7 @@ jobs:
         id: opengrep-version
         shell: bash
         run: |
-          VERSION=$(dotnet msbuild src/Dolphin/Dolphin.csproj -getProperty:OpengrepVersion)
+          VERSION=$(dotnet msbuild src/Dolphin/Dolphin.csproj -getProperty:OpengrepVersion | tr -d '\r')
           test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 

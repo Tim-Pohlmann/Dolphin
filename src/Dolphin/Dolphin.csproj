@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>dolphin</AssemblyName>
     <RootNamespace>Dolphin</RootNamespace>
+    <OpengrepVersion>v1.16.4</OpengrepVersion>
     <!-- Self-contained trimmed publish settings -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -56,7 +57,7 @@
       <_OpengrepBin Condition="'$(RuntimeIdentifier)'=='win-x64'">opengrep_windows_x86.exe</_OpengrepBin>
       <!-- Cache path and download URL -->
       <_OpengrepCache>$(IntermediateOutputPath)opengrep-$(RuntimeIdentifier)</_OpengrepCache>
-      <_OpengrepUrl>https://github.com/opengrep/opengrep/releases/latest/download/$(_OpengrepBin)</_OpengrepUrl>
+      <_OpengrepUrl>https://github.com/opengrep/opengrep/releases/download/$(OpengrepVersion)/$(_OpengrepBin)</_OpengrepUrl>
       <!-- Published binary name: "opengrep" on Unix, "opengrep.exe" on Windows -->
       <_PublishedBinName Condition="'$(RuntimeIdentifier)'=='win-x64'">opengrep.exe</_PublishedBinName>
       <_PublishedBinName Condition="'$(RuntimeIdentifier)'!='win-x64'">opengrep</_PublishedBinName>

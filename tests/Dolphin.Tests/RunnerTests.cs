@@ -223,6 +223,7 @@ public class RunnerTests
     [TestMethod]
     public async Task RunAsync_ExitCode2_ReturnsScannerWarning()
     {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
         var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 2, stderr: "some warning");
         try
         {
@@ -241,6 +242,7 @@ public class RunnerTests
     [TestMethod]
     public async Task RunAsync_ExitCodeAbove2_Throws()
     {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
         var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 3, stderr: "fatal error");
         try
         {

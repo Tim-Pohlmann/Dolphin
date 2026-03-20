@@ -13,11 +13,7 @@ User's optional focus area: $ARGUMENTS
 
 ## PHASE 1 — RECON
 
-Read the existing rules file (if present) to collect IDs to skip:
-
-```bash
-test -f .dolphin/rules.yaml && cat .dolphin/rules.yaml || echo "no existing rules"
-```
+Use the Read tool to read `.dolphin/rules.yaml` (if it exists) and collect existing rule IDs to skip. If the file does not exist, proceed without any IDs to skip.
 
 Invoke the `generate-rules-recon` agent:
 
@@ -54,11 +50,7 @@ After all rules, show summary and ask:
 
 ## PHASE 3 — WRITE
 
-1. Check for existing file:
-   ```bash
-   test -f .dolphin/rules.yaml && echo exists || echo missing
-   ```
-   If exists: read it and **append** confirmed rules to the existing `rules:` list rather than overwriting. Warn if any confirmed ID already exists in the file (duplicate).
+1. Check for existing file using `test -f .dolphin/rules.yaml`. If it exists, read it with the Read tool and **append** confirmed rules to the existing `rules:` list rather than overwriting. Warn if any confirmed ID already exists in the file (duplicate).
 
 2. Ensure directory:
    ```bash
@@ -70,7 +62,7 @@ After all rules, show summary and ask:
    rules:
      - id: <kebab-case-id>
        message: "<message>"
-       languages: [<lang>]
+       languages: [<lang1>, <lang2>]
        severity: ERROR | WARNING | INFO
        pattern: |
          <pattern>

@@ -17,7 +17,7 @@ Use the Read tool to read `.dolphin/rules.yaml` (if it exists) and collect exist
 
 Invoke the `generate-rules-recon` agent:
 
-> "Scan for project-specific conventions to protect against drift. Focus area: $ARGUMENTS (if empty, cover the most common drift vectors). Existing rule IDs to skip: <IDs from .dolphin/rules.yaml above, plus any linter rules found>."
+> "Scan for project-specific conventions to protect against drift. Focus area: $ARGUMENTS (if empty, cover the most common drift vectors). Existing rule IDs to skip: <IDs from .dolphin/rules.yaml above>."
 
 Parse the returned `CANDIDATE_RULES` entries: `id`, `severity`, `languages`, `pattern`, `message`, `why`.
 
@@ -57,17 +57,20 @@ After all rules, show summary and ask:
    mkdir -p .dolphin
    ```
 
-3. Build YAML. Each rule:
+3. Build YAML. Each rule must use **exactly one** of `pattern`, `patterns`, `pattern-either`, or `pattern-regex`:
    ```yaml
    rules:
      - id: <kebab-case-id>
        message: "<message>"
        languages: [<lang1>, <lang2>]
        severity: ERROR | WARNING | INFO
-       pattern: |
-         <pattern>
+       # Use ONE of:
+       pattern: <single pattern>
+       # patterns: [list of patterns with pattern/pattern-not/etc.]
+       # pattern-either: [list of alternatives]
+       # pattern-regex: <regex string>
    ```
-   Pattern tips: `...` for any args, `$VAR` for metavariables, `pattern-regex:` for regex, `pattern-either:` for alternatives.
+   Tips: `...` for any args, `$VAR` for metavariables.
 
 4. Write the file.
 

@@ -2,7 +2,7 @@
 name: generate-rules
 description: Scan this codebase for established patterns and generate Dolphin rules that prevent drift from those conventions
 argument-hint: "[focus-area] (optional — e.g. 'logging', 'error-handling', 'naming', or 'api-responses')"
-allowed-tools: Agent(generate-rules-recon), Bash(mkdir *), Bash(test *), Read, Write
+allowed-tools: Agent(generate-rules-recon), Bash(mkdir *), Read, Write
 ---
 
 You are orchestrating static analysis rule generation for the Dolphin tool.
@@ -13,13 +13,13 @@ User's optional focus area: $ARGUMENTS
 
 ## PHASE 1 — RECON
 
-Use the Read tool to read `.dolphin/rules.yaml` (if it exists) and collect existing rule IDs to skip. If the file does not exist, proceed without any IDs to skip.
+Attempt to read `.dolphin/rules.yaml` with the Read tool. If it exists, keep the full content in memory for Phase 3 and collect its rule IDs. If it does not exist, proceed with no IDs and no prior content.
 
 Invoke the `generate-rules-recon` agent:
 
-> "Scan for project-specific conventions to protect against drift. Focus area: $ARGUMENTS (if empty, cover the most common drift vectors). Existing rule IDs to skip: <IDs from .dolphin/rules.yaml above>."
+> "Scan for project-specific conventions to protect against drift. Focus area: $ARGUMENTS (if empty, cover the most common drift vectors). Existing rule IDs to skip: <IDs collected above>."
 
-Parse the returned `CANDIDATE_RULES` entries: `id`, `severity`, `languages`, `match_key`, `match_value`, `message`, `why`.
+Parse the returned `CANDIDATE_RULES` entries: `id`, `severity`, `languages`, `match_key`, `match_value`, `message`, `why`. If no candidates are returned, tell the user no project-specific rules were found and stop.
 
 ---
 
@@ -50,18 +50,18 @@ After all rules, show summary and ask:
 
 ## PHASE 3 — WRITE
 
-1. Check for existing file using `test -f .dolphin/rules.yaml`. If it exists, read it with the Read tool. Merge strategy:
-   - Preserve the existing file's header comments (schema line, etc.) and all existing rules unchanged.
-   - For each confirmed rule whose ID already exists in the file: **skip it** and warn the user (e.g. "Skipped `id` — already exists").
-   - Append only new IDs to the `rules:` list.
-   - Write back the full merged content (existing rules + appended rules).
+1. Use the `.dolphin/rules.yaml` content already read in Phase 1 (no second read needed). Merge strategy:
+   - Preserve existing header comments and all existing rules unchanged.
+   - For each confirmed rule whose ID already exists in the file: **skip it** and warn (e.g. "Skipped `id` — already exists").
+   - Append only new rules to the `rules:` list.
+   - Write back the full merged content. If no prior file existed, write a fresh file.
 
 2. Ensure directory:
    ```bash
    mkdir -p .dolphin
    ```
 
-3. Build YAML for each new rule using `match_key`/`match_value` from the candidate:
+3. Build YAML for each new rule using `match_key`/`match_value` from the candidate (`match_key` is one of: `pattern`, `patterns`, `pattern-either`, `pattern-regex`):
    ```yaml
      - id: <id>
        message: "<message>"
@@ -69,7 +69,7 @@ After all rules, show summary and ask:
        severity: ERROR | WARNING | INFO
        <match_key>: <match_value>
    ```
-   Tips: `...` for any args, `$VAR` for metavariables.
+   For `patterns` and `pattern-either`, `match_value` is a YAML block (multi-line list). Tips: `...` for any args, `$VAR` for metavariables.
 
 4. Write the file.
 

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Dolphin.Mcp.Tools;
 using Dolphin.Scanner;
 
@@ -67,7 +68,7 @@ public class RunCheckToolBuildOutputTests
 /// exactly what Claude receives when it calls the run_check tool.
 /// </summary>
 [TestClass]
-public class RunCheckToolTests
+public partial class RunCheckToolTests
 {
     private static readonly string FixturesDir = Path.Combine(
         AppContext.BaseDirectory, "fixtures"
@@ -171,7 +172,7 @@ public class RunCheckToolTests
             StringAssert.Contains(result, "no-console-log");
             StringAssert.Contains(result, ": error:");
             StringAssert.Contains(result, ": warning:");
-            StringAssert.Matches(result, new System.Text.RegularExpressions.Regex(@"bad-file\.ts:\d+:\d+:"));
+            StringAssert.Matches(result, GnuDiagnosticPrefix());
         }
         finally
         {
@@ -214,4 +215,10 @@ public class RunCheckToolTests
             Directory.Delete(tmpDir, recursive: true);
         }
     }
+}
+
+public partial class RunCheckToolTests
+{
+    [GeneratedRegex(@"bad-file\.ts:\d+:\d+:")]
+    private static partial Regex GnuDiagnosticPrefix();
 }

@@ -41,25 +41,24 @@ Only propose a rule when:
 
 Output **only** this block — no preamble or explanation outside it:
 
-    RECON_RESULT
-    languages: <comma-separated>
-    linters: <comma-separated, or "none">
+```
+RECON_RESULT
+languages: <comma-separated>
+linters: <comma-separated, or "none">
 
-    CANDIDATE_RULES
-    ---
-    id: <kebab-case-id>
-    severity: ERROR | WARNING | INFO
-    languages: [<lang>]
-    pattern: <opengrep pattern>
-    message: <short message naming the convention and pointing to the correct approach>
-    why: <1-2 sentences: what convention, where observed in this codebase>
-    ---
-    id: <next-rule>
-    ...
-    END_RECON_RESULT
+CANDIDATE_RULES
+---
+id: <kebab-case-id>
+severity: ERROR | WARNING | INFO
+languages: [<lang1>, <lang2>]
+match_key: pattern | patterns | pattern-either | pattern-regex
+match_value: <the value for that key>
+message: <short message naming the convention and pointing to the correct approach>
+why: <1-2 sentences: what convention, where observed in this codebase>
+---
+id: <next-rule>
+...
+END_RECON_RESULT
+```
 
-Target 5–10 rules. Valid Opengrep syntax only:
-- `...` for any arguments: `console.log(...)`
-- `$VAR` for metavariables: `$KEY = "$VALUE"`
-- `pattern-regex:` when AST patterns aren't suitable
-- `pattern-either:` for multiple alternatives
+`match_key` is the exact Opengrep top-level key to use in the generated YAML rule. `match_value` is the corresponding value. Target 5–10 rules. Use `...` for any args, `$VAR` for metavariables.

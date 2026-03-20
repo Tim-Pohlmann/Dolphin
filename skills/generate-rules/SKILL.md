@@ -19,7 +19,7 @@ Invoke the `generate-rules-recon` agent:
 
 > "Scan for project-specific conventions to protect against drift. Focus area: $ARGUMENTS (if empty, cover the most common drift vectors). Existing rule IDs to skip: <IDs from .dolphin/rules.yaml above>."
 
-Parse the returned `CANDIDATE_RULES` entries: `id`, `severity`, `languages`, `pattern`, `message`, `why`.
+Parse the returned `CANDIDATE_RULES` entries: `id`, `severity`, `languages`, `match_key`, `match_value`, `message`, `why`.
 
 ---
 
@@ -50,25 +50,24 @@ After all rules, show summary and ask:
 
 ## PHASE 3 — WRITE
 
-1. Check for existing file using `test -f .dolphin/rules.yaml`. If it exists, read it with the Read tool and **append** confirmed rules to the existing `rules:` list rather than overwriting. Warn if any confirmed ID already exists in the file (duplicate).
+1. Check for existing file using `test -f .dolphin/rules.yaml`. If it exists, read it with the Read tool. Merge strategy:
+   - Preserve the existing file's header comments (schema line, etc.) and all existing rules unchanged.
+   - For each confirmed rule whose ID already exists in the file: **skip it** and warn the user (e.g. "Skipped `id` — already exists").
+   - Append only new IDs to the `rules:` list.
+   - Write back the full merged content (existing rules + appended rules).
 
 2. Ensure directory:
    ```bash
    mkdir -p .dolphin
    ```
 
-3. Build YAML. Each rule must use **exactly one** of `pattern`, `patterns`, `pattern-either`, or `pattern-regex`:
+3. Build YAML for each new rule using `match_key`/`match_value` from the candidate:
    ```yaml
-   rules:
-     - id: <kebab-case-id>
+     - id: <id>
        message: "<message>"
        languages: [<lang1>, <lang2>]
        severity: ERROR | WARNING | INFO
-       # Use ONE of:
-       pattern: <single pattern>
-       # patterns: [list of patterns with pattern/pattern-not/etc.]
-       # pattern-either: [list of alternatives]
-       # pattern-regex: <regex string>
+       <match_key>: <match_value>
    ```
    Tips: `...` for any args, `$VAR` for metavariables.
 

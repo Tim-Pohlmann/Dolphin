@@ -2,91 +2,82 @@
 name: generate-rules
 description: Scan this codebase for established patterns and generate Dolphin rules that prevent drift from those conventions
 argument-hint: "[focus-area] (optional — e.g. 'logging', 'error-handling', 'naming', or 'api-responses')"
-allowed-tools: Agent(generate-rules-recon), Bash(mkdir *), Bash(test *), Write
+allowed-tools: Agent(generate-rules-recon), Bash(mkdir *), Bash(test *), Read, Write
 ---
 
 You are orchestrating static analysis rule generation for the Dolphin tool.
-The goal is **drift prevention**: encode the patterns the team already uses consistently so that future code stays aligned with those conventions.
-The user's optional focus area is: $ARGUMENTS
+Goal: **drift prevention** — encode patterns the team already uses so future code stays aligned.
+User's optional focus area: $ARGUMENTS
 
 ---
 
-## PHASE 1 — CODEBASE RECONNAISSANCE (delegated)
+## PHASE 1 — RECON
 
-Invoke the `generate-rules-recon` agent with the following prompt:
+Read the existing rules file (if present) to collect IDs to skip:
 
-> "Scan this codebase for established patterns to protect against drift. Focus area: $ARGUMENTS (if empty, cover the most common drift vectors: logging, error handling, naming conventions, API/response patterns, and dependency usage)."
+```bash
+test -f .dolphin/rules.yaml && cat .dolphin/rules.yaml || echo "no existing rules"
+```
 
-Wait for the agent to return its `RECON_RESULT` block. Parse out the `CANDIDATE_RULES` entries — each has: `id`, `severity`, `languages`, `pattern`, `message`, `why`.
+Invoke the `generate-rules-recon` agent:
+
+> "Scan for project-specific conventions to protect against drift. Focus area: $ARGUMENTS (if empty, cover the most common drift vectors). Existing rule IDs to skip: <IDs from .dolphin/rules.yaml above, plus any linter rules found>."
+
+Parse the returned `CANDIDATE_RULES` entries: `id`, `severity`, `languages`, `pattern`, `message`, `why`.
 
 ---
 
-## PHASE 2 — INTERACTIVE RULE REFINEMENT
+## PHASE 2 — INTERACTIVE REFINEMENT
 
-Propose rules **one at a time** from the candidate list. For each rule, present:
+Propose rules **one at a time**:
 
 ```
-Rule N: <rule-id>
+Rule N: <id>
   Severity:  ERROR | WARNING | INFO
-  Languages: <comma-separated list>
-  Pattern:   <the pattern>
-  Message:   <message shown to the developer>
-  Why:       <1-2 sentences on what pattern this enforces in THIS codebase>
+  Languages: <list>
+  Pattern:   <pattern>
+  Message:   <message>
+  Why:       <why this is specific to this codebase>
 
 Keep (k), Skip (s), or Modify (m)?
 ```
 
-Wait for the user's response before moving to the next rule:
-- **k / keep** → add to confirmed list, show next rule
-- **s / skip** → discard, show next rule
-- **m / modify** → ask what to change, apply changes, re-show updated rule, re-ask
+- **k** → add to confirmed list, next rule
+- **s** → discard, next rule
+- **m** → ask what to change, re-show, re-ask
 
-After all rules are reviewed, show a summary:
+After all rules, show summary and ask:
 
-> "You confirmed N rule(s): [rule-id-1], [rule-id-2], ...
-> Ready to write `.dolphin/rules.yaml`? (yes/no)"
-
-Wait for confirmation before writing.
+> "Confirmed N rule(s): [id-1], [id-2], ... — write to `.dolphin/rules.yaml`? (yes/no)"
 
 ---
 
-## PHASE 3 — WRITE THE RULES FILE
+## PHASE 3 — WRITE
 
-Once the user confirms:
-
-1. **Check for existing file:**
+1. Check for existing file:
    ```bash
    test -f .dolphin/rules.yaml && echo exists || echo missing
    ```
-   If it exists, warn: "`.dolphin/rules.yaml` already exists — writing will OVERWRITE all existing rules. Confirm? (yes/no)"
-   Wait for confirmation before overwriting.
+   If exists: read it and **append** confirmed rules to the existing `rules:` list rather than overwriting. Warn if any confirmed ID already exists in the file (duplicate).
 
-2. **Ensure directory exists:**
+2. Ensure directory:
    ```bash
    mkdir -p .dolphin
    ```
 
-3. **Build the YAML** for all confirmed rules. Each rule must follow this Opengrep schema:
+3. Build YAML. Each rule:
    ```yaml
    rules:
      - id: <kebab-case-id>
-       message: "<violation message>"
-       languages: [<lang1>, <lang2>]
+       message: "<message>"
+       languages: [<lang>]
        severity: ERROR | WARNING | INFO
-       # Use ONE of: pattern, patterns, pattern-either, pattern-regex
        pattern: |
-         <pattern with $METAVARIABLES and ... ellipsis>
+         <pattern>
    ```
+   Pattern tips: `...` for any args, `$VAR` for metavariables, `pattern-regex:` for regex, `pattern-either:` for alternatives.
 
-   Pattern tips:
-   - Use `...` to match any arguments: `console.log(...)`
-   - Use `$VAR` to capture expressions: `$KEY = "$VALUE"`
-   - Use `pattern-regex` for regex-based matching when AST patterns aren't suitable
-   - Use `pattern-either` to match multiple alternatives
-   - Always test that the pattern is valid Opengrep syntax
+4. Write the file.
 
-4. **Write the file** using the Write tool.
-
-5. **Confirm success:**
-   > "Written N rule(s) to `.dolphin/rules.yaml`.
-   > Run `dolphin check` to see drift from your conventions."
+5. Confirm:
+   > "Written N rule(s) to `.dolphin/rules.yaml`. Run `dolphin check` to validate."

@@ -41,6 +41,25 @@ public class RunCheckToolBuildOutputTests
         var output = RunCheckTool.BuildOutput(result);
         Assert.IsFalse(output.Contains("⚠"), "Should not contain warning symbol when ScannerWarning is null");
     }
+
+    [TestMethod]
+    public void BuildOutput_FormatsFindings_AsGnuDiagnosticStyle()
+    {
+        var finding = new Finding("my-rule", Severity.Error, "src/foo.ts", 5, 12, "bad code", "");
+        var result = new RunResult([finding], HasFindings: true);
+        var output = RunCheckTool.BuildOutput(result);
+        StringAssert.Contains(output, "src/foo.ts:5:12: error: bad code [my-rule]");
+    }
+
+    [TestMethod]
+    public void BuildOutput_SummaryLine_UsesNotesForInfoSeverity()
+    {
+        var finding = new Finding("my-rule", Severity.Info, "src/foo.ts", 1, 1, "msg", "");
+        var result = new RunResult([finding], HasFindings: true);
+        var output = RunCheckTool.BuildOutput(result);
+        StringAssert.Contains(output, "src/foo.ts:1:1: note: msg [my-rule]");
+        StringAssert.Contains(output, "1 notes");
+    }
 }
 
 /// <summary>
@@ -152,6 +171,7 @@ public class RunCheckToolTests
             StringAssert.Contains(result, "no-console-log");
             StringAssert.Contains(result, ": error:");
             StringAssert.Contains(result, ": warning:");
+            StringAssert.Matches(result, new System.Text.RegularExpressions.Regex(@"bad-file\.ts:\d+:\d+:"));
         }
         finally
         {

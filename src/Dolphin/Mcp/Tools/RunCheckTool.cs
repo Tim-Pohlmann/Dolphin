@@ -78,7 +78,7 @@ public sealed class RunCheckTool
         var errors = result.Findings.Count(f => f.Severity == Severity.Error);
         var warnings = result.Findings.Count(f => f.Severity == Severity.Warning);
         var infos = result.Findings.Count(f => f.Severity == Severity.Info);
-        sb.AppendLine($"\nSummary: {errors} errors, {warnings} warnings, {infos} info");
+        sb.AppendLine($"\nSummary: {errors} errors, {warnings} warnings, {infos} notes");
 
         return sb.ToString();
     }

@@ -72,7 +72,8 @@ public sealed class RunCheckTool
             };
             sb.AppendLine($"{f.FilePath}:{f.Line}:{f.Column}: {sev}: {f.Message} [{f.RuleId}]");
             if (!string.IsNullOrEmpty(f.MatchedText))
-                sb.AppendLine($"  {f.MatchedText}");
+                foreach (var line in f.MatchedText.Split(["\r\n", "\n", "\r"], StringSplitOptions.None))
+                    sb.AppendLine($"  {line}");
         }
 
         var errors = result.Findings.Count(f => f.Severity == Severity.Error);

@@ -76,7 +76,7 @@ After all rules, show summary and ask:
    ```
    For `patterns` and `pattern-either`, `match_value` is a YAML block (multi-line list). Tips: `...` for any args, `$VAR` for metavariables.
 
-4. Write the file.
+4. Write the file. **All content must be ASCII-only** — `.dolphin/rules.yaml` is read by Opengrep's Python layer as ASCII. If any id, message, or pattern contains non-ASCII characters (smart quotes, em dashes, etc.), replace them with ASCII equivalents before writing and warn the user.
 
 5. Confirm:
    > "Written N rule(s) to `.dolphin/rules.yaml`. Run `dolphin check` to validate."

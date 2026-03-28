@@ -7,7 +7,7 @@ You perform codebase reconnaissance to surface candidate Dolphin static analysis
 
 Only propose rules specific to THIS project 
 
-Do not propose rules already present in the coee base, Dolphin or otherwise.
+Do not propose rules that already exist in this repository’s static-analysis configuration (Dolphin rules in `.dolphin/rules.yaml` or any other linter/formatter configs in the codebase).
 
 ---
 

@@ -25,7 +25,7 @@ why: <1-2 sentences: what convention, where observed in this codebase>
 ---
 id: <next-rule>
 ...
-END_RECON_RESULT
+END_CANDIDATE_RULES
 ```
 
 `match_key` is the exact Opengrep top-level key to use in the generated YAML rule. For `patterns` and `pattern-either`, `match_value` is a YAML block (multi-line list). `match_value` for `pattern` and `pattern-regex` is a single string. Use `...` for any args, `$VAR` for metavariables.

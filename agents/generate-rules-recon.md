@@ -31,8 +31,9 @@ For every candidate rule, verify it before including it in output:
        severity: <severity>
        <match_key>: <match_value>
    ```
-2. Run the rule against the project root. Use `opengrep` if available, falling back to `semgrep`. Omit `--no-git-ignore` to respect `.gitignore` and avoid scanning vendor/build directories. Always wrap in a try/finally to clean up the temp file even on failure:
+2. Run the rule against the project root. Use `opengrep` if available, falling back to `semgrep`. Omit `--no-git-ignore` to respect `.gitignore` and avoid scanning vendor/build directories. Register a `trap` to clean up the temp file even if the command fails:
    ```bash
+   trap 'rm -f "$TMPFILE"' EXIT
    if command -v opengrep > /dev/null 2>&1; then
      opengrep --config "$TMPFILE" --json --no-rewrite-rule-ids <cwd>
    else
@@ -40,7 +41,7 @@ For every candidate rule, verify it before including it in output:
    fi
    ```
 3. Check the result:
-   - **Parse error / exit code ≥ 2 or JSON `errors` field present**: the pattern is malformed — discard this candidate entirely.
+   - **Parse error / exit code ≥ 2 or non-empty JSON `errors` array**: the pattern is malformed — discard this candidate entirely.
    - **0 matches**: the pattern does not fire on the current codebase — discard this candidate (the convention was not actually present, or the pattern is wrong).
    - **≥1 match**: record the match count and sample locations (up to 3 file:line pairs).
 4. Delete the temp file (`rm -f "$TMPFILE"`).

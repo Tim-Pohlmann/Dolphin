@@ -12,7 +12,7 @@ Goal: **drift prevention** — encode patterns the team already uses so future c
 
 Invoke the `generate-rules-recon` agent:
 
-Parse the returned `CANDIDATE_RULES` entries: `id`, `severity`, `languages`, `match_key`, `match_value`, `message`, `why`. If no candidates are returned, tell the user no project-specific rules were found and stop.
+Parse the returned `CANDIDATE_RULES` entries: `id`, `severity`, `languages`, `match_key`, `match_value`, `message`, `why`, `findings_count`, `sample_locations`. If no candidates are returned, tell the user no project-specific rules were found and stop.
 
 ---
 
@@ -27,6 +27,7 @@ Rule N: <id>
   Match:     <match_key>: <match_value>
   Message:   <message>
   Why:       <why this is specific to this codebase>
+  Validated: <findings_count> match(es) — <sample_locations>
 
 Keep (k), Skip (s), or Modify (m)?
 ```

@@ -13,6 +13,7 @@ Do not propose rules that already exist in this repository’s static-analysis c
 
 ## Output
 
+```
 CANDIDATE_RULES
 ---
 id: <kebab-case-id>

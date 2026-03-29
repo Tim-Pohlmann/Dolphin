@@ -21,24 +21,29 @@ Scan the codebase for recurring patterns worth enforcing.
 
 For every candidate rule, verify it before including it in output:
 
-1. Write a minimal Opengrep-compatible YAML to a temp file (e.g. `/tmp/dolphin-recon-<id>.yaml`):
+1. Create a temp file using `mktemp` (e.g. `TMPFILE=$(mktemp /tmp/dolphin-recon-XXXXXX.yaml)`). Write a minimal Opengrep-compatible YAML to it. Quote the `message` value carefully — if it contains special characters, use a YAML block scalar (`|`). For `match_key`/`match_value`, use proper YAML quoting or block scalars as needed to avoid invalid YAML:
    ```yaml
    rules:
      - id: <id>
-       message: "<message>"
+       message: |
+         <message>
        languages: [<languages>]
        severity: <severity>
        <match_key>: <match_value>
    ```
-2. Run the rule against the project root using the scanner binary (`opengrep`, falling back to `semgrep` if not found):
-   ```
-   opengrep --config /tmp/dolphin-recon-<id>.yaml --json --no-git-ignore --no-rewrite-rule-ids <cwd>
+2. Run the rule against the project root. Use `opengrep` if available, falling back to `semgrep`. Omit `--no-git-ignore` to respect `.gitignore` and avoid scanning vendor/build directories. Always wrap in a try/finally to clean up the temp file even on failure:
+   ```bash
+   if command -v opengrep > /dev/null 2>&1; then
+     opengrep --config "$TMPFILE" --json --no-rewrite-rule-ids <cwd>
+   else
+     semgrep --config "$TMPFILE" --json <cwd>
+   fi
    ```
 3. Check the result:
-   - **Parse error / exit code > 2**: the pattern is malformed — discard this candidate entirely.
+   - **Parse error / exit code ≥ 2 or JSON `errors` field present**: the pattern is malformed — discard this candidate entirely.
    - **0 matches**: the pattern does not fire on the current codebase — discard this candidate (the convention was not actually present, or the pattern is wrong).
    - **≥1 match**: record the match count and sample locations (up to 3 file:line pairs).
-4. Delete the temp file.
+4. Delete the temp file (`rm -f "$TMPFILE"`).
 
 Only candidates that pass validation (≥1 match, no parse error) appear in the output.
 

@@ -11,7 +11,7 @@ A list of rule candidates
 **1. <short name>**
 **description:** <1 sentence>
 **why:** <1-2 sentences: what convention, where observed in this codebase>
-**rule:** <open grep compatible rule yaml>
+**rule:** <Opengrep-compatible rule YAML>
 
 **2. <short name>**
 <... more rules>

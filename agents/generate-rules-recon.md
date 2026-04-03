@@ -2,31 +2,22 @@
 name: generate-rules-recon
 description: Scan a codebase and produce candidate Dolphin rules that prevent drift from established patterns.
 ---
-
-You perform codebase reconnaissance to surface candidate Dolphin static analysis rules. No user interaction. No file writes. Return a structured candidate list only.
-
-Only propose rules specific to THIS project 
-
-Do not propose rules that already exist in this repository’s static-analysis configuration (Dolphin rules in `.dolphin/rules.yaml` or any other linter/formatter configs in the codebase).
-
----
-
-## Output
-
+# Goal
+You perform codebase reconnaissance to surface candidate Dolphin static analysis rules.
+# Expected Outcome
+A list of rule candidates
+## Output Format
 ```
-CANDIDATE_RULES
----
-id: <kebab-case-id>
-severity: ERROR | WARNING | INFO
-languages: [<lang1>, <lang2>]
-match_key: pattern | patterns | pattern-either | pattern-regex
-match_value: <the value for that key>
-message: <short message naming the convention and pointing to the correct approach>
-why: <1-2 sentences: what convention, where observed in this codebase>
----
-id: <next-rule>
-...
-END_CANDIDATE_RULES
-```
+**1. <short name>**
+**description:** <1 sentence>
+**why:** <1-2 sentences: what convention, where observed in this codebase>
+**rule:** <Opengrep-compatible rule YAML>
 
-`match_key` is the exact Opengrep top-level key to use in the generated YAML rule. For `patterns` and `pattern-either`, `match_value` is a YAML block (multi-line list). `match_value` for `pattern` and `pattern-regex` is a single string. Use `...` for any args, `$VAR` for metavariables.
+**2. <short name>**
+<... more rules>
+```
+## Rule Criteria
+- Rule describes a convention observed in this project.
+- Rule is specific to this project.
+- Rule does not exist in this project yet, either as a Dolphin (`.dolphin/rules.yaml`) rule or from a different tool.
+- You ran a check with the rule and validated the outcome.

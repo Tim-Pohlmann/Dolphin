@@ -20,5 +20,5 @@ why: <1-2 sentences: what convention, where observed in this codebase>
 ## Rule Criterias
 - Rule describes a convention observed in this project.
 - Rule is specific to this project.
-- Rule does not exist in this project yet, either as a Dolphin rule or from a different tool.
+- Rule does not exist in this project yet, either as a Dolphin (`.dolphin/rules.yaml`) rule or from a different tool.
 - You run a check with the rule and validated the outcome.

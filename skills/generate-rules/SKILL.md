@@ -23,5 +23,5 @@ Write accepted rules to `.dolphin/rules.yaml`.
 
   rules:
   ```
-- If the file already exist, append the new rules.
+- If the file already exists, append the new rules.
 - The file needs conform to the OpenGrep format.

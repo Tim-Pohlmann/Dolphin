@@ -16,7 +16,7 @@ A list of rule candidates
 **2. <short name>**
 <... more rules>
 ```
-## Rule Criterias
+## Rule Criteria
 - Rule describes a convention observed in this project.
 - Rule is specific to this project.
 - Rule does not exist in this project yet, either as a Dolphin (`.dolphin/rules.yaml`) rule or from a different tool.

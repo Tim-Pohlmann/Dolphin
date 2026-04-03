@@ -20,4 +20,4 @@ A list of rule candidates
 - Rule describes a convention observed in this project.
 - Rule is specific to this project.
 - Rule does not exist in this project yet, either as a Dolphin (`.dolphin/rules.yaml`) rule or from a different tool.
-- You run a check with the rule and validated the outcome.
+- You ran a check with the rule and validated the outcome.

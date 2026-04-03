@@ -8,7 +8,7 @@ Encode patterns already used in the project so future code stays aligned.
 # Process
 ## 1. Recon
 Invoke the `generate-rules-recon` agent.
-## 2. Refinment
+## 2. Refinement
 Propose rules surfaced by the recon agent one at a time. Iterarte with the user on the rule until they accept or discard it.
 ## 3. Summary
 List all accepted rules and ask the user for a last confirmation.

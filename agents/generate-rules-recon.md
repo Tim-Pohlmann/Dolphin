@@ -8,13 +8,12 @@ You perform codebase reconnaissance to surface candidate Dolphin static analysis
 A list of rule candidates
 ## Output Format
 ```
-1. <short name>
-description: <1 sentence>
-match_key: pattern | patterns | pattern-either | pattern-regex
-match_value: <the value for that key>
-why: <1-2 sentences: what convention, where observed in this codebase>
+**1. <short name>**
+**description:** <1 sentence>
+**why:** <1-2 sentences: what convention, where observed in this codebase>
+**rule:** <open grep compatible rule yaml>
 
-2. <short name>
+**2. <short name>**
 <... more rules>
 ```
 ## Rule Criterias

@@ -240,26 +240,6 @@ public class RunnerTests
     }
 
     [TestMethod]
-    public async Task RunAsync_ExitCode2_SurfacesJsonErrorOverStderr()
-    {
-        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
-        var jsonStdout = """{"results":[],"errors":[{"message":"rule schema invalid"}]}""";
-        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 2, stderr: "chardet noise", stdout: jsonStdout);
-        try
-        {
-            var result = await Runner.RunAsync(fakeBinary, tmpDir);
-
-            Assert.IsNotNull(result.ScannerWarning);
-            StringAssert.Contains(result.ScannerWarning, "rule schema invalid");
-            Assert.IsFalse(result.ScannerWarning.Contains("chardet noise", StringComparison.Ordinal), "ScannerWarning should not contain stderr noise");
-        }
-        finally
-        {
-            Directory.Delete(tmpDir, recursive: true);
-        }
-    }
-
-    [TestMethod]
     public async Task RunAsync_ExitCode7_ThrowsWithJsonErrorMessage()
     {
         if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
@@ -287,9 +267,10 @@ public class RunnerTests
         var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 3, stderr: "fatal error");
         try
         {
-            await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
                 () => Runner.RunAsync(fakeBinary, tmpDir)
             );
+            StringAssert.Contains(ex.Message, "fatal error");
         }
         finally
         {

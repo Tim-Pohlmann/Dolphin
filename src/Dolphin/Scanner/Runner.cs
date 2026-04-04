@@ -59,7 +59,7 @@ public static class Runner
         }
 
         var scannerWarning = proc.ExitCode == 2
-            ? TryExtractErrors(stdout) ?? (string.IsNullOrWhiteSpace(stderr) ? "Scanner reported a non-fatal warning." : stderr.Trim())
+            ? (string.IsNullOrWhiteSpace(stderr) ? "Scanner reported a non-fatal warning." : stderr.Trim())
             : null;
 
         var findings = ParseFindings(stdout, cwd);

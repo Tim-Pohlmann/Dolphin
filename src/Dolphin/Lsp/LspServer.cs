@@ -436,7 +436,7 @@ public static partial class LspServer
                     catch { return; }
                 }
 
-                var diagnostics = await RunValidateAsync(text, ct);
+                var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
             }
             catch (OperationCanceledException) { /* superseded by a newer edit */ }
@@ -516,7 +516,7 @@ public static partial class LspServer
         return (ch, 1);
     }
 
-    private static async Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
+    private static async Task<LspDiagnostic[]> RunValidateAsync(string text, string fileName, CancellationToken ct)
     {
         var nonAscii = FindNonAsciiDiagnostic(text);
         if (nonAscii is not null) return nonAscii;
@@ -554,13 +554,13 @@ public static partial class LspServer
                 var combined = (stdout.Length > 0 && stderr.Length > 0 && !stdout.EndsWith('\n'))
                     ? stdout + '\n' + stderr
                     : stdout + stderr;
+                if (proc.ExitCode == 0) return [];
+
                 // Strip ANSI codes and replace the temp path (an implementation detail)
                 // with a stable placeholder before parsing, so messages shown to users
-                // don't contain ephemeral /tmp/dolphin-lsp-*.yaml paths.
-                combined = StripAnsi(combined).Replace(tmp, "rules.yaml");
-                return proc.ExitCode == 0
-                    ? []
-                    : LspDiagnosticsParser.Parse(combined);
+                // don't contain ephemeral /tmp/dolphin-lsp-* paths.
+                combined = StripAnsi(combined).Replace(tmp, fileName);
+                return LspDiagnosticsParser.Parse(combined);
             }
             catch (OperationCanceledException)
             {

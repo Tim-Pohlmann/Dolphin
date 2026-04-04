@@ -51,8 +51,8 @@ internal static partial class LspDiagnosticsParser
                 var diag = MakePendingDiagnostic(trimmed);
                 if (hasLocation)
                 {
-                    // Opengrep embeds location in the same line as the message;
-                    // resolve immediately so we don't need a follow-up --> line.
+                    // Opengrep embeds location inline — resolve immediately
+                    // rather than waiting for a follow-up --> pointer line.
                     var pos = new LspPosition(lineNum, colNum);
                     diag = diag with { Range = new LspRange(pos, pos), Pending = false };
                 }

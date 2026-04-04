@@ -20,6 +20,10 @@ internal static partial class LspDiagnosticsParser
     [GeneratedRegex(@"-->.*?:(\d+)(?::(\d+))?\s*$", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex LocationPattern();
 
+    // Opengrep validate embeds the location inline: "..., /tmp/rules.yaml:2:4: message"
+    [GeneratedRegex(@"\.ya?ml:(\d+)(?::(\d+))?", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex InlineLocationPattern();
+
     [GeneratedRegex(@"\b(error|invalid|missing|required|unexpected)\b", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ErrorKeywordPattern();
 
@@ -32,14 +36,28 @@ internal static partial class LspDiagnosticsParser
             var trimmed = raw.Trim();
             if (trimmed.Length == 0) continue;
 
-            if (TryParseLocation(raw, out var lineNum, out var colNum))
+            var hasLocation = TryParseLocation(raw, out var lineNum, out var colNum);
+            var hasKeyword  = ErrorKeywordPattern().IsMatch(trimmed);
+
+            if (hasLocation && !hasKeyword)
             {
+                // Pure location pointer line (e.g. "  --> /path/rules.yaml:8:5")
                 AttachLocation(diagnostics, lineNum, colNum);
                 continue;
             }
 
-            if (ErrorKeywordPattern().IsMatch(trimmed))
-                diagnostics.Add(MakePendingDiagnostic(trimmed));
+            if (hasKeyword)
+            {
+                var diag = MakePendingDiagnostic(trimmed);
+                if (hasLocation)
+                {
+                    // Opengrep embeds location in the same line as the message;
+                    // resolve immediately so we don't need a follow-up --> line.
+                    var pos = new LspPosition(lineNum, colNum);
+                    diag = diag with { Range = new LspRange(pos, pos), Pending = false };
+                }
+                diagnostics.Add(diag);
+            }
         }
 
         FinalisePending(diagnostics);
@@ -53,6 +71,7 @@ internal static partial class LspDiagnosticsParser
     private static bool TryParseLocation(string raw, out int lineNum, out int colNum)
     {
         var m = LocationPattern().Match(raw);
+        if (!m.Success) m = InlineLocationPattern().Match(raw);
         if (!m.Success) { lineNum = 0; colNum = 0; return false; }
 
         if (!int.TryParse(m.Groups[1].Value, out var line1Based))

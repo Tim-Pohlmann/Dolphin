@@ -50,7 +50,8 @@ public static class Runner
         // Exit 0 = clean, 1 = findings present, 2 = non-fatal scanner warning, 3+ = error
         if (proc.ExitCode > 2)
         {
-            var detail = TryExtractErrors(stdout) ?? stderr;
+            var detail = TryExtractErrors(stdout)
+                ?? (string.IsNullOrWhiteSpace(stderr) ? "Scanner failed without returning error details." : stderr.Trim());
             throw new InvalidOperationException(
                 $"Scanner exited with code {proc.ExitCode}.\n{detail}");
         }

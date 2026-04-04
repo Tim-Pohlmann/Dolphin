@@ -247,7 +247,7 @@ public class RunnerTests
         var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 7, stderr: "chardet noise", stdout: jsonStdout);
         try
         {
-            var ex = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
                 () => Runner.RunAsync(fakeBinary, tmpDir)
             );
             StringAssert.Contains(ex.Message, "Invalid YAML file");
@@ -283,7 +283,7 @@ public class RunnerTests
         var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 3, stderr: "fatal error", stdout: "");
         try
         {
-            var ex = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
                 () => Runner.RunAsync(fakeBinary, tmpDir)
             );
             StringAssert.Contains(ex.Message, "fatal error");
@@ -301,7 +301,7 @@ public class RunnerTests
         var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 3, stderr: "fatal error", stdout: "not json");
         try
         {
-            var ex = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
                 () => Runner.RunAsync(fakeBinary, tmpDir)
             );
             StringAssert.Contains(ex.Message, "fatal error");
@@ -314,7 +314,8 @@ public class RunnerTests
 
     /// <summary>
     /// Creates a temp directory with a minimal .dolphin/rules.yaml and a fake scanner script
-    /// that writes empty JSON results to stdout and exits with the given code.
+    /// that writes the provided stdout content (or empty JSON results by default) and exits
+    /// with the given code.
     /// </summary>
     private static (string tmpDir, string fakeBinary) CreateFakeScannerEnv(
         int exitCode, string stderr = "", string? stdout = null)
@@ -324,13 +325,14 @@ public class RunnerTests
         File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
 
         var stdoutJson = stdout ?? """{"results":[]}""";
-        // Write stdout content to a separate file so the script can cat it without quoting issues
-        var stdoutFile = Path.Combine(tmpDir, "fake-stdout.json");
+        // Write stdout/stderr to files so the script can cat them without quoting issues
+        var stdoutFile = Path.Combine(tmpDir, "fake-stdout.txt");
+        var stderrFile = Path.Combine(tmpDir, "fake-stderr.txt");
         File.WriteAllText(stdoutFile, stdoutJson);
-        // Write a shell script that cats the stdout file and exits with the given code
+        File.WriteAllText(stderrFile, stderr);
         var script = Path.Combine(tmpDir, "fake-scanner.sh");
         File.WriteAllText(script,
-            $"#!/bin/sh\ncat '{stdoutFile}'\necho '{stderr}' >&2\nexit {exitCode}\n");
+            $"#!/bin/sh\ncat '{stdoutFile}'\ncat '{stderrFile}' >&2\nexit {exitCode}\n");
 #pragma warning disable CA1416 // SetUnixFileMode is not supported on Windows; these tests are Unix-only
         File.SetUnixFileMode(script,
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |

@@ -49,11 +49,14 @@ public static class Runner
 
         // Exit 0 = clean, 1 = findings present, 2 = non-fatal scanner warning, 3+ = error
         if (proc.ExitCode > 2)
+        {
+            var detail = TryExtractErrors(stdout) ?? stderr;
             throw new InvalidOperationException(
-                $"Scanner exited with code {proc.ExitCode}.\n{stderr}");
+                $"Scanner exited with code {proc.ExitCode}.\n{detail}");
+        }
 
         var scannerWarning = proc.ExitCode == 2
-            ? $"Scanner exited with code 2 (non-fatal).\n{stderr}".Trim()
+            ? TryExtractErrors(stdout) ?? (string.IsNullOrWhiteSpace(stderr) ? "Scanner reported a non-fatal warning." : stderr.Trim())
             : null;
 
         var findings = ParseFindings(stdout, cwd);
@@ -64,6 +67,29 @@ public static class Runner
                 .Where(f => f.RuleId == ruleId || f.RuleId.EndsWith("." + ruleId))
                 .ToList();
         return new RunResult(findings, proc.ExitCode == 1, scannerWarning);
+    }
+
+    /// <summary>
+    /// Extracts human-readable error messages from opengrep's JSON stdout, if available.
+    /// Returns null if stdout is not valid JSON or contains no errors.
+    /// </summary>
+    private static string? TryExtractErrors(string stdout)
+    {
+        if (string.IsNullOrWhiteSpace(stdout)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(stdout);
+            if (!doc.RootElement.TryGetProperty("errors", out var errors)) return null;
+            var messages = errors.EnumerateArray()
+                .Select(e => e.TryGetProperty("message", out var m) ? m.GetString() : null)
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .ToList();
+            return messages.Count > 0 ? string.Join("\n", messages) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static List<Finding> ParseFindings(string json, string cwd)

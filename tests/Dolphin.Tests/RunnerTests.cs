@@ -240,6 +240,26 @@ public class RunnerTests
     }
 
     [TestMethod]
+    public async Task RunAsync_ExitCode7_ThrowsWithJsonErrorMessage()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var jsonStdout = """{"results":[],"errors":[{"message":"Invalid YAML file rules.yaml: mapping values are not allowed here"}]}""";
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 7, stderr: "chardet noise", stdout: jsonStdout);
+        try
+        {
+            var ex = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+            StringAssert.Contains(ex.Message, "Invalid YAML file");
+            StringAssert.Contains(ex.Message, "mapping values are not allowed here");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task RunAsync_ExitCodeAbove2_Throws()
     {
         if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
@@ -260,16 +280,18 @@ public class RunnerTests
     /// Creates a temp directory with a minimal .dolphin/rules.yaml and a fake scanner script
     /// that writes empty JSON results to stdout and exits with the given code.
     /// </summary>
-    private static (string tmpDir, string fakeBinary) CreateFakeScannerEnv(int exitCode, string stderr = "")
+    private static (string tmpDir, string fakeBinary) CreateFakeScannerEnv(
+        int exitCode, string stderr = "", string? stdout = null)
     {
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
         Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
         File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
 
-        // Write a shell script that prints empty JSON results and exits with the given code
+        var stdoutJson = stdout ?? """{"results":[]}""";
+        // Write a shell script that prints JSON results to stdout and exits with the given code
         var script = Path.Combine(tmpDir, "fake-scanner.sh");
         File.WriteAllText(script,
-            $"#!/bin/sh\necho '{{\"results\":[]}}'\necho '{stderr}' >&2\nexit {exitCode}\n");
+            $"#!/bin/sh\necho '{stdoutJson}'\necho '{stderr}' >&2\nexit {exitCode}\n");
 #pragma warning disable CA1416 // SetUnixFileMode is not supported on Windows; these tests are Unix-only
         File.SetUnixFileMode(script,
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |

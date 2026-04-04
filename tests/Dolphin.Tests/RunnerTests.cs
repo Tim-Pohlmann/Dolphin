@@ -240,6 +240,26 @@ public class RunnerTests
     }
 
     [TestMethod]
+    public async Task RunAsync_ExitCode2_SurfacesJsonErrorOverStderr()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var jsonStdout = """{"results":[],"errors":[{"message":"rule schema invalid"}]}""";
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 2, stderr: "chardet noise", stdout: jsonStdout);
+        try
+        {
+            var result = await Runner.RunAsync(fakeBinary, tmpDir);
+
+            Assert.IsNotNull(result.ScannerWarning);
+            StringAssert.Contains(result.ScannerWarning, "rule schema invalid");
+            StringAssert.DoesNotMatch(result.ScannerWarning, new System.Text.RegularExpressions.Regex("chardet noise"));
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task RunAsync_ExitCode7_ThrowsWithJsonErrorMessage()
     {
         if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
@@ -252,6 +272,7 @@ public class RunnerTests
             );
             StringAssert.Contains(ex.Message, "Invalid YAML file");
             StringAssert.Contains(ex.Message, "mapping values are not allowed here");
+            StringAssert.DoesNotMatch(ex.Message, new System.Text.RegularExpressions.Regex("chardet noise"));
         }
         finally
         {

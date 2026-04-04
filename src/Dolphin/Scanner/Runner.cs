@@ -82,11 +82,13 @@ public static class Runner
         try
         {
             using var doc = JsonDocument.Parse(stdout);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
             if (!doc.RootElement.TryGetProperty("errors", out var errors)) return null;
             if (errors.ValueKind != JsonValueKind.Array) return null;
             var messages = errors.EnumerateArray()
                 .Select(e =>
                 {
+                    if (e.ValueKind != JsonValueKind.Object) return null;
                     if (!e.TryGetProperty("message", out var m)) return null;
                     return m.ValueKind == JsonValueKind.String ? m.GetString() : null;
                 })

@@ -43,6 +43,11 @@ public static partial class LspServer
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ContentLengthRegex();
 
+    [GeneratedRegex(@"\x1B\[[0-9;]*[A-Za-z]", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex AnsiEscapeRegex();
+
+    internal static string StripAnsi(string s) => AnsiEscapeRegex().Replace(s, "");
+
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
         await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
@@ -431,7 +436,7 @@ public static partial class LspServer
                     catch { return; }
                 }
 
-                var diagnostics = await RunValidateAsync(text, ct);
+                var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
             }
             catch (OperationCanceledException) { /* superseded by a newer edit */ }
@@ -511,7 +516,7 @@ public static partial class LspServer
         return (ch, 1);
     }
 
-    private static async Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
+    private static async Task<LspDiagnostic[]> RunValidateAsync(string text, string fileName, CancellationToken ct)
     {
         var nonAscii = FindNonAsciiDiagnostic(text);
         if (nonAscii is not null) return nonAscii;
@@ -528,7 +533,6 @@ public static partial class LspServer
                 RedirectStandardError = true,
             };
             psi.ArgumentList.Add("validate");
-            psi.ArgumentList.Add("--config");
             psi.ArgumentList.Add(tmp);
 
             using var proc = Process.Start(psi)!;
@@ -550,9 +554,13 @@ public static partial class LspServer
                 var combined = (stdout.Length > 0 && stderr.Length > 0 && !stdout.EndsWith('\n'))
                     ? stdout + '\n' + stderr
                     : stdout + stderr;
-                return proc.ExitCode == 0
-                    ? []
-                    : LspDiagnosticsParser.Parse(combined);
+                if (proc.ExitCode == 0) return [];
+
+                // Strip ANSI codes and replace the temp path (an implementation detail)
+                // with a stable placeholder before parsing, so messages shown to users
+                // don't contain ephemeral /tmp/dolphin-lsp-* paths.
+                combined = StripAnsi(combined).Replace(tmp, fileName);
+                return LspDiagnosticsParser.Parse(combined);
             }
             catch (OperationCanceledException)
             {

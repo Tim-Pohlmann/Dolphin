@@ -137,4 +137,35 @@ public class LspDiagnosticsParserTests
         Assert.AreEqual(0, diags[0].Range.Start.Line);
         StringAssert.Contains(diags[0].Message, "Something went completely sideways");
     }
+
+    // ── Opengrep validate inline-location format ───────────────────────────────
+
+    [TestMethod]
+    public void Parse_OpengrepValidateInlineLine_ExtractsLocationFromSameLine()
+    {
+        // opengrep validate embeds the file:line:col in the same line as the message
+        // (no separate --> line), e.g. after tmp-path replacement by the server:
+        const string output =
+            "[00.20][WARNING]: invalid rule bad-rule, rules.yaml:2:4: Missing required field message";
+
+        var diags = LspDiagnosticsParser.Parse(output);
+
+        Assert.AreEqual(1, diags.Length);
+        Assert.AreEqual(1, diags[0].Range.Start.Line);      // 2 → 0-indexed 1
+        Assert.AreEqual(3, diags[0].Range.Start.Character); // 4 → 0-indexed 3
+        StringAssert.Contains(diags[0].Message, "invalid");
+    }
+
+    [TestMethod]
+    public void Parse_OpengrepValidateInlineLine_LineOnlyNoColumn()
+    {
+        const string output =
+            "[00.70][ERROR]: Opengrep match found at line rules.yaml:5";
+
+        var diags = LspDiagnosticsParser.Parse(output);
+
+        Assert.AreEqual(1, diags.Length);
+        Assert.AreEqual(4, diags[0].Range.Start.Line);      // 5 → 0-indexed 4
+        Assert.AreEqual(0, diags[0].Range.Start.Character); // no column → 0
+    }
 }

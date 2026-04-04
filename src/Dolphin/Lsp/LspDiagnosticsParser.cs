@@ -3,22 +3,31 @@ using System.Text.RegularExpressions;
 namespace Dolphin.Lsp;
 
 /// <summary>
-/// Parses the text output of `opengrep validate` into LSP diagnostics.
+/// Parses the text output of <c>opengrep validate</c> into LSP diagnostics.
 ///
-/// Opengrep emits structured errors like:
-///   Invalid rule 'no-console-log': missing required field 'message'
-///     --> /path/to/file with spaces.yaml:8:5
+/// Opengrep may emit errors in two formats:
 ///
-/// The error message line is recognised by keywords (error, invalid, …).
-/// The location pointer line (-->) follows immediately and provides the
-/// 1-based line and optional column, anchored at the end of the line so
-/// that file paths containing spaces or colons are handled correctly.
+/// 1. Semgrep-style — message line followed by a separate location pointer:
+///      Invalid rule 'no-console-log': missing required field 'message'
+///        --> /path/to/file with spaces.yaml:8:5
+///
+/// 2. Inline-location — message and location on the same line (opengrep validate):
+///      [00.20][WARNING]: invalid rule bad-rule, rules.yaml:2:4: Missing required field message
+///
+/// For format 1, the error line is recognised by keywords (error, invalid, …)
+/// and the --> pointer line that follows provides the 1-based line/column.
+/// For format 2, the location is extracted from the same line as the message
+/// and the diagnostic is resolved immediately without a follow-up pointer line.
 /// </summary>
 internal static partial class LspDiagnosticsParser
 {
     // Anchored to EOL so paths with spaces/colons are handled correctly.
     [GeneratedRegex(@"-->.*?:(\d+)(?::(\d+))?\s*$", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
     private static partial Regex LocationPattern();
+
+    // Opengrep validate embeds the location inline: "..., /tmp/rules.yaml:2:4: message"
+    [GeneratedRegex(@"\.ya?ml:(\d+)(?::(\d+))?", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
+    private static partial Regex InlineLocationPattern();
 
     [GeneratedRegex(@"\b(error|invalid|missing|required|unexpected)\b", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ErrorKeywordPattern();
@@ -32,14 +41,28 @@ internal static partial class LspDiagnosticsParser
             var trimmed = raw.Trim();
             if (trimmed.Length == 0) continue;
 
-            if (TryParseLocation(raw, out var lineNum, out var colNum))
+            var hasLocation = TryParseLocation(raw, out var lineNum, out var colNum);
+            var hasKeyword  = ErrorKeywordPattern().IsMatch(trimmed);
+
+            if (hasLocation && !hasKeyword)
             {
+                // Pure location pointer line (e.g. "  --> /path/rules.yaml:8:5")
                 AttachLocation(diagnostics, lineNum, colNum);
                 continue;
             }
 
-            if (ErrorKeywordPattern().IsMatch(trimmed))
-                diagnostics.Add(MakePendingDiagnostic(trimmed));
+            if (hasKeyword)
+            {
+                var diag = MakePendingDiagnostic(trimmed);
+                if (hasLocation)
+                {
+                    // Opengrep embeds location inline — resolve immediately
+                    // rather than waiting for a follow-up --> pointer line.
+                    var pos = new LspPosition(lineNum, colNum);
+                    diag = diag with { Range = new LspRange(pos, pos), Pending = false };
+                }
+                diagnostics.Add(diag);
+            }
         }
 
         FinalisePending(diagnostics);
@@ -53,6 +76,7 @@ internal static partial class LspDiagnosticsParser
     private static bool TryParseLocation(string raw, out int lineNum, out int colNum)
     {
         var m = LocationPattern().Match(raw);
+        if (!m.Success) m = InlineLocationPattern().Match(raw);
         if (!m.Success) { lineNum = 0; colNum = 0; return false; }
 
         if (!int.TryParse(m.Groups[1].Value, out var line1Based))

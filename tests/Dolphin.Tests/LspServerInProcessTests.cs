@@ -521,6 +521,29 @@ public partial class LspServerInProcessTests
         Assert.IsTrue(diags[0].Message.Contains("Non-ASCII"));
     }
 
+    // ── StripAnsi ─────────────────────────────────────────────────────────────
+
+    [TestMethod]
+    public void StripAnsi_RemovesColorCodes()
+    {
+        const string input = "\x1B[33mWARNING\x1B[0m: invalid rule";
+        Assert.AreEqual("WARNING: invalid rule", LspServer.StripAnsi(input));
+    }
+
+    [TestMethod]
+    public void StripAnsi_NoEscapeCodes_ReturnsUnchanged()
+    {
+        const string input = "plain text without escapes";
+        Assert.AreEqual(input, LspServer.StripAnsi(input));
+    }
+
+    [TestMethod]
+    public void StripAnsi_MultipleSequences_RemovesAll()
+    {
+        const string input = "\x1B[31merror\x1B[0m: \x1B[1mbold\x1B[0m message";
+        Assert.AreEqual("error: bold message", LspServer.StripAnsi(input));
+    }
+
     // ── Program.cs routing (via Startup.RunAsync) ─────────────────────────────
 
     [TestMethod]

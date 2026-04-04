@@ -3,16 +3,21 @@ using System.Text.RegularExpressions;
 namespace Dolphin.Lsp;
 
 /// <summary>
-/// Parses the text output of `opengrep validate` into LSP diagnostics.
+/// Parses the text output of <c>opengrep validate</c> into LSP diagnostics.
 ///
-/// Opengrep emits structured errors like:
-///   Invalid rule 'no-console-log': missing required field 'message'
-///     --> /path/to/file with spaces.yaml:8:5
+/// Opengrep may emit errors in two formats:
 ///
-/// The error message line is recognised by keywords (error, invalid, …).
-/// The location pointer line (-->) follows immediately and provides the
-/// 1-based line and optional column, anchored at the end of the line so
-/// that file paths containing spaces or colons are handled correctly.
+/// 1. Semgrep-style — message line followed by a separate location pointer:
+///      Invalid rule 'no-console-log': missing required field 'message'
+///        --> /path/to/file with spaces.yaml:8:5
+///
+/// 2. Inline-location — message and location on the same line (opengrep validate):
+///      [00.20][WARNING]: invalid rule bad-rule, rules.yaml:2:4: Missing required field message
+///
+/// For format 1, the error line is recognised by keywords (error, invalid, …)
+/// and the --> pointer line that follows provides the 1-based line/column.
+/// For format 2, the location is extracted from the same line as the message
+/// and the diagnostic is resolved immediately without a follow-up pointer line.
 /// </summary>
 internal static partial class LspDiagnosticsParser
 {

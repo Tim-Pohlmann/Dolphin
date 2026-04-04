@@ -251,7 +251,7 @@ public class RunnerTests
 
             Assert.IsNotNull(result.ScannerWarning);
             StringAssert.Contains(result.ScannerWarning, "rule schema invalid");
-            StringAssert.DoesNotMatch(result.ScannerWarning, new System.Text.RegularExpressions.Regex("chardet noise"));
+            Assert.IsFalse(result.ScannerWarning.Contains("chardet noise", StringComparison.Ordinal), "ScannerWarning should not contain stderr noise");
         }
         finally
         {
@@ -272,7 +272,7 @@ public class RunnerTests
             );
             StringAssert.Contains(ex.Message, "Invalid YAML file");
             StringAssert.Contains(ex.Message, "mapping values are not allowed here");
-            StringAssert.DoesNotMatch(ex.Message, new System.Text.RegularExpressions.Regex("chardet noise"));
+            Assert.IsFalse(ex.Message.Contains("chardet noise", StringComparison.Ordinal), "Exception message should not contain stderr noise");
         }
         finally
         {
@@ -287,7 +287,7 @@ public class RunnerTests
         var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 3, stderr: "fatal error");
         try
         {
-            await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            await Assert.ThrowsExactlyAsync<InvalidOperationException>(
                 () => Runner.RunAsync(fakeBinary, tmpDir)
             );
         }

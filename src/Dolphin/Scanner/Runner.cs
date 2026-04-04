@@ -51,7 +51,9 @@ public static class Runner
         if (proc.ExitCode > 2)
         {
             var detail = TryExtractErrors(stdout)
-                ?? (string.IsNullOrWhiteSpace(stderr) ? "Scanner failed without returning error details." : stderr.Trim());
+                ?? (!string.IsNullOrWhiteSpace(stderr) ? stderr.Trim()
+                    : !string.IsNullOrWhiteSpace(stdout) ? stdout.Trim()
+                    : "Scanner failed without returning error details.");
             throw new InvalidOperationException(
                 $"Scanner exited with code {proc.ExitCode}.\n{detail}");
         }

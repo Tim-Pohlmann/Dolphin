@@ -80,8 +80,13 @@ public static class Runner
         {
             using var doc = JsonDocument.Parse(stdout);
             if (!doc.RootElement.TryGetProperty("errors", out var errors)) return null;
+            if (errors.ValueKind != JsonValueKind.Array) return null;
             var messages = errors.EnumerateArray()
-                .Select(e => e.TryGetProperty("message", out var m) ? m.GetString() : null)
+                .Select(e =>
+                {
+                    if (!e.TryGetProperty("message", out var m)) return null;
+                    return m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+                })
                 .Where(m => !string.IsNullOrWhiteSpace(m))
                 .ToList();
             return messages.Count > 0 ? string.Join("\n", messages) : null;

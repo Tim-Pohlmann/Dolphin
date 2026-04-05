@@ -433,7 +433,18 @@ public static partial class LspServer
                 if (_opengrepBinary is null)
                 {
                     try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-                    catch { return; }
+                    catch (Exception ex)
+                    {
+                        await Console.Error.WriteLineAsync($"[dolphin-lsp] opengrep binary not found: {ex.Message}");
+                        var pos = new LspPosition(0, 0);
+                        await PublishDiagnosticsAsync(stdout, uri, [new LspDiagnostic(
+                            Range: new LspRange(pos, pos),
+                            Severity: 1,
+                            Source: "dolphin",
+                            Message: "Dolphin: opengrep not found. Install opengrep and ensure it is on your PATH. See https://opengrep.dev",
+                            Pending: false)], ct);
+                        return;
+                    }
                 }
 
                 var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);

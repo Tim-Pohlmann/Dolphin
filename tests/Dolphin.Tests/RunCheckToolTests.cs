@@ -40,7 +40,7 @@ public class RunCheckToolBuildOutputTests
         var finding = new Finding("my-rule", Severity.Warning, "src/foo.ts", 1, 1, "msg", "");
         var result = new RunResult([finding], HasFindings: true);
         var output = RunCheckTool.BuildOutput(result);
-        Assert.IsFalse(output.Contains("⚠"), "Should not contain warning symbol when ScannerWarning is null");
+        Assert.IsFalse(output.Contains('⚠'), "Should not contain warning symbol when ScannerWarning is null");
     }
 
     [TestMethod]

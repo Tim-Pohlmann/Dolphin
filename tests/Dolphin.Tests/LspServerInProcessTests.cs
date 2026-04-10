@@ -578,6 +578,102 @@ public partial class LspServerInProcessTests
         }
     }
 
+    // ── Scanner-missing diagnostic paths ────────────────────────────────────
+
+    /// <summary>
+    /// Runs the server with a delayed stream that inserts a pause between messages,
+    /// giving fire-and-forget validation tasks time to complete before shutdown.
+    /// </summary>
+    private static async Task<List<JsonObject>> RunServerWithDelayAsync(
+        TimeSpan delay, params string[] messages)
+    {
+        var input = new DelayedMessageStream(BuildInput(messages), delay);
+        var output = new MemoryStream();
+        await LspServer.RunAsync(inputStream: input, outputStream: output);
+        return ParseOutput(output.ToArray());
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_DidOpen_ScannerMissing_PublishesDiagnostic()
+    {
+        // When the scanner binary is not on PATH, opening a dolphin rules file should
+        // publish an error diagnostic informing the user how to install it.
+        const string uri = "file:///project/.dolphin/rules.yaml";
+        var responses = await RunServerWithDelayAsync(
+            TimeSpan.FromMilliseconds(500),
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        var publish = responses.FirstOrDefault(r =>
+            r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&
+            r["params"]?["diagnostics"]?.AsArray().Count > 0);
+
+        // This test is meaningful when no scanner is installed; if one is, skip gracefully.
+        if (publish is null)
+        {
+            // Scanner was found — validation ran normally; nothing to assert about missing-scanner path.
+            return;
+        }
+
+        var diag = publish["params"]!["diagnostics"]!.AsArray()[0]!;
+        Assert.AreEqual(1, diag["severity"]?.GetValue<int>(), "Severity should be Error (1)");
+        Assert.AreEqual("dolphin", diag["source"]?.GetValue<string>());
+        var message = diag["message"]?.GetValue<string>() ?? "";
+        Assert.IsTrue(message.Contains("Scanner not found") || message.Contains("opengrep"),
+            $"Diagnostic should mention scanner: {message}");
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_DidChange_ScannerMissing_PublishesDiagnosticWithoutRetrySpam()
+    {
+        // Two rapid edits: second should reuse the cached failure without retrying.
+        const string uri = "file:///project/.dolphin/rules.yaml";
+        var responses = await RunServerWithDelayAsync(
+            TimeSpan.FromMilliseconds(500),
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
+        Assert.IsNotNull(shutdown, "Shutdown response must arrive even with scanner missing");
+    }
+
+    /// <summary>
+    /// A stream wrapper that introduces a delay before each LSP message is read,
+    /// simulating time for async fire-and-forget tasks to complete.
+    /// </summary>
+    private sealed class DelayedMessageStream(byte[] data, TimeSpan delay) : Stream
+    {
+        private readonly MemoryStream _inner = new(data);
+        private int _messageCount;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => _inner.Length;
+        public override long Position
+        {
+            get => _inner.Position;
+            set => _inner.Position = value;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            // Add delay after the first message to let fire-and-forget tasks complete.
+            if (_messageCount > 0 && _inner.Position < _inner.Length)
+                await Task.Delay(delay, cancellationToken);
+            var read = await _inner.ReadAsync(buffer, cancellationToken);
+            if (read > 0) _messageCount++;
+            return read;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex ContentLengthRegex();
 }

@@ -19,8 +19,13 @@ public static partial class LspServer
 {
     private static string? _opengrepBinary;
 
-    // Cached failure message from the first time scanner resolution failed (non-null = permanently missing).
+    // Cached failure message from the first scanner resolution failure in this LSP session
+    // to avoid repeated retries and log spam (non-null = resolution previously failed this session).
     private static string? _scannerMissingMessage;
+
+    // Timestamp of the last scanner resolution failure; retries are allowed after a cooldown.
+    private static DateTime _scannerMissingSince;
+    private static readonly TimeSpan ScannerRetryCooldown = TimeSpan.FromSeconds(30);
 
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
@@ -439,12 +444,18 @@ public static partial class LspServer
                 // Lazy retry: attempt resolution if startup failed.
                 if (_opengrepBinary is null)
                 {
-                    if (_scannerMissingMessage is null)
+                    // Retry if we've never tried, or if the cooldown has elapsed since the last failure.
+                    if (_scannerMissingMessage is null || DateTime.UtcNow - _scannerMissingSince >= ScannerRetryCooldown)
                     {
-                        try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
+                        try
+                        {
+                            _opengrepBinary = await Installer.EnsureInstalledAsync();
+                            _scannerMissingMessage = null; // clear on success
+                        }
                         catch (InvalidOperationException ex)
                         {
                             _scannerMissingMessage = ex.Message;
+                            _scannerMissingSince = DateTime.UtcNow;
                             await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
                         }
                     }

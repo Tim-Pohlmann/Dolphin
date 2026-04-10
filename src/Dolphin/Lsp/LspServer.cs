@@ -19,6 +19,9 @@ public static partial class LspServer
 {
     private static string? _opengrepBinary;
 
+    // Cached failure message from the first time scanner resolution failed (non-null = permanently missing).
+    private static string? _scannerMissingMessage;
+
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
 
@@ -51,6 +54,10 @@ public static partial class LspServer
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
         await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
+
+        // Reset per-session state so a restart picks up a newly installed binary.
+        _opengrepBinary = null;
+        _scannerMissingMessage = null;
 
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
@@ -432,23 +439,34 @@ public static partial class LspServer
                 // Lazy retry: attempt resolution if startup failed.
                 if (_opengrepBinary is null)
                 {
-                    try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-                    catch (InvalidOperationException ex)
+                    if (_scannerMissingMessage is null)
                     {
-                        await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
-                        var pos = new LspPosition(0, 0);
-                        try
+                        try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
+                        catch (InvalidOperationException ex)
                         {
-                            await PublishDiagnosticsAsync(stdout, uri, [new LspDiagnostic(
-                                Range: new LspRange(pos, pos),
-                                Severity: 1,
-                                Source: "dolphin",
-                                Message: ex.Message,
-                                Pending: false)], ct);
+                            _scannerMissingMessage = ex.Message;
+                            await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
                         }
-                        catch (OperationCanceledException)
+                    }
+
+                    if (_scannerMissingMessage is not null)
+                    {
+                        if (!ct.IsCancellationRequested)
                         {
-                            /* superseded by a newer edit while publishing diagnostics */
+                            var pos = new LspPosition(0, 0);
+                            try
+                            {
+                                await PublishDiagnosticsAsync(stdout, uri, [new LspDiagnostic(
+                                    Range: new LspRange(pos, pos),
+                                    Severity: 1,
+                                    Source: "dolphin",
+                                    Message: _scannerMissingMessage,
+                                    Pending: false)], ct);
+                            }
+                            catch (OperationCanceledException)
+                            {
+                                /* superseded by a newer edit while publishing diagnostics */
+                            }
                         }
                         return;
                     }

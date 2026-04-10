@@ -433,7 +433,7 @@ public static partial class LspServer
                 if (_opengrepBinary is null)
                 {
                     try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-                    catch (Exception ex)
+                    catch (InvalidOperationException ex)
                     {
                         await Console.Error.WriteLineAsync($"[dolphin-lsp] opengrep binary not found: {ex.Message}");
                         var pos = new LspPosition(0, 0);

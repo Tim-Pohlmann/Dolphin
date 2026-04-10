@@ -19,6 +19,9 @@ public static partial class LspServer
 {
     private static string? _opengrepBinary;
 
+    // Test seam: when set, replaces Installer.EnsureInstalledAsync() in both RunAsync and ValidateAndPublishAsync.
+    internal static Func<Task<string>>? BinaryResolverOverride;
+
     // Cached failure message from the first scanner resolution failure in this LSP session
     // to avoid repeated retries and log spam (non-null = resolution previously failed this session).
     private static string? _scannerMissingMessage;
@@ -26,6 +29,13 @@ public static partial class LspServer
     // Timestamp of the last scanner resolution failure; retries are allowed after a cooldown.
     private static DateTime _scannerMissingSince;
     private static readonly TimeSpan ScannerRetryCooldown = TimeSpan.FromSeconds(30);
+
+    // Test seam: allows back-dating _scannerMissingSince so cooldown tests don't need to wait 30 s.
+    internal static DateTime ScannerMissingSinceForTesting
+    {
+        get => _scannerMissingSince;
+        set => _scannerMissingSince = value;
+    }
 
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
@@ -65,7 +75,8 @@ public static partial class LspServer
         _scannerMissingMessage = null;
 
         // Best-effort early resolution; if it fails we retry on first validate.
-        try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
+        var resolver = BinaryResolverOverride ?? Installer.EnsureInstalledAsync;
+        try { _opengrepBinary = await resolver(); }
         catch { /* will retry lazily */ }
 
         var reader = new LspReader(inputStream ?? Console.OpenStandardInput());
@@ -447,9 +458,10 @@ public static partial class LspServer
                     // Retry if we've never tried, or if the cooldown has elapsed since the last failure.
                     if (_scannerMissingMessage is null || DateTime.UtcNow - _scannerMissingSince >= ScannerRetryCooldown)
                     {
+                        var resolver = BinaryResolverOverride ?? Installer.EnsureInstalledAsync;
                         try
                         {
-                            _opengrepBinary = await Installer.EnsureInstalledAsync();
+                            _opengrepBinary = await resolver();
                             _scannerMissingMessage = null; // clear on success
                         }
                         catch (InvalidOperationException ex)

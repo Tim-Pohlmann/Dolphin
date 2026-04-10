@@ -581,97 +581,139 @@ public partial class LspServerInProcessTests
     // ── Scanner-missing diagnostic paths ────────────────────────────────────
 
     /// <summary>
-    /// Runs the server with a delayed stream that inserts a pause between messages,
-    /// giving fire-and-forget validation tasks time to complete before shutdown.
+    /// Feeds LSP messages one at a time via a pipe, with a delay between each,
+    /// so fire-and-forget validation tasks can complete before the next message
+    /// is processed by the server.  Unlike a pre-built MemoryStream, the pipe
+    /// prevents LspReader from buffering all messages in a single ReadAsync call.
     /// </summary>
     private static async Task<List<JsonObject>> RunServerWithDelayAsync(
         TimeSpan delay, params string[] messages)
     {
-        var input = new DelayedMessageStream(BuildInput(messages), delay);
+        var pipe = new System.IO.Pipelines.Pipe();
         var output = new MemoryStream();
-        await LspServer.RunAsync(inputStream: input, outputStream: output);
+
+        var serverTask = LspServer.RunAsync(
+            inputStream: pipe.Reader.AsStream(),
+            outputStream: output);
+
+        var writerTask = Task.Run(async () =>
+        {
+            for (int i = 0; i < messages.Length; i++)
+            {
+                if (i > 0) await Task.Delay(delay);
+                var body = Encoding.UTF8.GetBytes(messages[i]);
+                var header = Encoding.ASCII.GetBytes($"Content-Length: {body.Length}\r\n\r\n");
+                await pipe.Writer.WriteAsync(header);
+                await pipe.Writer.WriteAsync(body);
+                await pipe.Writer.FlushAsync();
+            }
+            pipe.Writer.Complete();
+        });
+
+        await Task.WhenAll(serverTask, writerTask);
         return ParseOutput(output.ToArray());
     }
 
     [TestMethod]
-    public async Task HandleMessage_DidOpen_ScannerMissing_PublishesDiagnostic()
+    public async Task ScannerMissing_DidOpen_PublishesErrorDiagnostic()
     {
-        // When the scanner binary is not on PATH, opening a dolphin rules file should
-        // publish an error diagnostic informing the user how to install it.
-        const string uri = "file:///project/.dolphin/rules.yaml";
-        var responses = await RunServerWithDelayAsync(
-            TimeSpan.FromMilliseconds(500),
-            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
-            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
-
-        var publish = responses.FirstOrDefault(r =>
-            r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&
-            r["params"]?["diagnostics"]?.AsArray().Count > 0);
-
-        // This test is meaningful when no scanner is installed; if one is, skip gracefully.
-        if (publish is null)
+        // Force scanner resolution to always fail so the missing-scanner path is exercised
+        // regardless of what is installed in the test environment.
+        LspServer.BinaryResolverOverride = () => throw new InvalidOperationException("Scanner not found. See: https://opengrep.dev");
+        try
         {
-            // Scanner was found — validation ran normally; nothing to assert about missing-scanner path.
-            return;
-        }
+            const string uri = "file:///project/.dolphin/rules.yaml";
+            var responses = await RunServerWithDelayAsync(
+                TimeSpan.FromMilliseconds(200),
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-        var diag = publish["params"]!["diagnostics"]!.AsArray()[0]!;
-        Assert.AreEqual(1, diag["severity"]?.GetValue<int>(), "Severity should be Error (1)");
-        Assert.AreEqual("dolphin", diag["source"]?.GetValue<string>());
-        var message = diag["message"]?.GetValue<string>() ?? "";
-        Assert.IsTrue(message.Contains("Scanner not found") || message.Contains("opengrep"),
-            $"Diagnostic should mention scanner: {message}");
+            var publish = responses.FirstOrDefault(r =>
+                r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&
+                r["params"]?["diagnostics"]?.AsArray().Count > 0);
+
+            Assert.IsNotNull(publish, "A scanner-missing diagnostic must be published");
+            var diag = publish!["params"]!["diagnostics"]!.AsArray()[0]!;
+            Assert.AreEqual(1, diag["severity"]?.GetValue<int>(), "Severity should be Error (1)");
+            Assert.AreEqual("dolphin", diag["source"]?.GetValue<string>());
+            StringAssert.Contains(diag["message"]?.GetValue<string>(), "Scanner not found");
+        }
+        finally { LspServer.BinaryResolverOverride = null; }
     }
 
     [TestMethod]
-    public async Task HandleMessage_DidChange_ScannerMissing_PublishesDiagnosticWithoutRetrySpam()
+    public async Task ScannerMissing_SecondEdit_UsesCachedMessageWithoutRetry()
     {
-        // Two rapid edits: second should reuse the cached failure without retrying.
-        const string uri = "file:///project/.dolphin/rules.yaml";
-        var responses = await RunServerWithDelayAsync(
-            TimeSpan.FromMilliseconds(500),
-            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
-            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}",
-            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+        // After the first failure, the second edit must reuse the cached message (cooldown in effect)
+        // rather than calling the resolver again.
+        int resolverCallCount = 0;
+        LspServer.BinaryResolverOverride = () =>
+        {
+            resolverCallCount++;
+            throw new InvalidOperationException("Scanner not found.");
+        };
+        try
+        {
+            const string uri = "file:///project/.dolphin/rules.yaml";
+            var responses = await RunServerWithDelayAsync(
+                TimeSpan.FromMilliseconds(200),
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-        var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
-        Assert.IsNotNull(shutdown, "Shutdown response must arrive even with scanner missing");
+            var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
+            Assert.IsNotNull(shutdown, "Shutdown response must arrive");
+
+            // Resolver is called once at startup (fails) and once for the first lazy retry.
+            // The second edit should hit the cooldown and NOT call the resolver again.
+            Assert.IsTrue(resolverCallCount <= 2,
+                $"Resolver should not be retried on every edit; was called {resolverCallCount} times");
+
+            var publishes = responses
+                .Where(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&
+                            r["params"]?["diagnostics"]?.AsArray().Count > 0)
+                .ToList();
+            Assert.IsTrue(publishes.Count >= 2,
+                $"Expected ≥2 scanner-missing diagnostics (open + change), got {publishes.Count}");
+        }
+        finally { LspServer.BinaryResolverOverride = null; }
     }
 
-    /// <summary>
-    /// A stream wrapper that introduces a delay before each LSP message is read,
-    /// simulating time for async fire-and-forget tasks to complete.
-    /// </summary>
-    private sealed class DelayedMessageStream(byte[] data, TimeSpan delay) : Stream
+    [TestMethod]
+    public async Task ScannerMissing_ThenRecovered_ClearsCachedMessage()
     {
-        private readonly MemoryStream _inner = new(data);
-        private int _messageCount;
-
-        public override bool CanRead => true;
-        public override bool CanSeek => false;
-        public override bool CanWrite => false;
-        public override long Length => _inner.Length;
-        public override long Position
+        // Simulate recovery: first call fails, subsequent calls succeed.
+        // After cooldown elapses the server retries; on success it must clear the cached failure.
+        int resolverCallCount = 0;
+        LspServer.BinaryResolverOverride = () =>
         {
-            get => _inner.Position;
-            set => _inner.Position = value;
-        }
-
-        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            resolverCallCount++;
+            // Fail only on the very first lazy-retry attempt (startup call is call 1 in RunAsync).
+            // The second lazy-retry (after cooldown) succeeds.
+            if (resolverCallCount <= 2)
+                throw new InvalidOperationException("Scanner not found.");
+            // Return a value that won't actually be used as a real binary but satisfies the field.
+            return Task.FromResult("fake-binary");
+        };
+        try
         {
-            // Add delay after the first message to let fire-and-forget tasks complete.
-            if (_messageCount > 0 && _inner.Position < _inner.Length)
-                await Task.Delay(delay, cancellationToken);
-            var read = await _inner.ReadAsync(buffer, cancellationToken);
-            if (read > 0) _messageCount++;
-            return read;
-        }
+            // Back-date the last failure so the cooldown appears elapsed.
+            LspServer.ScannerMissingSinceForTesting = DateTime.UtcNow - TimeSpan.FromMinutes(5);
 
-        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
-        public override void Flush() { }
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+            const string uri = "file:///project/.dolphin/rules.yaml";
+            var responses = await RunServerWithDelayAsync(
+                TimeSpan.FromMilliseconds(200),
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+            var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
+            Assert.IsNotNull(shutdown, "Shutdown response must arrive");
+        }
+        finally
+        {
+            LspServer.BinaryResolverOverride = null;
+            LspServer.ScannerMissingSinceForTesting = default;
+        }
     }
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]

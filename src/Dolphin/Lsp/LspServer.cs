@@ -30,6 +30,10 @@ public static partial class LspServer
     private static DateTime _scannerMissingSince;
     private static readonly TimeSpan ScannerRetryCooldown = TimeSpan.FromSeconds(30);
 
+    // Ensures only one concurrent resolution attempt runs at a time, preventing duplicate
+    // EnsureInstalledAsync calls and multiple stderr log lines from racing validations.
+    private static readonly SemaphoreSlim _resolutionLock = new(1, 1);
+
     // Test seam: allows back-dating _scannerMissingSince so cooldown tests don't need to wait 30 s.
     internal static DateTime ScannerMissingSinceForTesting
     {
@@ -455,21 +459,36 @@ public static partial class LspServer
                 // Lazy retry: attempt resolution if startup failed.
                 if (_opengrepBinary is null)
                 {
-                    // Retry if we've never tried, or if the cooldown has elapsed since the last failure.
-                    if (_scannerMissingMessage is null || DateTime.UtcNow - _scannerMissingSince >= ScannerRetryCooldown)
+                    // Acquire the resolution lock so that concurrent validations don't race on
+                    // the shared fields (_opengrepBinary, _scannerMissingMessage, _scannerMissingSince)
+                    // and don't trigger multiple simultaneous EnsureInstalledAsync calls or log lines.
+                    await _resolutionLock.WaitAsync(ct);
+                    try
                     {
-                        var resolver = BinaryResolverOverride ?? Installer.EnsureInstalledAsync;
-                        try
+                        // Double-check after acquiring: another task may have resolved it.
+                        if (_opengrepBinary is null)
                         {
-                            _opengrepBinary = await resolver();
-                            _scannerMissingMessage = null; // clear on success
+                            // Retry if we've never tried, or if the cooldown has elapsed since the last failure.
+                            if (_scannerMissingMessage is null || DateTime.UtcNow - _scannerMissingSince >= ScannerRetryCooldown)
+                            {
+                                var resolver = BinaryResolverOverride ?? Installer.EnsureInstalledAsync;
+                                try
+                                {
+                                    _opengrepBinary = await resolver();
+                                    _scannerMissingMessage = null; // clear on success
+                                }
+                                catch (InvalidOperationException ex)
+                                {
+                                    _scannerMissingMessage = ex.Message;
+                                    _scannerMissingSince = DateTime.UtcNow;
+                                    await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
+                                }
+                            }
                         }
-                        catch (InvalidOperationException ex)
-                        {
-                            _scannerMissingMessage = ex.Message;
-                            _scannerMissingSince = DateTime.UtcNow;
-                            await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
-                        }
+                    }
+                    finally
+                    {
+                        _resolutionLock.Release();
                     }
 
                     if (_scannerMissingMessage is not null)

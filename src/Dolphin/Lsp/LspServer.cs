@@ -22,23 +22,22 @@ public static partial class LspServer
     // Test seam: when set, replaces Installer.EnsureInstalledAsync() in both RunAsync and ValidateAndPublishAsync.
     internal static Func<Task<string>>? BinaryResolverOverride;
 
-    // Cached failure message from the first scanner resolution failure in this LSP session
-    // to avoid repeated retries and log spam (non-null = resolution previously failed this session).
-    private static string? _scannerMissingMessage;
+    // Combines the failure message and its timestamp into one atomic piece of state.
+    // Non-null means resolution previously failed this session; null means no failure (or cleared).
+    internal record ScannerFailure(string Message, DateTime Since);
+    private static ScannerFailure? _lastFailure;
 
-    // Timestamp of the last scanner resolution failure; retries are allowed after a cooldown.
-    private static DateTime _scannerMissingSince;
     private static readonly TimeSpan ScannerRetryCooldown = TimeSpan.FromSeconds(30);
 
     // Ensures only one concurrent resolution attempt runs at a time, preventing duplicate
     // EnsureInstalledAsync calls and multiple stderr log lines from racing validations.
     private static readonly SemaphoreSlim _resolutionLock = new(1, 1);
 
-    // Test seam: allows back-dating _scannerMissingSince so cooldown tests don't need to wait 30 s.
-    internal static DateTime ScannerMissingSinceForTesting
+    // Test seam: pre-populate failure state so cooldown tests can control elapsed time.
+    internal static ScannerFailure? LastFailureForTesting
     {
-        get => _scannerMissingSince;
-        set => _scannerMissingSince = value;
+        get => _lastFailure;
+        set => _lastFailure = value;
     }
 
     // Guards concurrent writes to stdout (validation runs off the message loop).
@@ -70,17 +69,18 @@ public static partial class LspServer
 
     internal static string StripAnsi(string s) => AnsiEscapeRegex().Replace(s, "");
 
+    private static Func<Task<string>> GetResolver() => BinaryResolverOverride ?? Installer.EnsureInstalledAsync;
+
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
         await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
 
         // Reset per-session state so a restart picks up a newly installed binary.
         _opengrepBinary = null;
-        _scannerMissingMessage = null;
+        _lastFailure = null;
 
         // Best-effort early resolution; if it fails we retry on first validate.
-        var resolver = BinaryResolverOverride ?? Installer.EnsureInstalledAsync;
-        try { _opengrepBinary = await resolver(); }
+        try { _opengrepBinary = await GetResolver()(); }
         catch { /* will retry lazily */ }
 
         var reader = new LspReader(inputStream ?? Console.OpenStandardInput());
@@ -469,18 +469,16 @@ public static partial class LspServer
                         if (_opengrepBinary is null)
                         {
                             // Retry if we've never tried, or if the cooldown has elapsed since the last failure.
-                            if (_scannerMissingMessage is null || DateTime.UtcNow - _scannerMissingSince >= ScannerRetryCooldown)
+                            if (_lastFailure is null || DateTime.UtcNow - _lastFailure.Since >= ScannerRetryCooldown)
                             {
-                                var resolver = BinaryResolverOverride ?? Installer.EnsureInstalledAsync;
                                 try
                                 {
-                                    _opengrepBinary = await resolver();
-                                    _scannerMissingMessage = null; // clear on success
+                                    _opengrepBinary = await GetResolver()();
+                                    _lastFailure = null; // clear on success
                                 }
                                 catch (InvalidOperationException ex)
                                 {
-                                    _scannerMissingMessage = ex.Message;
-                                    _scannerMissingSince = DateTime.UtcNow;
+                                    _lastFailure = new ScannerFailure(ex.Message, DateTime.UtcNow);
                                     await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
                                 }
                             }
@@ -491,7 +489,7 @@ public static partial class LspServer
                         _resolutionLock.Release();
                     }
 
-                    if (_scannerMissingMessage is not null)
+                    if (_lastFailure is not null)
                     {
                         if (!ct.IsCancellationRequested)
                         {
@@ -502,7 +500,7 @@ public static partial class LspServer
                                     Range: new LspRange(pos, pos),
                                     Severity: 1,
                                     Source: "dolphin",
-                                    Message: _scannerMissingMessage,
+                                    Message: _lastFailure.Message,
                                     Pending: false)], ct);
                             }
                             catch (OperationCanceledException)

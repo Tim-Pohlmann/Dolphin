@@ -578,6 +578,142 @@ public partial class LspServerInProcessTests
         }
     }
 
+    // ── Scanner-missing diagnostic paths ────────────────────────────────────
+
+    /// <summary>
+    /// Feeds LSP messages one at a time via a pipe, with a delay between each,
+    /// so fire-and-forget validation tasks can complete before the next message
+    /// is processed by the server.  Unlike a pre-built MemoryStream, the pipe
+    /// prevents LspReader from buffering all messages in a single ReadAsync call.
+    /// </summary>
+    /// <summary>Encodes a single JSON-RPC message as an LSP-framed byte array.</summary>
+    private static byte[] FrameMessage(string json) => BuildInput(json);
+
+    private static async Task<List<JsonObject>> RunServerWithDelayAsync(
+        TimeSpan delay, params string[] messages)
+    {
+        var pipe = new System.IO.Pipelines.Pipe();
+        var output = new MemoryStream();
+
+        var serverTask = LspServer.RunAsync(
+            inputStream: pipe.Reader.AsStream(),
+            outputStream: output);
+
+        var writerTask = Task.Run(async () =>
+        {
+            for (int i = 0; i < messages.Length; i++)
+            {
+                if (i > 0) await Task.Delay(delay);
+                var frame = FrameMessage(messages[i]);
+                await pipe.Writer.WriteAsync(frame);
+                await pipe.Writer.FlushAsync();
+            }
+            pipe.Writer.Complete();
+        });
+
+        await Task.WhenAll(serverTask, writerTask);
+        return ParseOutput(output.ToArray());
+    }
+
+    [TestMethod]
+    public async Task ScannerMissing_DidOpen_PublishesErrorDiagnostic()
+    {
+        // Force scanner resolution to always fail so the missing-scanner path is exercised
+        // regardless of what is installed in the test environment.
+        LspServer.BinaryResolverOverride = () => throw new InvalidOperationException("Scanner not found. See: https://opengrep.dev");
+        try
+        {
+            const string uri = "file:///project/.dolphin/rules.yaml";
+            var responses = await RunServerWithDelayAsync(
+                TimeSpan.FromMilliseconds(200),
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+            var publish = responses.FirstOrDefault(r =>
+                r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&
+                r["params"]?["diagnostics"]?.AsArray().Count > 0);
+
+            Assert.IsNotNull(publish, "A scanner-missing diagnostic must be published");
+            var diag = publish!["params"]!["diagnostics"]!.AsArray()[0]!;
+            Assert.AreEqual(1, diag["severity"]?.GetValue<int>(), "Severity should be Error (1)");
+            Assert.AreEqual("dolphin", diag["source"]?.GetValue<string>());
+            StringAssert.Contains(diag["message"]?.GetValue<string>(), "Scanner not found");
+        }
+        finally { LspServer.BinaryResolverOverride = null; }
+    }
+
+    [TestMethod]
+    public async Task ScannerMissing_SecondEdit_UsesCachedMessageWithoutRetry()
+    {
+        // After the first failure, the second edit must reuse the cached message (cooldown in effect)
+        // rather than calling the resolver again.
+        int resolverCallCount = 0;
+        LspServer.BinaryResolverOverride = () =>
+        {
+            resolverCallCount++;
+            throw new InvalidOperationException("Scanner not found.");
+        };
+        try
+        {
+            const string uri = "file:///project/.dolphin/rules.yaml";
+            var responses = await RunServerWithDelayAsync(
+                TimeSpan.FromMilliseconds(200),
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+            var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
+            Assert.IsNotNull(shutdown, "Shutdown response must arrive");
+
+            // Resolver is called once at startup (fails) and once for the first lazy retry.
+            // The second edit should hit the cooldown and NOT call the resolver again.
+            Assert.IsTrue(resolverCallCount <= 2,
+                $"Resolver should not be retried on every edit; was called {resolverCallCount} times");
+
+            var publishes = responses
+                .Where(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&
+                            r["params"]?["diagnostics"]?.AsArray().Count > 0)
+                .ToList();
+            Assert.IsTrue(publishes.Count >= 2,
+                $"Expected ≥2 scanner-missing diagnostics (open + change), got {publishes.Count}");
+        }
+        finally { LspServer.BinaryResolverOverride = null; }
+    }
+
+    [TestMethod]
+    public async Task ScannerMissing_ThenRecovered_ClearsCachedFailure()
+    {
+        // Pre-seed a stale failure (cooldown already elapsed) so the first lazy retry will
+        // attempt resolution. The override now succeeds, clearing _lastFailure so no
+        // scanner-missing diagnostic is published.
+        LspServer.LastFailureForTesting = new LspServer.ScannerFailure(
+            "Scanner not found.", DateTime.UtcNow - TimeSpan.FromMinutes(5));
+        LspServer.BinaryResolverOverride = () => Task.FromResult("fake-binary");
+        try
+        {
+            const string uri = "file:///project/.dolphin/rules.yaml";
+            var responses = await RunServerWithDelayAsync(
+                TimeSpan.FromMilliseconds(200),
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+            var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
+            Assert.IsNotNull(shutdown, "Shutdown response must arrive");
+
+            // After recovery the cached failure must be cleared: no scanner-missing diagnostic.
+            var errorDiag = responses.FirstOrDefault(r =>
+                r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&
+                r["params"]?["diagnostics"]?.AsArray()
+                    .Any(d => d?["source"]?.GetValue<string>() == "dolphin") == true);
+            Assert.IsNull(errorDiag, "No scanner-missing diagnostic should appear after successful recovery");
+        }
+        finally
+        {
+            LspServer.BinaryResolverOverride = null;
+            LspServer.LastFailureForTesting = null;
+        }
+    }
+
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex ContentLengthRegex();
 }

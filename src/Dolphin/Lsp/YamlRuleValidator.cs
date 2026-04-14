@@ -57,7 +57,7 @@ internal static class YamlRuleValidator
         }
         catch (YamlDotNet.Core.YamlException ex)
         {
-            var line = (int)Math.Max(0, ex.Start.Line - 1);
+            var line = (int)Math.Clamp(ex.Start.Line - 1, 0, int.MaxValue);
             diagnostics.Add(MakeDiagnostic(line, 0, $"YAML syntax error: {ex.Message}"));
             return [.. diagnostics];
         }
@@ -112,8 +112,9 @@ internal static class YamlRuleValidator
         foreach (var path in missingPatternPaths)
         {
             var line = lineMap.TryGetValue(path, out var l) ? l : 0;
-            const string msg = "Rule is missing a required pattern key " +
-                               "(e.g. 'pattern', 'patterns', 'pattern-regex', 'pattern-either').";
+            const string msg =
+                "Rule is missing a required pattern key " +
+                "(e.g. 'pattern', 'patterns', 'pattern-regex', 'pattern-either').";
             if (seen.Add($"{line}:{msg}"))
                 diagnostics.Add(MakeDiagnostic(line, 0, msg));
         }
@@ -213,7 +214,7 @@ internal static class YamlRuleValidator
     private static JsonNode? ConvertToJson(YamlNode node, string path, Dictionary<string, int> lineMap)
     {
         // YamlDotNet uses 1-based line numbers (long in v17); convert to 0-based int for LSP
-        lineMap[path] = (int)Math.Max(0, node.Start.Line - 1);
+        lineMap[path] = (int)Math.Clamp(node.Start.Line - 1, 0, int.MaxValue);
 
         return node switch
         {
@@ -230,10 +231,7 @@ internal static class YamlRuleValidator
         if (value is null) return null;
 
         // Preserve quoted strings as-is (don't coerce "true", integers, etc.)
-        if (scalar.Style is YamlDotNet.Core.ScalarStyle.SingleQuoted
-                         or YamlDotNet.Core.ScalarStyle.DoubleQuoted
-                         or YamlDotNet.Core.ScalarStyle.Literal
-                         or YamlDotNet.Core.ScalarStyle.Folded)
+        if (IsQuotedStyle(scalar.Style))
             return JsonValue.Create(value);
 
         // Unquoted scalars: apply YAML 1.1 type coercion rules
@@ -253,6 +251,16 @@ internal static class YamlRuleValidator
 
         return JsonValue.Create(value);
     }
+
+    /// <summary>
+    /// Returns true when the scalar is quoted or uses a block style, meaning its value should
+    /// be preserved as a string without YAML type-coercion (e.g. "true" stays a string).
+    /// </summary>
+    private static bool IsQuotedStyle(YamlDotNet.Core.ScalarStyle style) =>
+        style is YamlDotNet.Core.ScalarStyle.SingleQuoted
+              or YamlDotNet.Core.ScalarStyle.DoubleQuoted
+              or YamlDotNet.Core.ScalarStyle.Literal
+              or YamlDotNet.Core.ScalarStyle.Folded;
 
     private static JsonObject ConvertMapping(
         YamlMappingNode mapping, string path, Dictionary<string, int> lineMap)

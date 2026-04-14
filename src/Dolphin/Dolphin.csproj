@@ -126,11 +126,19 @@
 
     <!-- Convert YAML → JSON only when not already cached for this commit -->
     <!--   Step 1: write a small Python helper script to the intermediate directory -->
+    <ItemGroup Condition="!Exists('$(_SchemaJsonPath)')">
+      <_SchemaScriptLine Include="import yaml" />
+      <_SchemaScriptLine Include="import json" />
+      <_SchemaScriptLine Include="import sys" />
+      <_SchemaScriptLine Include="with open(sys.argv[1]) as f: data = yaml.safe_load(f)" />
+      <_SchemaScriptLine Include="data['$schema'] = 'https://json-schema.org/draft/2019-09/schema'" />
+      <_SchemaScriptLine Include="with open(sys.argv[2], 'w') as f: json.dump(data, f, indent=2)" />
+    </ItemGroup>
     <WriteLinesToFile
       Condition="!Exists('$(_SchemaJsonPath)')"
       File="$(_SchemaPyScript)"
       Overwrite="true"
-      Lines="import yaml;import json;import sys;data = yaml.safe_load(open(sys.argv[1]));data['$schema'] = 'https://json-schema.org/draft/2019-09/schema';open(sys.argv[2], 'w').write(json.dumps(data, indent=2))" />
+      Lines="@(_SchemaScriptLine)" />
     <!--   Step 2: ensure PyYAML is available (idempotent; fast when already installed) -->
     <Exec Condition="!Exists('$(_SchemaJsonPath)')"
           Command="$(_PythonCmd) -m pip install --quiet --disable-pip-version-check pyyaml" />

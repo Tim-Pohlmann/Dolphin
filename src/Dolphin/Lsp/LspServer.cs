@@ -1,10 +1,8 @@
 using System.Buffers;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using Dolphin.Scanner;
 
 namespace Dolphin.Lsp;
 
@@ -17,8 +15,6 @@ namespace Dolphin.Lsp;
 /// </summary>
 public static partial class LspServer
 {
-    private static string? _opengrepBinary;
-
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
 
@@ -29,7 +25,6 @@ public static partial class LspServer
     internal const int MaxHeaderBytes = 8 * 1024;        // 8 KB — headers are tiny
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
 
-    private const int ProcessReaperTimeoutSeconds = 5;
     private const int JsonRpcParseError      = -32700;
     private const int JsonRpcInvalidRequest  = -32600;
     private const int JsonRpcMethodNotFound  = -32601;
@@ -51,10 +46,6 @@ public static partial class LspServer
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
         await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
-
-        // Best-effort early resolution; if it fails we retry on first validate.
-        try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-        catch { /* will retry lazily */ }
 
         var reader = new LspReader(inputStream ?? Console.OpenStandardInput());
         var stdout = outputStream ?? Console.OpenStandardOutput();
@@ -429,13 +420,6 @@ public static partial class LspServer
             var ct = cts.Token;
             try
             {
-                // Lazy retry: attempt resolution if startup failed.
-                if (_opengrepBinary is null)
-                {
-                    try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-                    catch { return; }
-                }
-
                 var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
             }
@@ -516,80 +500,14 @@ public static partial class LspServer
         return (ch, 1);
     }
 
-    private static async Task<LspDiagnostic[]> RunValidateAsync(string text, string fileName, CancellationToken ct)
+    private static Task<LspDiagnostic[]> RunValidateAsync(string text, string fileName, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
+
         var nonAscii = FindNonAsciiDiagnostic(text);
-        if (nonAscii is not null) return nonAscii;
+        if (nonAscii is not null) return Task.FromResult(nonAscii);
 
-        var tmp = Path.Combine(Path.GetTempPath(), $"dolphin-lsp-{Guid.NewGuid():N}.yaml");
-        try
-        {
-            await File.WriteAllTextAsync(tmp, text, Encoding.ASCII, ct);
-
-            var psi = new ProcessStartInfo(_opengrepBinary!)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            psi.ArgumentList.Add("validate");
-            psi.ArgumentList.Add(tmp);
-
-            using var proc = Process.Start(psi)!;
-            Task<string> stdoutTask = Task.FromResult("");
-            Task<string> stderrTask = Task.FromResult("");
-            try
-            {
-                // Read stdout and stderr concurrently to avoid deadlock when
-                // the child fills one pipe while we're blocked reading the other.
-                // Pass ct so that if validation is cancelled, reads are interrupted
-                // and we can kill the process even if it hangs.
-                stdoutTask = proc.StandardOutput.ReadToEndAsync(ct);
-                stderrTask = proc.StandardError.ReadToEndAsync(ct);
-                await Task.WhenAll(stdoutTask, stderrTask);
-                await proc.WaitForExitAsync(ct);
-
-                var stdout = stdoutTask.Result;
-                var stderr = stderrTask.Result;
-                var combined = (stdout.Length > 0 && stderr.Length > 0 && !stdout.EndsWith('\n'))
-                    ? stdout + '\n' + stderr
-                    : stdout + stderr;
-                if (proc.ExitCode == 0) return [];
-
-                // Strip ANSI codes and replace the temp path (an implementation detail)
-                // with a stable placeholder before parsing, so messages shown to users
-                // don't contain ephemeral /tmp/dolphin-lsp-* paths.
-                combined = StripAnsi(combined).Replace(tmp, fileName);
-                return LspDiagnosticsParser.Parse(combined);
-            }
-            catch (OperationCanceledException)
-            {
-                // Kill the process so it doesn't linger after a superseded validation.
-                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
-
-                // Observe any exceptions from the reads. If one read threw the cancellation,
-                // the other might still be in-flight; awaiting them ensures both are properly observed.
-                try { await Task.WhenAll(stdoutTask, stderrTask); }
-                catch { /* suppressed: reads failed due to process being killed */ }
-
-                // Reap the child to avoid zombie processes on Unix.
-                try
-                {
-                    using var reaperCts = new CancellationTokenSource(TimeSpan.FromSeconds(ProcessReaperTimeoutSeconds));
-                    await proc.WaitForExitAsync(reaperCts.Token);
-                }
-                catch { /* best-effort */ }
-                return [];
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            return []; // validation was superseded — caller ignores the result
-        }
-        finally
-        {
-            try { File.Delete(tmp); } catch (Exception) { /* best-effort cleanup */ }
-        }
+        return Task.FromResult(YamlRuleValidator.Validate(text));
     }
 
     // ── Wire protocol helpers ─────────────────────────────────────────────────

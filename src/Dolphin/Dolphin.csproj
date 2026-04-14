@@ -98,8 +98,10 @@
     The cache files are named with the commit hash — changing SemgrepInterfacesCommit
     automatically invalidates the old cache and triggers a fresh download.
 
-    Requires python3 (Linux/macOS) or python (Windows) with PyYAML.  PyYAML is installed
-    automatically via pip when the cache is missing.
+    Requires python3 (Linux/macOS) or python (Windows) with PyYAML.  The conventional
+    name differs by OS: GitHub-hosted runners expose "python3" on Linux/macOS and "python"
+    on Windows.  PyYAML is installed automatically via pip (pinned version) when the cache
+    is missing; it is otherwise a no-op.
 
     rule_schema_v1.yaml is sourced from https://github.com/returntocorp/semgrep-interfaces,
     licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).
@@ -141,7 +143,7 @@
       Lines="@(_SchemaScriptLine)" />
     <!--   Step 2: ensure PyYAML is available (idempotent; fast when already installed) -->
     <Exec Condition="!Exists('$(_SchemaJsonPath)')"
-          Command="$(_PythonCmd) -m pip install --quiet --disable-pip-version-check pyyaml" />
+          Command="$(_PythonCmd) -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2" />
     <!--   Step 3: run the helper script to produce the JSON cache file -->
     <Exec Condition="!Exists('$(_SchemaJsonPath)')"
           Command="$(_PythonCmd) &quot;$(_SchemaPyScript)&quot; &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaJsonPath)&quot;" />

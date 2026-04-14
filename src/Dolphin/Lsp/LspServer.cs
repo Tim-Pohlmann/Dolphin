@@ -508,7 +508,8 @@ public static partial class LspServer
                 catch (InvalidOperationException ex)
                 {
                     _lastScannerFailure = new ScannerFailure(ex.Message, DateTime.UtcNow);
-                    await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
+                    if (!ct.IsCancellationRequested)
+                        await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
                 }
             }
         }

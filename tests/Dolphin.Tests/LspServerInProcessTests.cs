@@ -587,12 +587,17 @@ public partial class LspServerInProcessTests
     /// <summary>
     /// Polls <paramref name="condition"/> every 10 ms until it returns <c>true</c>
     /// or <paramref name="timeout"/> elapses (default: 5 seconds).
+    /// Fails the test if the timeout expires before the condition becomes true.
     /// </summary>
     private static async Task WaitForConditionAsync(Func<bool> condition, TimeSpan? timeout = null)
     {
-        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(5));
+        var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(5);
+        var deadline = DateTime.UtcNow + effectiveTimeout;
         while (!condition() && DateTime.UtcNow < deadline)
             await Task.Delay(10);
+
+        if (!condition())
+            Assert.Fail($"Condition was not met within {effectiveTimeout}.");
     }
 
     /// <summary>
@@ -652,12 +657,18 @@ public partial class LspServerInProcessTests
         try
         {
             const string uri = "file:///project/.dolphin/rules.yaml";
-            // Wait deterministically for the first validation to cache the failure before
-            // sending shutdown, so the publishDiagnostics notification always arrives.
-            var responses = await RunServerWithConditionAsync(
-                () => LspServer.LastScannerFailureForTesting != null,
-                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
-                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+            // Wait until the failure is cached (resolver has run), then add a short extra
+            // delay so PublishDiagnosticsAsync can complete before shutdown EOF cancels it.
+            var responses = await RunServerCoreAsync(
+                [
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                    """{"jsonrpc":"2.0","id":1,"method":"shutdown"}"""
+                ],
+                async () =>
+                {
+                    await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting != null);
+                    await Task.Delay(50); // allow PublishDiagnosticsAsync to complete
+                });
 
             var publish = responses.FirstOrDefault(r =>
                 r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&

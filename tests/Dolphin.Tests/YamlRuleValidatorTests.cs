@@ -256,7 +256,21 @@ public class YamlRuleValidatorTests
         Assert.AreEqual(4, sevDiag!.Range.Start.Line);
     }
 
-    // ── Severity in diagnostics ───────────────────────────────────────────────
+    // ── Comment stripping edge cases ──────────────────────────────────────────
+
+    [TestMethod]
+    public void MessageWithHashSign_IsNotTreatedAsComment()
+    {
+        // "message: Issue #123" — the '#' is inside a value, not a YAML comment.
+        AssertNoErrors("""
+            rules:
+              - id: hash-in-message
+                message: "Issue #123 must be fixed"
+                languages: [python]
+                severity: WARNING
+                pattern: bad()
+            """);
+    }
 
     [TestMethod]
     public void AllDiagnostics_HaveSeverity1()

@@ -159,10 +159,18 @@ internal static class YamlRuleValidator
 
         foreach (var (lineIndex, content) in rule.Lines)
         {
-            // Strip inline comment (crude but sufficient for key detection).
+            // Strip inline YAML comments: '#' is a comment only when preceded by whitespace
+            // (or at the start of the line). This avoids incorrectly stripping '#' that
+            // appears inside a quoted string value such as `message: "Issue #123"`.
             var effective = content;
-            int hashPos = content.IndexOf('#');
-            if (hashPos >= 0) effective = content[..hashPos];
+            for (int ci = 0; ci < content.Length; ci++)
+            {
+                if (content[ci] == '#' && (ci == 0 || content[ci - 1] == ' ' || content[ci - 1] == '\t'))
+                {
+                    effective = content[..ci];
+                    break;
+                }
+            }
 
             var trimmed = effective.TrimEnd();
 
@@ -177,26 +185,18 @@ internal static class YamlRuleValidator
             if (TryGetSimpleValue(trimmed, "message", out _))
                 hasMessage = true;
 
-            // languages: […] — inline flow sequence
-            if (trimmed.Contains("languages:"))
+            // languages: […] — inline flow sequence or block sequence start
+            if (TryGetSimpleValue(trimmed, "languages", out var langsValue))
             {
                 languagesLine = lineIndex;
-                // Try to detect an empty sequence "languages: []" or "languages:"
-                // Non-empty: value contains something after the colon other than [] or whitespace.
-                var afterColon = trimmed[(trimmed.IndexOf("languages:", StringComparison.Ordinal) + "languages:".Length)..].Trim();
+                // Non-empty inline list: value is something other than [] or whitespace.
+                var afterColon = (langsValue ?? string.Empty).Trim();
                 if (afterColon.Length > 0 && afterColon != "[]")
                     hasLanguages = true;
                 // If afterColon is empty the languages may be on following lines (block seq).
                 // Treat that as having languages; improper handling would cause false positives.
                 if (afterColon.Length == 0)
                     hasLanguages = true; // block sequence — assume non-empty
-            }
-            // languages as block sequence item "    - typescript"
-            // (These live deeper than the languages: key itself; just note their presence.)
-            if (languagesLine.HasValue && lineIndex > languagesLine.Value)
-            {
-                // If it's a deeper indented "- value" line, that belongs to languages.
-                // We already set hasLanguages = true for block sequence.
             }
 
             // severity: …

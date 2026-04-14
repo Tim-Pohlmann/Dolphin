@@ -32,8 +32,17 @@ public static partial class LspServer
     // EnsureInstalledAsync calls and multiple stderr log lines from racing validations.
     private static readonly SemaphoreSlim _resolutionLock = new(1, 1);
 
-    // Test seam: pre-populate failure state so cooldown tests can control elapsed time.
-    internal static ScannerFailure? LastFailureForTesting { get; set; }
+    // Cached failure message from the first scanner resolution failure in this LSP session
+    // to avoid repeated retries and log spam (non-null = resolution previously failed this session).
+    private static ScannerFailure? _lastScannerFailure;
+
+    // Test seam: allows tests to read/write the live failure cache so cooldown scenarios
+    // can control elapsed time without waiting for the real cooldown to expire.
+    internal static ScannerFailure? LastScannerFailureForTesting
+    {
+        get => _lastScannerFailure;
+        set => _lastScannerFailure = value;
+    }
 
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
@@ -72,7 +81,7 @@ public static partial class LspServer
 
         // Reset per-session state so a restart picks up a newly installed binary.
         _opengrepBinary = null;
-        LastFailureForTesting = null;
+        _lastScannerFailure = null;
 
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await GetResolver()(); }
@@ -478,23 +487,23 @@ public static partial class LspServer
             return true;
 
         // Acquire the resolution lock so that concurrent validations don't race on
-        // the shared fields (_opengrepBinary, LastFailureForTesting)
+        // the shared fields (_opengrepBinary, _lastScannerFailure)
         // and don't trigger multiple simultaneous EnsureInstalledAsync calls or log lines.
         await _resolutionLock.WaitAsync(ct);
         try
         {
             // Double-check after acquiring: another task may have resolved it.
             // Retry if we've never tried, or if the cooldown has elapsed since the last failure.
-            if (_opengrepBinary is null && (LastFailureForTesting is null || DateTime.UtcNow - LastFailureForTesting.Since >= ScannerRetryCooldown))
+            if (_opengrepBinary is null && (_lastScannerFailure is null || DateTime.UtcNow - _lastScannerFailure.Since >= ScannerRetryCooldown))
             {
                 try
                 {
                     _opengrepBinary = await GetResolver()();
-                    LastFailureForTesting = null; // clear on success
+                    _lastScannerFailure = null; // clear on success
                 }
                 catch (InvalidOperationException ex)
                 {
-                    LastFailureForTesting = new ScannerFailure(ex.Message, DateTime.UtcNow);
+                    _lastScannerFailure = new ScannerFailure(ex.Message, DateTime.UtcNow);
                     await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
                 }
             }
@@ -504,7 +513,7 @@ public static partial class LspServer
             _resolutionLock.Release();
         }
 
-        if (LastFailureForTesting is not null)
+        if (_lastScannerFailure is not null)
         {
             if (!ct.IsCancellationRequested)
             {
@@ -515,7 +524,7 @@ public static partial class LspServer
                         Range: new LspRange(pos, pos),
                         Severity: 1,
                         Source: "dolphin",
-                        Message: LastFailureForTesting.Message,
+                        Message: _lastScannerFailure.Message,
                         Pending: false)], ct);
                 }
                 catch (OperationCanceledException)

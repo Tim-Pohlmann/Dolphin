@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Dolphin;
 using Dolphin.Lsp;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -580,15 +581,15 @@ public partial class LspServerInProcessTests
 
     // ── Scanner-missing diagnostic paths ────────────────────────────────────
 
+    /// <summary>Encodes a single JSON-RPC message as an LSP-framed byte array.</summary>
+    private static byte[] FrameMessage(string json) => BuildInput(json);
+
     /// <summary>
     /// Feeds LSP messages one at a time via a pipe, with a delay between each,
     /// so fire-and-forget validation tasks can complete before the next message
     /// is processed by the server.  Unlike a pre-built MemoryStream, the pipe
     /// prevents LspReader from buffering all messages in a single ReadAsync call.
     /// </summary>
-    /// <summary>Encodes a single JSON-RPC message as an LSP-framed byte array.</summary>
-    private static byte[] FrameMessage(string json) => BuildInput(json);
-
     private static async Task<List<JsonObject>> RunServerWithDelayAsync(
         TimeSpan delay, params string[] messages)
     {
@@ -683,34 +684,73 @@ public partial class LspServerInProcessTests
     [TestMethod]
     public async Task ScannerMissing_ThenRecovered_ClearsCachedFailure()
     {
-        // Pre-seed a stale failure (cooldown already elapsed) so the first lazy retry will
-        // attempt resolution. The override now succeeds, clearing _lastFailure so no
-        // scanner-missing diagnostic is published.
-        LspServer.LastFailureForTesting = new LspServer.ScannerFailure(
-            "Scanner not found.", DateTime.UtcNow - TimeSpan.FromMinutes(5));
-        LspServer.BinaryResolverOverride = () => Task.FromResult("fake-binary");
+        // Simulate a two-phase scenario:
+        //   Phase 1 (didOpen):   resolver fails → failure is cached with DateTime.UtcNow
+        //   Between phases:      manually back-date the cached failure so the cooldown appears elapsed
+        //   Phase 2 (didChange): resolver succeeds → stale failure triggers a retry → cache is cleared
+        //
+        // The resolver is called once by RunAsync (early resolution, fails silently) and once per
+        // lazy retry inside TryResolveScannerAsync.  We count calls to control behavior:
+        //   call 1 (early resolution): fail silently  → _opengrepBinary stays null
+        //   call 2 (first lazy retry): fail and cache → diagnostic published
+        //   call 3+ (stale retry):     succeed         → cache cleared, no more diagnostics
+        int callCount = 0;
+        LspServer.BinaryResolverOverride = () =>
+        {
+            if (Interlocked.Increment(ref callCount) <= 2)
+                throw new InvalidOperationException("Scanner not found.");
+            return Task.FromResult("fake-binary");
+        };
         try
         {
             const string uri = "file:///project/.dolphin/rules.yaml";
-            var responses = await RunServerWithDelayAsync(
-                TimeSpan.FromMilliseconds(200),
-                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
-                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+            var pipe = new System.IO.Pipelines.Pipe();
+            var output = new MemoryStream();
+            var serverTask = LspServer.RunAsync(pipe.Reader.AsStream(), output);
+
+            // Phase 1: send didOpen → first validation → resolver fails → failure cached
+            var openFrame = FrameMessage(
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}");
+            await pipe.Writer.WriteAsync(openFrame);
+            await pipe.Writer.FlushAsync();
+
+            // Wait for the first validation to complete so the failure is in the cache
+            await Task.Delay(300);
+
+            // Back-date the cached failure so the cooldown appears already elapsed
+            var failure = LspServer.LastScannerFailureForTesting;
+            Assert.IsNotNull(failure, "A scanner-missing failure should have been cached after didOpen");
+            LspServer.LastScannerFailureForTesting = failure with { Since = DateTime.UtcNow - TimeSpan.FromMinutes(5) };
+
+            // Phase 2: send didChange → stale failure → retry → succeeds → cache cleared
+            var changeFrame = FrameMessage(
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}");
+            await pipe.Writer.WriteAsync(changeFrame);
+            await pipe.Writer.FlushAsync();
+
+            // Wait for the second validation to complete
+            await Task.Delay(300);
+
+            // After successful recovery, the failure cache must be cleared
+            Assert.IsNull(LspServer.LastScannerFailureForTesting,
+                "Cached failure should be cleared after the resolver succeeds");
+
+            // Shutdown
+            var shutdownFrame = FrameMessage("""{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+            await pipe.Writer.WriteAsync(shutdownFrame);
+            await pipe.Writer.FlushAsync();
+            pipe.Writer.Complete();
+
+            await serverTask;
+            var responses = ParseOutput(output.ToArray());
 
             var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
             Assert.IsNotNull(shutdown, "Shutdown response must arrive");
-
-            // After recovery the cached failure must be cleared: no scanner-missing diagnostic.
-            var errorDiag = responses.FirstOrDefault(r =>
-                r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&
-                r["params"]?["diagnostics"]?.AsArray()
-                    .Any(d => d?["source"]?.GetValue<string>() == "dolphin") == true);
-            Assert.IsNull(errorDiag, "No scanner-missing diagnostic should appear after successful recovery");
         }
         finally
         {
             LspServer.BinaryResolverOverride = null;
-            LspServer.LastFailureForTesting = null;
+            LspServer.LastScannerFailureForTesting = null;
         }
     }
 

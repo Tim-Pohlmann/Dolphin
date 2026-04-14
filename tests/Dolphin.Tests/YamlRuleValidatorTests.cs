@@ -289,4 +289,64 @@ public class YamlRuleValidatorTests
         foreach (var d in diags)
             Assert.AreEqual(1, d.Severity);
     }
+
+    // ── YAML syntax errors ────────────────────────────────────────────────────
+
+    [TestMethod]
+    public void YamlSyntaxError_ReturnsSyntaxErrorDiagnostic()
+    {
+        // A tab character in YAML indentation is a syntax error.
+        AssertHasError("rules:\n\t- id: foo", "YAML syntax error");
+    }
+
+    [TestMethod]
+    public void YamlSyntaxError_DiagnosticHasSourceDolphin()
+    {
+        var diags = Validate("rules:\n\t- id: foo");
+        Assert.IsTrue(diags.Length > 0);
+        Assert.AreEqual("dolphin", diags[0].Source);
+    }
+
+    // ── Scalar type coercion ──────────────────────────────────────────────────
+
+    [TestMethod]
+    public void IntegerScalarId_ReturnsDiagnostic()
+    {
+        // Unquoted "123" is parsed as a long integer by ConvertScalar,
+        // which fails the schema's string type requirement for "id".
+        AssertHasError("""
+            rules:
+              - id: 123
+                message: test
+                languages: [python]
+                severity: ERROR
+                pattern: x = 1
+            """, "integer");
+    }
+
+    [TestMethod]
+    public void FloatScalarSeverity_ReturnsDiagnostic()
+    {
+        // Unquoted "3.14" is parsed as a double by ConvertScalar,
+        // which fails the schema's enum requirement for "severity".
+        AssertHasError("""
+            rules:
+              - id: float-sev
+                message: test
+                languages: [python]
+                severity: 3.14
+                pattern: x = 1
+            """, "severity");
+    }
+
+    // ── Type mismatch (exercises FormatKeywordError default case) ─────────────
+
+    [TestMethod]
+    public void RulesIsScalarNotList_ReturnsDiagnostic()
+    {
+        // "rules: scalar" — YAML is syntactically valid but schema expects an array.
+        // The schema emits a "type" keyword error which hits the default case in
+        // FormatKeywordError.
+        AssertHasError("rules: not-a-list", "array");
+    }
 }

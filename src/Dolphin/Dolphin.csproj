@@ -90,7 +90,8 @@
     <Message Text="Opengrep bundled → $(PublishDir)$(_PublishedBinName)" Importance="High" />
   </Target>
   <!--
-    FetchSemgrepSchema: downloads rule_schema_v1.yaml from the pinned semgrep-interfaces    commit, converts it from YAML to JSON (overriding the $schema draft URI to match the
+    FetchSemgrepSchema: downloads rule_schema_v1.yaml from the pinned semgrep-interfaces
+    commit, converts it from YAML to JSON (overriding the $schema draft URI to match the
     draft 2019-09 that JsonSchema.Net expects), and caches the result in obj/ so it is
     available as an EmbeddedResource at compile time.
 

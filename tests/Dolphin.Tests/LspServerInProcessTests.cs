@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Dolphin;
 using Dolphin.Lsp;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -696,7 +697,7 @@ public partial class LspServerInProcessTests
         int callCount = 0;
         LspServer.BinaryResolverOverride = () =>
         {
-            if (System.Threading.Interlocked.Increment(ref callCount) <= 2)
+            if (Interlocked.Increment(ref callCount) <= 2)
                 throw new InvalidOperationException("Scanner not found.");
             return Task.FromResult("fake-binary");
         };

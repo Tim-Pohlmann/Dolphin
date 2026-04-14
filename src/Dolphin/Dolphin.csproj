@@ -90,18 +90,17 @@
     <Message Text="Opengrep bundled → $(PublishDir)$(_PublishedBinName)" Importance="High" />
   </Target>
   <!--
-    FetchSemgrepSchema: downloads rule_schema_v1.yaml from the pinned semgrep-interfaces
-    commit, converts it from YAML to JSON (overriding the $schema draft URI to match the
+    FetchSemgrepSchema: downloads rule_schema_v1.yaml from the pinned semgrep-interfaces    commit, converts it from YAML to JSON (overriding the $schema draft URI to match the
     draft 2019-09 that JsonSchema.Net expects), and caches the result in obj/ so it is
     available as an EmbeddedResource at compile time.
 
     The cache files are named with the commit hash — changing SemgrepInterfacesCommit
     automatically invalidates the old cache and triggers a fresh download.
 
-    Requires python3 (Linux/macOS) or python (Windows) with PyYAML.  The conventional
-    name differs by OS: GitHub-hosted runners expose "python3" on Linux/macOS and "python"
-    on Windows.  PyYAML is installed automatically via pip (pinned version) when the cache
-    is missing; it is otherwise a no-op.
+    Requires python3 (Linux/macOS) or python (Windows).  PyYAML is installed automatically
+    into an isolated venv inside obj/ (pinned version) when the cache is missing.  Using a
+    venv avoids the PEP 668 "externally-managed-environment" error on macOS Homebrew Python
+    and other systems that protect the system Python from direct pip installs.
 
     rule_schema_v1.yaml is sourced from https://github.com/returntocorp/semgrep-interfaces,
     licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).
@@ -111,6 +110,9 @@
     <PropertyGroup>
       <_PythonCmd Condition="'$(OS)'=='Windows_NT'">python</_PythonCmd>
       <_PythonCmd Condition="'$(OS)'!='Windows_NT'">python3</_PythonCmd>
+      <_VenvPath>$(IntermediateOutputPath)py-venv</_VenvPath>
+      <_VenvPython Condition="'$(OS)'=='Windows_NT'">$(_VenvPath)\Scripts\python</_VenvPython>
+      <_VenvPython Condition="'$(OS)'!='Windows_NT'">$(_VenvPath)/bin/python</_VenvPython>
       <_SchemaYamlUrl>https://raw.githubusercontent.com/returntocorp/semgrep-interfaces/$(SemgrepInterfacesCommit)/rule_schema_v1.yaml</_SchemaYamlUrl>
       <_SchemaYamlCache>$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).yaml</_SchemaYamlCache>
       <_SchemaJsonPath>$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).json</_SchemaJsonPath>
@@ -141,12 +143,14 @@
       File="$(_SchemaPyScript)"
       Overwrite="true"
       Lines="@(_SchemaScriptLine)" />
-    <!--   Step 2: ensure PyYAML is available (idempotent; fast when already installed) -->
+    <!--   Step 2: create an isolated venv and install PyYAML into it -->
     <Exec Condition="!Exists('$(_SchemaJsonPath)')"
-          Command="$(_PythonCmd) -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2" />
+          Command="$(_PythonCmd) -m venv &quot;$(_VenvPath)&quot;" />
+    <Exec Condition="!Exists('$(_SchemaJsonPath)')"
+          Command="&quot;$(_VenvPython)&quot; -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2" />
     <!--   Step 3: run the helper script to produce the JSON cache file -->
     <Exec Condition="!Exists('$(_SchemaJsonPath)')"
-          Command="$(_PythonCmd) &quot;$(_SchemaPyScript)&quot; &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaJsonPath)&quot;" />
+          Command="&quot;$(_VenvPython)&quot; &quot;$(_SchemaPyScript)&quot; &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaJsonPath)&quot;" />
 
     <Message Text="Semgrep rule schema ready → $(_SchemaJsonPath)" Importance="High" />
   </Target>

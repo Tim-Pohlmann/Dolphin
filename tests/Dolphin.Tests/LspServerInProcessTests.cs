@@ -641,13 +641,6 @@ public partial class LspServerInProcessTests
         Func<bool> readyCondition, params string[] messages)
         => RunServerCoreAsync(messages, () => WaitForConditionAsync(readyCondition));
 
-    /// <summary>
-    /// Feeds LSP messages with a fixed <paramref name="delay"/> between each.
-    /// </summary>
-    private static Task<List<JsonObject>> RunServerWithDelayAsync(
-        TimeSpan delay, params string[] messages)
-        => RunServerCoreAsync(messages, () => Task.Delay(delay));
-
     [TestMethod]
     public async Task ScannerMissing_DidOpen_PublishesErrorDiagnostic()
     {

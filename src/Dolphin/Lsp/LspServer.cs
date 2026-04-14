@@ -44,8 +44,11 @@ public static partial class LspServer
         set => _lastScannerFailure = value;
     }
 
-    // Test seam: true when at least one ValidateAndPublishAsync task is still in flight
-    // (its finally block has not yet run). Tests can poll this to wait for full completion.
+    // Test seam: true when at least one latest-per-URI validation CTS is still tracked.
+    // This reflects _validationCts membership only; entries can also be removed by
+    // CancelAndRemove (didClose) or DrainValidationsAsync without the corresponding
+    // ValidateAndPublishAsync task having completed yet. In tests that do not trigger
+    // those paths, !IsEmpty reliably indicates the task's finally block has not yet run.
     internal static bool HasInFlightValidationsForTesting => !_validationCts.IsEmpty;
 
     // Guards concurrent writes to stdout (validation runs off the message loop).

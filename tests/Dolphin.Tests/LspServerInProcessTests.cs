@@ -657,18 +657,13 @@ public partial class LspServerInProcessTests
         try
         {
             const string uri = "file:///project/.dolphin/rules.yaml";
-            // Wait until the failure is cached (resolver has run), then add a short extra
-            // delay so PublishDiagnosticsAsync can complete before shutdown EOF cancels it.
-            var responses = await RunServerCoreAsync(
-                [
-                    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
-                    """{"jsonrpc":"2.0","id":1,"method":"shutdown"}"""
-                ],
-                async () =>
-                {
-                    await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting != null);
-                    await Task.Delay(50); // allow PublishDiagnosticsAsync to complete
-                });
+            // Wait until the validation has fully completed (failure cached AND task's finally
+            // block ran, meaning PublishDiagnosticsAsync has already finished writing) before
+            // sending shutdown, so the EOF/DrainValidationsAsync cannot cancel the in-flight publish.
+            var responses = await RunServerWithConditionAsync(
+                () => LspServer.LastScannerFailureForTesting != null && !LspServer.HasInFlightValidationsForTesting,
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
             var publish = responses.FirstOrDefault(r =>
                 r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&

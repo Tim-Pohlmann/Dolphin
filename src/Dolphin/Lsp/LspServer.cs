@@ -44,6 +44,10 @@ public static partial class LspServer
         set => _lastScannerFailure = value;
     }
 
+    // Test seam: true when at least one ValidateAndPublishAsync task is still in flight
+    // (its finally block has not yet run). Tests can poll this to wait for full completion.
+    internal static bool HasInFlightValidationsForTesting => !_validationCts.IsEmpty;
+
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
 
@@ -479,7 +483,8 @@ public static partial class LspServer
 
     /// <summary>
     /// Ensures the scanner binary is resolved. Returns <c>true</c> if the scanner is available,
-    /// <c>false</c> if unavailable (failure diagnostic has already been published to the client).
+    /// <c>false</c> if unavailable. When validation has not been cancelled, a failure
+    /// diagnostic has already been published to the client before returning <c>false</c>.
     /// </summary>
     private static async Task<bool> TryResolveScannerAsync(Stream stdout, string uri, CancellationToken ct)
     {

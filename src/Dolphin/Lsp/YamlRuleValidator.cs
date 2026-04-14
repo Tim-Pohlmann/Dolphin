@@ -74,17 +74,24 @@ internal static class YamlRuleValidator
         if (result.IsValid) return [];
 
         // ── Map validation errors to LSP diagnostics ──────────────────────────
+        ProcessValidationResults(result, lineMap, diagnostics);
+
+        return [.. diagnostics];
+    }
+
+    private static void ProcessValidationResults(
+        EvaluationResults result,
+        Dictionary<string, int> lineMap,
+        List<LspDiagnostic> diagnostics)
+    {
         var seen = new HashSet<string>(); // deduplicate identical message+line pairs
 
         // Track instance paths where ALL else/oneOf branches fail → missing pattern key.
         // We emit ONE human-friendly message per affected rule instead of one per branch.
         var missingPatternPaths = new HashSet<string>();
 
-        foreach (var detail in result.Details!)
+        foreach (var detail in result.Details!.Where(d => !d.IsValid && d.Errors is not null && d.Errors.Count > 0))
         {
-            if (detail.IsValid || detail.Errors is null || detail.Errors.Count == 0)
-                continue;
-
             var instancePath = detail.InstanceLocation.ToString();
             var evalPath     = detail.EvaluationPath.ToString();
 
@@ -98,17 +105,36 @@ internal static class YamlRuleValidator
             // Suppress noise from if-condition checks and oneOf/anyOf branch alternatives.
             if (ShouldSuppressError(evalPath)) continue;
 
-            var line = lineMap.TryGetValue(instancePath, out var l) ? l : 0;
-            foreach (var (keyword, errorNode) in detail.Errors)
-            {
-                foreach (var msg in FormatKeywordError(keyword, errorNode, instancePath, evalPath))
-                {
-                    if (seen.Add($"{line}:{msg}"))
-                        diagnostics.Add(MakeDiagnostic(line, 0, msg));
-                }
-            }
+            AddDetailDiagnostics(detail, instancePath, lineMap, seen, diagnostics);
         }
 
+        AddMissingPatternDiagnostics(missingPatternPaths, lineMap, seen, diagnostics);
+    }
+
+    private static void AddDetailDiagnostics(
+        EvaluationResults detail,
+        string instancePath,
+        Dictionary<string, int> lineMap,
+        HashSet<string> seen,
+        List<LspDiagnostic> diagnostics)
+    {
+        var line = lineMap.TryGetValue(instancePath, out var l) ? l : 0;
+        foreach (var (keyword, errorNode) in detail.Errors!)
+        {
+            foreach (var msg in FormatKeywordError(keyword, errorNode, instancePath))
+            {
+                if (seen.Add($"{line}:{msg}"))
+                    diagnostics.Add(MakeDiagnostic(line, 0, msg));
+            }
+        }
+    }
+
+    private static void AddMissingPatternDiagnostics(
+        HashSet<string> missingPatternPaths,
+        Dictionary<string, int> lineMap,
+        HashSet<string> seen,
+        List<LspDiagnostic> diagnostics)
+    {
         foreach (var path in missingPatternPaths)
         {
             var line = lineMap.TryGetValue(path, out var l) ? l : 0;
@@ -118,8 +144,6 @@ internal static class YamlRuleValidator
             if (seen.Add($"{line}:{msg}"))
                 diagnostics.Add(MakeDiagnostic(line, 0, msg));
         }
-
-        return [.. diagnostics];
     }
 
     // ── Error suppression ─────────────────────────────────────────────────────
@@ -166,7 +190,7 @@ internal static class YamlRuleValidator
     // ── Error formatting ──────────────────────────────────────────────────────
 
     private static IEnumerable<string> FormatKeywordError(
-        string keyword, JsonNode? errorNode, string instancePath, string evalPath)
+        string keyword, JsonNode? errorNode, string instancePath)
     {
         switch (keyword)
         {
@@ -210,6 +234,9 @@ internal static class YamlRuleValidator
     }
 
     // ── YAML → JsonNode conversion ────────────────────────────────────────────
+
+    // RFC 6901 JSON Pointer segment separator
+    private const char JsonPointerSep = '/';
 
     private static JsonNode? ConvertToJson(YamlNode node, string path, Dictionary<string, int> lineMap)
     {
@@ -269,7 +296,7 @@ internal static class YamlRuleValidator
         foreach (var (keyNode, valueNode) in mapping)
         {
             var key       = ((YamlScalarNode)keyNode).Value ?? string.Empty;
-            var childPath = path + "/" + key;
+            var childPath = path + JsonPointerSep + key;
             obj[key] = ConvertToJson(valueNode, childPath, lineMap);
         }
         return obj;
@@ -282,7 +309,7 @@ internal static class YamlRuleValidator
         var index = 0;
         foreach (var item in seq)
         {
-            var childPath = path + "/" + index++;
+            var childPath = path + JsonPointerSep + index++;
             arr.Add(ConvertToJson(item, childPath, lineMap));
         }
         return arr;

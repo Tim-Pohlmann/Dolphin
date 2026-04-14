@@ -420,7 +420,7 @@ public static partial class LspServer
             var ct = cts.Token;
             try
             {
-                var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
+                var diagnostics = await RunValidateAsync(text, ct);
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
             }
             catch (OperationCanceledException) { /* superseded by a newer edit */ }
@@ -500,7 +500,7 @@ public static partial class LspServer
         return (ch, 1);
     }
 
-    private static Task<LspDiagnostic[]> RunValidateAsync(string text, string fileName, CancellationToken ct)
+    private static Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 

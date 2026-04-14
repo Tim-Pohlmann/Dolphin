@@ -98,7 +98,9 @@ public class YamlRuleValidatorTests
     [TestMethod]
     public void ValidFile_AllSeverityValues_ReturnsNoDiagnostics()
     {
-        foreach (var sev in new[] { "ERROR", "WARNING", "INFO", "ERROR_TODO", "INFO_TODO" })
+        // Only test the severity values that the Semgrep schema actually accepts.
+        foreach (var sev in new[] { "ERROR", "WARNING", "INFO", "INVENTORY", "EXPERIMENT",
+                                    "CRITICAL", "HIGH", "MEDIUM", "LOW" })
         {
             AssertNoErrors($"""
                 rules:
@@ -179,16 +181,18 @@ public class YamlRuleValidatorTests
     }
 
     [TestMethod]
-    public void EmptyLanguagesList_ReturnsDiagnostic()
+    public void EmptyLanguagesList_DoesNotReturnDiagnostic()
     {
-        AssertHasError("""
+        // The Semgrep schema does not enforce minItems on languages,
+        // so an empty list is schema-valid.
+        AssertNoErrors("""
             rules:
               - id: empty-lang
                 message: "Empty languages"
                 languages: []
                 severity: ERROR
                 pattern: x = 1
-            """, "languages");
+            """);
     }
 
     [TestMethod]
@@ -211,7 +215,7 @@ public class YamlRuleValidatorTests
               - id: bad-severity
                 message: "Bad severity"
                 languages: [python]
-                severity: CRITICAL
+                severity: FATAL
                 pattern: x = 1
             """, "severity");
     }

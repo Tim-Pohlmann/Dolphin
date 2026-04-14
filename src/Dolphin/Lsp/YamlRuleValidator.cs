@@ -1,34 +1,33 @@
+using System.Text.Json.Nodes;
+using Json.Schema;
+using YamlDotNet.RepresentationModel;
+
 namespace Dolphin.Lsp;
 
 /// <summary>
-/// Native C# validator for Dolphin/Opengrep YAML rule files.
+/// Validates Dolphin/Opengrep YAML rule files against the official Semgrep JSON Schema.
 ///
-/// Parses the file line-by-line (no NuGet YAML library — project is PublishTrimmed=true)
-/// and returns LSP diagnostics for structural problems without spawning an external process.
+/// Uses YamlDotNet for correct YAML parsing and JsonSchema.Net for schema-based validation,
+/// mapping validation errors back to YAML source line numbers.
 ///
-/// A valid rules file must satisfy:
-///   - Top-level "rules:" key with a sequence of mappings.
-///   - Each rule must have: id, message, languages (non-empty), severity (one of the
-///     recognised values), and at least one pattern key.
+/// The schema is embedded as a resource (<c>semgrep-schema.json</c>) and loaded once via a
+/// lazy initialiser.  YAML is converted to a <c>JsonNode</c> tree while recording
+/// JSON-Pointer → 0-based-line mappings; the tree is then serialised to <c>JsonElement</c>
+/// for <c>JsonSchema.Evaluate</c>.
 /// </summary>
 internal static class YamlRuleValidator
 {
-    // Recognised severity values (case-sensitive, as Opengrep requires).
-    private static readonly HashSet<string> ValidSeverities =
-        ["ERROR", "WARNING", "INFO", "ERROR_TODO", "INFO_TODO"];
+    private static readonly Lazy<JsonSchema> _schema = new(LoadSchema);
 
-    // Pattern keys accepted as the "has a pattern" check.
-    private static readonly HashSet<string> PatternKeys =
-    [
-        "pattern",
-        "patterns",
-        "pattern-either",
-        "pattern-regex",
-        "pattern-inside",
-        "pattern-not-inside",
-        "pattern-not",
-        "r2c-internal-project-depends-on",
-    ];
+    private static JsonSchema LoadSchema()
+    {
+        var assembly = typeof(YamlRuleValidator).Assembly;
+        using var stream = assembly.GetManifestResourceStream("Dolphin.Lsp.semgrep-schema.json")
+            ?? throw new InvalidOperationException(
+                "Embedded resource 'Dolphin.Lsp.semgrep-schema.json' not found.");
+        using var reader = new StreamReader(stream);
+        return JsonSchema.FromText(reader.ReadToEnd());
+    }
 
     /// <summary>
     /// Validates <paramref name="text"/> and returns zero or more <see cref="LspDiagnostic"/>
@@ -37,253 +36,256 @@ internal static class YamlRuleValidator
     public static LspDiagnostic[] Validate(string text)
     {
         var diagnostics = new List<LspDiagnostic>();
-        var lines = SplitLines(text);
 
-        // ── Step 1: must have a top-level "rules:" key ────────────────────────
-        int rulesLineIndex = FindTopLevelRulesKey(lines);
-        if (rulesLineIndex < 0)
+        // ── Parse YAML and build a JSON-pointer → 0-based-line-number map ────
+        YamlNode rootNode;
+        var lineMap = new Dictionary<string, int>(); // JSON pointer path → 0-based line
+
+        try
         {
-            diagnostics.Add(MakeDiagnostic(0, 0, "Missing required top-level 'rules:' key."));
+            var yamlStream = new YamlStream();
+            yamlStream.Load(new StringReader(text));
+
+            if (yamlStream.Documents.Count == 0)
+            {
+                // Empty file — return a single "missing rules" error at line 0
+                diagnostics.Add(MakeDiagnostic(0, 0, "Missing required top-level 'rules:' key."));
+                return [.. diagnostics];
+            }
+
+            rootNode = yamlStream.Documents[0].RootNode;
+        }
+        catch (YamlDotNet.Core.YamlException ex)
+        {
+            var line = (int)Math.Max(0, ex.Start.Line - 1);
+            diagnostics.Add(MakeDiagnostic(line, 0, $"YAML syntax error: {ex.Message}"));
             return [.. diagnostics];
         }
 
-        // ── Step 2: collect each rule block and validate it ───────────────────
-        var rules = CollectRuleBlocks(lines, rulesLineIndex);
-        if (rules.Count == 0)
+        // ── Convert YAML DOM to JsonNode ──────────────────────────────────────
+        var jsonNode = ConvertToJson(rootNode, "", lineMap);
+
+        // ── Validate against the embedded Semgrep schema ──────────────────────
+        var options = new EvaluationOptions { OutputFormat = OutputFormat.List };
+        // JsonSchema.Net 9.x Evaluate takes JsonElement; serialise our JsonNode for it
+        EvaluationResults result;
+        using (var doc = System.Text.Json.JsonDocument.Parse(jsonNode?.ToJsonString() ?? "null"))
+            result = _schema.Value.Evaluate(doc.RootElement, options);
+        if (result.IsValid) return [];
+
+        // ── Map validation errors to LSP diagnostics ──────────────────────────
+        var seen = new HashSet<string>(); // deduplicate identical message+line pairs
+
+        // Track instance paths where ALL else/oneOf branches fail → missing pattern key.
+        // We emit ONE human-friendly message per affected rule instead of one per branch.
+        var missingPatternPaths = new HashSet<string>();
+
+        foreach (var detail in result.Details!)
         {
-            // "rules:" present but sequence is empty — that is technically valid per the
-            // schema, but opengrep validate also accepts it (exit 0).  No diagnostics.
-            return [];
+            if (detail.IsValid || detail.Errors is null || detail.Errors.Count == 0)
+                continue;
+
+            var instancePath = detail.InstanceLocation.ToString();
+            var evalPath     = detail.EvaluationPath.ToString();
+
+            // Collect "else/oneOf/N" branch failures → will emit one missing-pattern message.
+            if (ContainsIndexedSegment(evalPath, "/else/oneOf/"))
+            {
+                missingPatternPaths.Add(instancePath);
+                continue;
+            }
+
+            // Suppress noise from if-condition checks and oneOf/anyOf branch alternatives.
+            if (ShouldSuppressError(evalPath)) continue;
+
+            var line = lineMap.TryGetValue(instancePath, out var l) ? l : 0;
+            foreach (var (keyword, errorNode) in detail.Errors)
+            {
+                foreach (var msg in FormatKeywordError(keyword, errorNode, instancePath, evalPath))
+                {
+                    if (seen.Add($"{line}:{msg}"))
+                        diagnostics.Add(MakeDiagnostic(line, 0, msg));
+                }
+            }
         }
 
-        foreach (var rule in rules)
-            ValidateRule(rule, diagnostics);
+        foreach (var path in missingPatternPaths)
+        {
+            var line = lineMap.TryGetValue(path, out var l) ? l : 0;
+            const string msg = "Rule is missing a required pattern key " +
+                               "(e.g. 'pattern', 'patterns', 'pattern-regex', 'pattern-either').";
+            if (seen.Add($"{line}:{msg}"))
+                diagnostics.Add(MakeDiagnostic(line, 0, msg));
+        }
 
         return [.. diagnostics];
     }
 
-    // ── Line-splitting ────────────────────────────────────────────────────────
+    // ── Error suppression ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// Splits <paramref name="text"/> into lines, stripping the CR/LF terminators.
-    /// Returns 0-based line index alongside each line's content.
+    /// Returns true for errors that are evaluation noise rather than real validation failures.
+    ///
+    /// JsonSchema.Net in List output includes failures from:
+    /// <list type="bullet">
+    ///   <item><c>if</c> condition evaluations (path ends with "/if")</item>
+    ///   <item>Individual <c>anyOf</c> / <c>oneOf</c> branch alternatives that do not match</item>
+    /// </list>
+    /// These should not surface as user-visible LSP diagnostics.
     /// </summary>
-    private static List<(int LineIndex, string Content)> SplitLines(string text)
+    private static bool ShouldSuppressError(string evalPath)
     {
-        var result = new List<(int, string)>();
-        int start = 0;
-        int lineIndex = 0;
-        for (int i = 0; i <= text.Length; i++)
-        {
-            if (i == text.Length || text[i] == '\n' || text[i] == '\r')
-            {
-                result.Add((lineIndex, text[start..i]));
-                lineIndex++;
-                if (i < text.Length && text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n')
-                    i++; // skip LF of CRLF
-                start = i + 1;
-            }
-        }
-        return result;
+        // (a) Skip errors from 'if' condition evaluations.
+        //     In List output the path ends at the '/if' segment itself.
+        if (evalPath.EndsWith("/if", StringComparison.Ordinal)) return true;
+
+        // (b) Skip errors from anyOf/oneOf indexed branch alternatives.
+        //     These represent "this branch doesn't match" — expected during branch selection.
+        if (ContainsIndexedSegment(evalPath, "/anyOf/") ||
+            ContainsIndexedSegment(evalPath, "/oneOf/"))
+            return true;
+
+        return false;
     }
 
-    // ── Top-level "rules:" detection ──────────────────────────────────────────
-
-    private static int FindTopLevelRulesKey(List<(int LineIndex, string Content)> lines)
+    /// <summary>Returns true when <paramref name="path"/> contains <paramref name="segment"/>
+    /// immediately followed by a digit (e.g. "/oneOf/0" or "/else/oneOf/2").</summary>
+    private static bool ContainsIndexedSegment(string path, string segment)
     {
-        foreach (var (lineIndex, content) in lines)
+        int idx = 0;
+        while ((idx = path.IndexOf(segment, idx, StringComparison.Ordinal)) >= 0)
         {
-            var trimmed = content.TrimEnd();
-            if (trimmed == "rules:" || trimmed.StartsWith("rules: ", StringComparison.Ordinal))
-                return lineIndex;
+            int after = idx + segment.Length;
+            if (after < path.Length && char.IsDigit(path[after])) return true;
+            idx = after;
         }
-        return -1;
+        return false;
     }
 
-    // ── Rule block collection ─────────────────────────────────────────────────
+    // ── Error formatting ──────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Collects each rule block (the lines under a "  - id: …" entry under rules:).
-    /// A rule block starts at the "  - " line and ends just before the next "  - " line
-    /// or the end of the file.
-    /// </summary>
-    private static List<RuleBlock> CollectRuleBlocks(
-        List<(int LineIndex, string Content)> lines, int rulesLineIndex)
+    private static IEnumerable<string> FormatKeywordError(
+        string keyword, JsonNode? errorNode, string instancePath, string evalPath)
     {
-        var result = new List<RuleBlock>();
-
-        // Find lines that start a new rule: exactly 2-space indent + "- " at the top level.
-        // We look for the pattern /^  - / after the "rules:" line.
-        RuleBlock? current = null;
-
-        foreach (var (lineIndex, content) in lines)
+        switch (keyword)
         {
-            if (lineIndex <= rulesLineIndex) continue;
-
-            // Detect a new rule entry: starts with "  - " (2 spaces then "- ") or is "  -\n".
-            if (content.Length >= 4 && content[0] == ' ' && content[1] == ' '
-                && content[2] == '-' && (content[3] == ' ' || content[3] == '\t'))
+            case "required":
             {
-                if (current is not null) result.Add(current);
-                current = new RuleBlock(lineIndex);
-                current.Lines.Add((lineIndex, content));
-                continue;
+                // Error node is a string like "Required properties ["id"] are not present"
+                var raw = errorNode?.ToString();
+                if (!string.IsNullOrEmpty(raw))
+                    yield return raw;
+                break;
             }
 
-            // A line at column 0 that is not empty and not a comment terminates the rules block.
-            if (content.Length > 0 && content[0] != ' ' && content[0] != '\t' && content[0] != '#')
+            case "enum":
+            {
+                // Include the field name since the raw schema message doesn't mention it
+                var field = LastSegment(instancePath);
+                yield return $"Invalid value for '{field}'. See allowed values in the Semgrep rule schema.";
+                break;
+            }
+
+            // All combinator / meta keywords are filtered before we get here, but
+            // list them defensively so they don't fall into the default case.
+            case "if":
+            case "then":
+            case "else":
+            case "allOf":
+            case "anyOf":
+            case "oneOf":
+            case "not":
                 break;
 
-            current?.Lines.Add((lineIndex, content));
+            default:
+                // Emit unknown keyword errors only when the error is a plain string
+                var str = errorNode?.GetValueKind() == System.Text.Json.JsonValueKind.String
+                    ? errorNode.GetValue<string>()
+                    : null;
+                if (!string.IsNullOrEmpty(str))
+                    yield return str;
+                break;
         }
-
-        if (current is not null) result.Add(current);
-        return result;
     }
 
-    // ── Per-rule validation ───────────────────────────────────────────────────
+    // ── YAML → JsonNode conversion ────────────────────────────────────────────
 
-    private static void ValidateRule(RuleBlock rule, List<LspDiagnostic> diagnostics)
+    private static JsonNode? ConvertToJson(YamlNode node, string path, Dictionary<string, int> lineMap)
     {
-        bool hasId        = false;
-        bool hasMessage   = false;
-        bool hasLanguages = false;
-        bool hasSeverity  = false;
-        bool hasPattern   = false;
+        // YamlDotNet uses 1-based line numbers (long in v17); convert to 0-based int for LSP
+        lineMap[path] = (int)Math.Max(0, node.Start.Line - 1);
 
-        int  idLine        = rule.StartLine;
-        int? languagesLine = null;
-        int? severityLine  = null;
-
-        string? severityValue = null;
-
-        foreach (var (lineIndex, content) in rule.Lines)
+        return node switch
         {
-            // Strip inline YAML comments: '#' is a comment only when preceded by whitespace
-            // (or at the start of the line). This avoids incorrectly stripping '#' that
-            // appears inside a quoted string value such as `message: "Issue #123"`.
-            var effective = content;
-            for (int ci = 0; ci < content.Length; ci++)
-            {
-                if (content[ci] == '#' && (ci == 0 || content[ci - 1] == ' ' || content[ci - 1] == '\t'))
-                {
-                    effective = content[..ci];
-                    break;
-                }
-            }
+            YamlScalarNode scalar   => ConvertScalar(scalar),
+            YamlMappingNode mapping => ConvertMapping(mapping, path, lineMap),
+            YamlSequenceNode seq    => ConvertSequence(seq, path, lineMap),
+            _                       => null
+        };
+    }
 
-            var trimmed = effective.TrimEnd();
+    private static JsonValue? ConvertScalar(YamlScalarNode scalar)
+    {
+        var value = scalar.Value;
+        if (value is null) return null;
 
-            // id: …
-            if (TryGetSimpleValue(trimmed, "id", out _))
-            {
-                hasId = true;
-                idLine = lineIndex;
-            }
+        // Preserve quoted strings as-is (don't coerce "true", integers, etc.)
+        if (scalar.Style is YamlDotNet.Core.ScalarStyle.SingleQuoted
+                         or YamlDotNet.Core.ScalarStyle.DoubleQuoted
+                         or YamlDotNet.Core.ScalarStyle.Literal
+                         or YamlDotNet.Core.ScalarStyle.Folded)
+            return JsonValue.Create(value);
 
-            // message: …
-            if (TryGetSimpleValue(trimmed, "message", out _))
-                hasMessage = true;
+        // Unquoted scalars: apply YAML 1.1 type coercion rules
+        if (value is "true"  or "True"  or "TRUE")  return JsonValue.Create(true);
+        if (value is "false" or "False" or "FALSE") return JsonValue.Create(false);
+        if (value is "null"  or "Null"  or "NULL"  or "~") return null;
 
-            // languages: […] — inline flow sequence or block sequence start
-            if (TryGetSimpleValue(trimmed, "languages", out var langsValue))
-            {
-                languagesLine = lineIndex;
-                // Non-empty inline list: value is something other than [] or whitespace.
-                var afterColon = (langsValue ?? string.Empty).Trim();
-                if (afterColon.Length > 0 && afterColon != "[]")
-                    hasLanguages = true;
-                // If afterColon is empty the languages may be on following lines (block seq).
-                // Treat that as having languages; improper handling would cause false positives.
-                if (afterColon.Length == 0)
-                    hasLanguages = true; // block sequence — assume non-empty
-            }
+        if (long.TryParse(value,
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var l))
+            return JsonValue.Create(l);
 
-            // severity: …
-            if (TryGetSimpleValue(trimmed, "severity", out var sev))
-            {
-                severityLine = lineIndex;
-                severityValue = sev?.Trim();
-                hasSeverity = !string.IsNullOrWhiteSpace(severityValue);
-            }
+        if (double.TryParse(value,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var d))
+            return JsonValue.Create(d);
 
-            // pattern keys
-            foreach (var key in PatternKeys)
-            {
-                if (trimmed.TrimStart().StartsWith(key + ":", StringComparison.Ordinal) ||
-                    trimmed.TrimStart().StartsWith(key + " ", StringComparison.Ordinal))
-                {
-                    hasPattern = true;
-                    break;
-                }
-            }
-        }
+        return JsonValue.Create(value);
+    }
 
-        // ── Emit diagnostics for missing / invalid fields ─────────────────────
-
-        if (!hasId)
-            diagnostics.Add(MakeDiagnostic(rule.StartLine, 0, "Rule is missing required field 'id'."));
-
-        if (!hasMessage)
-            diagnostics.Add(MakeDiagnostic(idLine, 0, $"Rule '{GetRuleId(rule)}' is missing required field 'message'."));
-
-        if (!hasLanguages)
-            diagnostics.Add(MakeDiagnostic(languagesLine ?? idLine, 0,
-                $"Rule '{GetRuleId(rule)}' is missing required field 'languages' (must be a non-empty list)."));
-
-        if (!hasSeverity)
+    private static JsonObject ConvertMapping(
+        YamlMappingNode mapping, string path, Dictionary<string, int> lineMap)
+    {
+        var obj = new JsonObject();
+        foreach (var (keyNode, valueNode) in mapping)
         {
-            diagnostics.Add(MakeDiagnostic(severityLine ?? idLine, 0,
-                $"Rule '{GetRuleId(rule)}' is missing required field 'severity'."));
+            var key       = ((YamlScalarNode)keyNode).Value ?? string.Empty;
+            var childPath = path + "/" + key;
+            obj[key] = ConvertToJson(valueNode, childPath, lineMap);
         }
-        else if (!ValidSeverities.Contains(severityValue!))
-        {
-            diagnostics.Add(MakeDiagnostic(severityLine!.Value, 0,
-                $"Rule '{GetRuleId(rule)}' has invalid severity '{severityValue}'. " +
-                $"Expected one of: {string.Join(", ", ValidSeverities)}."));
-        }
+        return obj;
+    }
 
-        if (!hasPattern)
-            diagnostics.Add(MakeDiagnostic(idLine, 0,
-                $"Rule '{GetRuleId(rule)}' is missing a pattern key (e.g. 'pattern', 'patterns', 'pattern-regex', …)."));
+    private static JsonArray ConvertSequence(
+        YamlSequenceNode seq, string path, Dictionary<string, int> lineMap)
+    {
+        var arr   = new JsonArray();
+        var index = 0;
+        foreach (var item in seq)
+        {
+            var childPath = path + "/" + index++;
+            arr.Add(ConvertToJson(item, childPath, lineMap));
+        }
+        return arr;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Tries to extract the scalar value after <c>key:</c> from a trimmed YAML line.
-    /// For example <c>"    severity: ERROR"</c> → key="severity", value="ERROR".
-    /// Also handles lines that start with a YAML list item prefix, e.g.
-    /// <c>"  - id: foo"</c> → key="id", value="foo".
-    /// Returns false if the key is not present.
-    /// </summary>
-    private static bool TryGetSimpleValue(string trimmedLine, string key, out string? value)
+    private static string LastSegment(string jsonPointerPath)
     {
-        // Strip leading whitespace, then also strip a YAML list-item prefix ("- ")
-        // so that "  - id: foo" is treated the same as "    id: foo".
-        var stripped = trimmedLine.TrimStart();
-        if (stripped.StartsWith("- ", StringComparison.Ordinal))
-            stripped = stripped[2..];
-        else if (stripped == "-")
-            stripped = string.Empty;
-
-        if (stripped.StartsWith(key + ":", StringComparison.Ordinal))
-        {
-            value = stripped[(key.Length + 1)..].Trim(' ', '"', '\'');
-            return true;
-        }
-        value = null;
-        return false;
-    }
-
-    private static string GetRuleId(RuleBlock rule)
-    {
-        foreach (var (_, content) in rule.Lines)
-        {
-            if (TryGetSimpleValue(content.TrimEnd(), "id", out var id) && id is not null)
-                return id;
-        }
-        return "<unknown>";
+        var idx = jsonPointerPath.LastIndexOf('/');
+        return idx >= 0 ? jsonPointerPath[(idx + 1)..] : jsonPointerPath;
     }
 
     private static LspDiagnostic MakeDiagnostic(int line, int col, string message)
@@ -295,13 +297,5 @@ internal static class YamlRuleValidator
             Source: "dolphin",
             Message: message,
             Pending: false);
-    }
-
-    // ── Inner types ───────────────────────────────────────────────────────────
-
-    private sealed class RuleBlock(int startLine)
-    {
-        public int StartLine { get; } = startLine;
-        public List<(int LineIndex, string Content)> Lines { get; } = [];
     }
 }

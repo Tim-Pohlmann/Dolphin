@@ -8,6 +8,9 @@
     <AssemblyName>dolphin</AssemblyName>
     <RootNamespace>Dolphin</RootNamespace>
     <OpengrepVersion>v1.16.4</OpengrepVersion>
+    <!-- Pinned commit in returntocorp/semgrep-interfaces for rule_schema_v1.yaml.
+         Update this SHA to pull in a newer version of the schema. -->
+    <SemgrepInterfacesCommit>656d6518e822a088c6e1907abf7c3acc61095103</SemgrepInterfacesCommit>
     <!-- Self-contained trimmed publish settings -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -24,7 +27,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Lsp\semgrep-schema.json" />
+    <EmbeddedResource Include="$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).json"
+                      LogicalName="Dolphin.Lsp.semgrep-schema.json" />
   </ItemGroup>
 
   <ItemGroup>
@@ -84,6 +88,57 @@
     <WriteLinesToFile File="$(PublishDir)OPENGREP-LICENSE.txt" Overwrite="true" Lines="Dolphin bundles Opengrep (https://github.com/opengrep/opengrep), licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).%0AThe binary has not been modified. Source code is available at https://github.com/opengrep/opengrep.%0AThe full license text is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" />
 
     <Message Text="Opengrep bundled → $(PublishDir)$(_PublishedBinName)" Importance="High" />
+  </Target>
+  <!--
+    FetchSemgrepSchema: downloads rule_schema_v1.yaml from the pinned semgrep-interfaces
+    commit, converts it from YAML to JSON (overriding the $schema draft URI to match the
+    draft 2019-09 that JsonSchema.Net expects), and caches the result in obj/ so it is
+    available as an EmbeddedResource at compile time.
+
+    The cache files are named with the commit hash — changing SemgrepInterfacesCommit
+    automatically invalidates the old cache and triggers a fresh download.
+
+    Requires python3 (Linux/macOS) or python (Windows) with PyYAML.  PyYAML is installed
+    automatically via pip when the cache is missing.
+
+    rule_schema_v1.yaml is sourced from https://github.com/returntocorp/semgrep-interfaces,
+    licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).
+    The file has not been modified beyond the $schema URI update noted above.
+  -->
+  <Target Name="FetchSemgrepSchema" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <_PythonCmd Condition="'$(OS)'=='Windows_NT'">python</_PythonCmd>
+      <_PythonCmd Condition="'$(OS)'!='Windows_NT'">python3</_PythonCmd>
+      <_SchemaYamlUrl>https://raw.githubusercontent.com/returntocorp/semgrep-interfaces/$(SemgrepInterfacesCommit)/rule_schema_v1.yaml</_SchemaYamlUrl>
+      <_SchemaYamlCache>$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).yaml</_SchemaYamlCache>
+      <_SchemaJsonPath>$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).json</_SchemaJsonPath>
+      <_SchemaPyScript>$(IntermediateOutputPath)convert_schema.py</_SchemaPyScript>
+    </PropertyGroup>
+
+    <!-- Ensure the obj/ subdirectory exists before writing files into it -->
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+
+    <!-- Download YAML only when not already cached for this commit -->
+    <Message Text="Fetching Semgrep rule schema ($(SemgrepInterfacesCommit))…" Importance="High"
+             Condition="!Exists('$(_SchemaYamlCache)')" />
+    <Exec Condition="!Exists('$(_SchemaYamlCache)')"
+          Command="curl -fsSL --proto '=https' --tlsv1.2 -o &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaYamlUrl)&quot;" />
+
+    <!-- Convert YAML → JSON only when not already cached for this commit -->
+    <!--   Step 1: write a small Python helper script to the intermediate directory -->
+    <WriteLinesToFile
+      Condition="!Exists('$(_SchemaJsonPath)')"
+      File="$(_SchemaPyScript)"
+      Overwrite="true"
+      Lines="import yaml;import json;import sys;data = yaml.safe_load(open(sys.argv[1]));data['$schema'] = 'https://json-schema.org/draft/2019-09/schema';open(sys.argv[2], 'w').write(json.dumps(data, indent=2))" />
+    <!--   Step 2: ensure PyYAML is available (idempotent; fast when already installed) -->
+    <Exec Condition="!Exists('$(_SchemaJsonPath)')"
+          Command="$(_PythonCmd) -m pip install --quiet --disable-pip-version-check pyyaml" />
+    <!--   Step 3: run the helper script to produce the JSON cache file -->
+    <Exec Condition="!Exists('$(_SchemaJsonPath)')"
+          Command="$(_PythonCmd) &quot;$(_SchemaPyScript)&quot; &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaJsonPath)&quot;" />
+
+    <Message Text="Semgrep rule schema ready → $(_SchemaJsonPath)" Importance="High" />
   </Target>
 
 </Project>

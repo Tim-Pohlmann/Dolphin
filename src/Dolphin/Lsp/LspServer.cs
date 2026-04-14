@@ -492,6 +492,10 @@ public static partial class LspServer
         await _resolutionLock.WaitAsync(ct);
         try
         {
+            // The validation may have been superseded while waiting for the lock.
+            // Check cancellation here to avoid unnecessary resolution attempts and stderr noise.
+            ct.ThrowIfCancellationRequested();
+
             // Double-check after acquiring: another task may have resolved it.
             // Retry if we've never tried, or if the cooldown has elapsed since the last failure.
             if (_opengrepBinary is null && (_lastScannerFailure is null || DateTime.UtcNow - _lastScannerFailure.Since >= ScannerRetryCooldown))

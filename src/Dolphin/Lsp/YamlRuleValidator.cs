@@ -53,6 +53,12 @@ internal static class YamlRuleValidator
                 return [.. diagnostics];
             }
 
+            if (yamlStream.Documents.Count > 1)
+            {
+                diagnostics.Add(MakeDiagnostic(0, 0, "Rule files must contain exactly one YAML document."));
+                return [.. diagnostics];
+            }
+
             rootNode = yamlStream.Documents[0].RootNode;
         }
         catch (YamlDotNet.Core.YamlException ex)
@@ -67,10 +73,19 @@ internal static class YamlRuleValidator
 
         // ── Validate against the embedded Semgrep schema ──────────────────────
         var options = new EvaluationOptions { OutputFormat = OutputFormat.List };
-        // JsonSchema.Net 9.x Evaluate takes JsonElement; serialise our JsonNode for it
+        // JsonSchema.Net 9.x Evaluate takes JsonElement.  Use JsonNode.WriteTo into a
+        // pooled UTF-8 buffer — no reflection, fully trim-safe, avoids a string allocation.
         EvaluationResults result;
-        using (var doc = System.Text.Json.JsonDocument.Parse(jsonNode?.ToJsonString() ?? "null"))
+        {
+            var buffer = new System.Buffers.ArrayBufferWriter<byte>(4096);
+            using (var writer = new System.Text.Json.Utf8JsonWriter(buffer))
+            {
+                if (jsonNode is null) writer.WriteNullValue();
+                else jsonNode.WriteTo(writer);
+            }
+            using var doc = System.Text.Json.JsonDocument.Parse(buffer.WrittenMemory);
             result = _schema.Value.Evaluate(doc.RootElement, options);
+        }
         if (result.IsValid) return [];
 
         // ── Map validation errors to LSP diagnostics ──────────────────────────
@@ -292,8 +307,14 @@ internal static class YamlRuleValidator
         var obj = new JsonObject();
         foreach (var (keyNode, valueNode) in mapping)
         {
-            var key       = ((YamlScalarNode)keyNode).Value ?? string.Empty;
-            var childPath = path + JsonPointerSep + key;
+            var key = keyNode switch
+            {
+                YamlScalarNode scalar => scalar.Value ?? string.Empty,
+                YamlSequenceNode      => "[sequence-key]",
+                YamlMappingNode       => "{mapping-key}",
+                _                     => keyNode.ToString() ?? string.Empty
+            };
+            var childPath = path + JsonPointerSep + EscapeJsonPointerSegment(key);
             obj[key] = ConvertToJson(valueNode, childPath, lineMap);
         }
         return obj;
@@ -319,6 +340,13 @@ internal static class YamlRuleValidator
         var idx = jsonPointerPath.LastIndexOf('/');
         return idx >= 0 ? jsonPointerPath[(idx + 1)..] : jsonPointerPath;
     }
+
+    /// <summary>
+    /// Escapes a JSON Pointer segment per RFC 6901:
+    /// '~' → '~0', '/' → '~1'.
+    /// </summary>
+    private static string EscapeJsonPointerSegment(string segment) =>
+        segment.Replace("~", "~0").Replace("/", "~1");
 
     private static LspDiagnostic MakeDiagnostic(int line, int col, string message)
     {

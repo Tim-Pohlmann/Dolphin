@@ -9,9 +9,10 @@ namespace Dolphin.Lsp;
 /// <summary>
 /// Minimal Language Server for Opengrep rule files.
 ///
-/// On every open/change of a file inside a .dolphin/ directory, runs
-/// `opengrep validate` and publishes LSP diagnostics. All JSON is written
-/// with Utf8JsonWriter so this is fully trim-safe (no reflection).
+/// On every open/change of a file inside a .dolphin/ directory, validates
+/// the YAML content against the embedded Semgrep JSON Schema via
+/// <see cref="YamlRuleValidator"/> and publishes LSP diagnostics.
+/// All JSON is written with Utf8JsonWriter so this is fully trim-safe (no reflection).
 /// </summary>
 public static partial class LspServer
 {

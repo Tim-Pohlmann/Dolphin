@@ -27,7 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).json"
+    <EmbeddedResource Include="Lsp\semgrep-schema.json"
                       LogicalName="Dolphin.Lsp.semgrep-schema.json" />
   </ItemGroup>
 
@@ -92,22 +92,23 @@
   <!--
     FetchSemgrepSchema: downloads rule_schema_v1.yaml from the pinned semgrep-interfaces
     commit, converts it from YAML to JSON (overriding the $schema draft URI to match the
-    draft 2019-09 that JsonSchema.Net expects), and caches the result in obj/ so it is
-    available as an EmbeddedResource at compile time.
+    draft 2019-09 that JsonSchema.Net expects), and writes the result to
+    Lsp/semgrep-schema.json (committed to the repo) so normal builds work offline.
 
-    The cache files are named with the commit hash — changing SemgrepInterfacesCommit
-    automatically invalidates the old cache and triggers a fresh download.
+    Run this target explicitly when the pinned commit (SemgrepInterfacesCommit) changes:
+      dotnet build /p:FetchSchema=true
 
     Requires python3 (Linux/macOS) or python (Windows).  PyYAML is installed automatically
-    into an isolated venv inside obj/ (pinned version) when the cache is missing.  Using a
-    venv avoids the PEP 668 "externally-managed-environment" error on macOS Homebrew Python
-    and other systems that protect the system Python from direct pip installs.
+    into an isolated venv inside obj/ (pinned version).  Using a venv avoids the
+    PEP 668 "externally-managed-environment" error on macOS Homebrew Python and other
+    systems that protect the system Python from direct pip installs.
 
     rule_schema_v1.yaml is sourced from https://github.com/returntocorp/semgrep-interfaces,
     licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).
     The file has not been modified beyond the $schema URI update noted above.
   -->
-  <Target Name="FetchSemgrepSchema" BeforeTargets="BeforeBuild">
+  <Target Name="FetchSemgrepSchema" BeforeTargets="BeforeBuild"
+          Condition="'$(FetchSchema)' == 'true'">
     <PropertyGroup>
       <_PythonCmd Condition="'$(OS)'=='Windows_NT'">python</_PythonCmd>
       <_PythonCmd Condition="'$(OS)'!='Windows_NT'">python3</_PythonCmd>
@@ -116,22 +117,20 @@
       <_VenvPython Condition="'$(OS)'!='Windows_NT'">$(_VenvPath)/bin/python</_VenvPython>
       <_SchemaYamlUrl>https://raw.githubusercontent.com/returntocorp/semgrep-interfaces/$(SemgrepInterfacesCommit)/rule_schema_v1.yaml</_SchemaYamlUrl>
       <_SchemaYamlCache>$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).yaml</_SchemaYamlCache>
-      <_SchemaJsonPath>$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).json</_SchemaJsonPath>
+      <_SchemaJsonPath>$(MSBuildThisFileDirectory)Lsp\semgrep-schema.json</_SchemaJsonPath>
       <_SchemaPyScript>$(IntermediateOutputPath)convert_schema.py</_SchemaPyScript>
     </PropertyGroup>
 
     <!-- Ensure the obj/ subdirectory exists before writing files into it -->
     <MakeDir Directories="$(IntermediateOutputPath)" />
 
-    <!-- Download YAML only when not already cached for this commit -->
-    <Message Text="Fetching Semgrep rule schema ($(SemgrepInterfacesCommit))…" Importance="High"
-             Condition="!Exists('$(_SchemaYamlCache)')" />
-    <Exec Condition="!Exists('$(_SchemaYamlCache)')"
-          Command="curl -fsSL --proto '=https' --tlsv1.2 -o &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaYamlUrl)&quot;" />
+    <!-- Download YAML (always re-download when FetchSchema=true to get the latest) -->
+    <Message Text="Fetching Semgrep rule schema ($(SemgrepInterfacesCommit))…" Importance="High" />
+    <Exec Command="curl -fsSL --proto '=https' --tlsv1.2 -o &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaYamlUrl)&quot;" />
 
-    <!-- Convert YAML → JSON only when not already cached for this commit -->
+    <!-- Convert YAML → JSON and overwrite the committed file -->
     <!--   Step 1: write a small Python helper script to the intermediate directory -->
-    <ItemGroup Condition="!Exists('$(_SchemaJsonPath)')">
+    <ItemGroup>
       <_SchemaScriptLine Include="import yaml" />
       <_SchemaScriptLine Include="import json" />
       <_SchemaScriptLine Include="import sys" />
@@ -140,20 +139,16 @@
       <_SchemaScriptLine Include="with open(sys.argv[2], 'w') as f: json.dump(data, f, indent=2)" />
     </ItemGroup>
     <WriteLinesToFile
-      Condition="!Exists('$(_SchemaJsonPath)')"
       File="$(_SchemaPyScript)"
       Overwrite="true"
       Lines="@(_SchemaScriptLine)" />
     <!--   Step 2: create an isolated venv and install PyYAML into it -->
-    <Exec Condition="!Exists('$(_SchemaJsonPath)')"
-          Command="$(_PythonCmd) -m venv &quot;$(_VenvPath)&quot;" />
-    <Exec Condition="!Exists('$(_SchemaJsonPath)')"
-          Command="&quot;$(_VenvPython)&quot; -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2" />
-    <!--   Step 3: run the helper script to produce the JSON cache file -->
-    <Exec Condition="!Exists('$(_SchemaJsonPath)')"
-          Command="&quot;$(_VenvPython)&quot; &quot;$(_SchemaPyScript)&quot; &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaJsonPath)&quot;" />
+    <Exec Command="$(_PythonCmd) -m venv &quot;$(_VenvPath)&quot;" />
+    <Exec Command="&quot;$(_VenvPython)&quot; -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2" />
+    <!--   Step 3: run the helper script to produce the committed JSON file -->
+    <Exec Command="&quot;$(_VenvPython)&quot; &quot;$(_SchemaPyScript)&quot; &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaJsonPath)&quot;" />
 
-    <Message Text="Semgrep rule schema ready → $(_SchemaJsonPath)" Importance="High" />
+    <Message Text="Semgrep rule schema updated → $(_SchemaJsonPath)" Importance="High" />
   </Target>
 
 </Project>

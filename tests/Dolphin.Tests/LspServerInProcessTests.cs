@@ -685,14 +685,40 @@ public partial class LspServerInProcessTests
         try
         {
             const string uri = "file:///project/.dolphin/rules.yaml";
-            // Wait deterministically for the first validation to cache the failure before
-            // sending didChange, so the second edit is guaranteed to see the cached value
-            // and does not retry the resolver.
-            var responses = await RunServerWithConditionAsync(
-                () => LspServer.LastScannerFailureForTesting != null,
-                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
-                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}",
-                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+            // Wait deterministically for:
+            //   gap 1 (didOpen → didChange):   first validation has cached the scanner failure
+            //   gap 2 (didChange → shutdown):  second validation (triggered by didChange) has
+            //                                  appeared in-flight and then completed, so it
+            //                                  exercised the cached-failure path end-to-end.
+            bool sawSecondValidationInFlight = false;
+            int waitCallCount = 0;
+            var responses = await RunServerCoreAsync(
+                [
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}",
+                    """{"jsonrpc":"2.0","id":1,"method":"shutdown"}"""
+                ],
+                async () =>
+                {
+                    waitCallCount++;
+                    if (waitCallCount == 1)
+                    {
+                        // Between didOpen and didChange: wait for the first validation to cache
+                        // the failure so the second edit is guaranteed to see it.
+                        await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting != null);
+                    }
+                    else
+                    {
+                        // Between didChange and shutdown: wait for the second validation to
+                        // appear in-flight and then complete, confirming it ran end-to-end.
+                        await WaitForConditionAsync(() =>
+                        {
+                            if (LspServer.HasInFlightValidationsForTesting)
+                                sawSecondValidationInFlight = true;
+                            return sawSecondValidationInFlight && !LspServer.HasInFlightValidationsForTesting;
+                        });
+                    }
+                });
 
             var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
             Assert.IsNotNull(shutdown, "Shutdown response must arrive");

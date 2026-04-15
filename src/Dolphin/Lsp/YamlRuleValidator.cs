@@ -121,11 +121,8 @@ internal static class YamlRuleValidator
         var line = lineMap.TryGetValue(instancePath, out var l) ? l : 0;
         foreach (var (keyword, errorNode) in detail.Errors!)
         {
-            foreach (var msg in FormatKeywordError(keyword, errorNode, instancePath))
-            {
-                if (seen.Add($"{line}:{msg}"))
-                    diagnostics.Add(MakeDiagnostic(line, 0, msg));
-            }
+            foreach (var msg in FormatKeywordError(keyword, errorNode, instancePath).Where(msg => seen.Add($"{line}:{msg}")))
+                diagnostics.Add(MakeDiagnostic(line, 0, msg));
         }
     }
 

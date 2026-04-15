@@ -491,6 +491,8 @@ public static partial class LspServer
     /// Ensures the scanner binary is resolved. Returns <c>true</c> if the scanner is available,
     /// <c>false</c> if unavailable. When validation has not been cancelled, a failure
     /// diagnostic has already been published to the client before returning <c>false</c>.
+    /// Throws <see cref="OperationCanceledException"/> if <paramref name="ct"/> is cancelled
+    /// while waiting for the resolution lock or immediately after acquiring it.
     /// </summary>
     private static async Task<bool> TryResolveScannerAsync(Stream stdout, string uri, CancellationToken ct)
     {
@@ -523,7 +525,7 @@ public static partial class LspServer
                         : $"Failed to resolve scanner binary: {ex.Message}";
                     _lastScannerFailure = new ScannerFailure(message, DateTime.UtcNow);
                     if (!ct.IsCancellationRequested)
-                        await Console.Error.WriteLineAsync($"[dolphin-lsp] {message}");
+                        await Console.Error.WriteLineAsync($"[dolphin-lsp] opengrep: {message}");
                 }
             }
         }

@@ -12,8 +12,11 @@ namespace Dolphin.Tests;
 /// In-process tests for LspServer and the Program.cs routing (via Startup.RunAsync).
 /// These run the server with injected MemoryStream pipes so that code-coverage tools
 /// instrument the server code directly — unlike the spawned-process integration tests.
+/// This class manipulates mutable static test seams on LspServer (e.g. BinaryResolverOverride)
+/// and must not run in parallel with other tests that use the same seams.
 /// </summary>
 [TestClass]
+[DoNotParallelize]
 public partial class LspServerInProcessTests
 {
     // ── Wire-protocol helpers ─────────────────────────────────────────────────
@@ -749,7 +752,10 @@ public partial class LspServerInProcessTests
         {
             if (Interlocked.Increment(ref callCount) <= 2)
                 throw new InvalidOperationException("Scanner not found.");
-            return Task.FromResult("fake-binary");
+            // Return the current process path, which is always a valid executable.
+            // RunValidateAsync will invoke it with `validate <yaml>`, it will exit non-zero,
+            // which is fine — the test only verifies that _lastScannerFailure is cleared.
+            return Task.FromResult(Environment.ProcessPath ?? Environment.GetCommandLineArgs()[0]);
         };
         try
         {

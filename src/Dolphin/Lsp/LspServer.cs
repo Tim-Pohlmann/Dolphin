@@ -28,6 +28,9 @@ public static partial class LspServer
 
     private static readonly TimeSpan ScannerRetryCooldown = TimeSpan.FromSeconds(30);
 
+    // LSP DiagnosticSeverity: 1=Error, 2=Warning, 3=Information, 4=Hint
+    private const int DiagnosticSeverityError = 1;
+
     // Ensures only one concurrent resolution attempt runs at a time, preventing duplicate
     // EnsureInstalledAsync calls and multiple stderr log lines from racing validations.
     private static readonly SemaphoreSlim _resolutionLock = new(1, 1);
@@ -513,11 +516,14 @@ public static partial class LspServer
                     _opengrepBinary = await GetResolver()();
                     _lastScannerFailure = null; // clear on success
                 }
-                catch (InvalidOperationException ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _lastScannerFailure = new ScannerFailure(ex.Message, DateTime.UtcNow);
+                    var message = ex is InvalidOperationException
+                        ? ex.Message
+                        : $"Failed to resolve scanner binary: {ex.Message}";
+                    _lastScannerFailure = new ScannerFailure(message, DateTime.UtcNow);
                     if (!ct.IsCancellationRequested)
-                        await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary not found: {ex.Message}");
+                        await Console.Error.WriteLineAsync($"[dolphin-lsp] {message}");
                 }
             }
         }
@@ -535,7 +541,7 @@ public static partial class LspServer
                 {
                     await PublishDiagnosticsAsync(stdout, uri, [new LspDiagnostic(
                         Range: new LspRange(pos, pos),
-                        Severity: 1,
+                        Severity: DiagnosticSeverityError,
                         Source: "dolphin",
                         Message: _lastScannerFailure.Message,
                         Pending: false)], ct);
@@ -568,7 +574,7 @@ public static partial class LspServer
                 var pos = new LspPosition(line, col);
                 return [new LspDiagnostic(
                     Range: new LspRange(pos, new LspPosition(line, col + utf16Len)),
-                    Severity: 1,
+                    Severity: DiagnosticSeverityError,
                     Source: "dolphin",
                     Message: $"Non-ASCII character (U+{codePoint:X4}): Dolphin rules files must contain only ASCII characters.",
                     Pending: false)];

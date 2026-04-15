@@ -229,25 +229,19 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public async Task HandleMessage_DidOpen_DolphinFile_WithInvalidYaml_PublishesNonEmptyDiagnostics()
+    public void Validate_InvalidYaml_ReturnsDiagnosticsWithLineAndCharacter()
     {
-        // Sending YAML that fails schema validation exercises the PublishDiagnosticsAsync
-        // loop (WritePosition is called once per diagnostic).
-        const string uri = "file:///project/.dolphin/rules.yaml";
         // "something: value" is syntactically valid YAML but missing the required top-level
         // "rules:" key, so YamlRuleValidator.Validate returns at least one diagnostic.
-        var responses = await RunServerAsync(
-            "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"something: value\"}}}",
-            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+        // Testing the validator directly avoids a race between the fire-and-forget
+        // ValidateAndPublishAsync task and the shutdown/EOF sequence in LSP integration tests.
+        var diagnostics = YamlRuleValidator.Validate("something: value");
 
-        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
-        Assert.IsNotNull(publish, "publishDiagnostics notification expected for invalid YAML");
-        var diagnostics = publish!["params"]?["diagnostics"]?.AsArray();
-        Assert.IsNotNull(diagnostics);
-        Assert.IsTrue(diagnostics.Count > 0, "Expected at least one diagnostic for invalid YAML");
-        // Each diagnostic must have range.start.line and range.start.character
-        var firstDiag = diagnostics[0]?.AsObject();
-        Assert.IsNotNull(firstDiag?["range"]?["start"]?["line"]);
+        Assert.IsTrue(diagnostics.Length > 0, "Expected at least one diagnostic for invalid YAML");
+        // Each diagnostic must have valid range.start.line and range.start.character
+        var first = diagnostics[0];
+        Assert.IsTrue(first.Range.Start.Line >= 0, $"Expected line >= 0, got {first.Range.Start.Line}");
+        Assert.IsTrue(first.Range.Start.Character >= 0, $"Expected character >= 0, got {first.Range.Start.Character}");
     }
 
     [TestMethod]

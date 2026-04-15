@@ -73,8 +73,8 @@ internal static class YamlRuleValidator
 
         // ── Validate against the embedded Semgrep schema ──────────────────────
         var options = new EvaluationOptions { OutputFormat = OutputFormat.List };
-        // JsonSchema.Net 9.x Evaluate takes JsonElement.  Use JsonNode.WriteTo into a
-        // pooled UTF-8 buffer — no reflection, fully trim-safe, avoids a string allocation.
+        // JsonSchema.Net 9.x Evaluate takes JsonElement.  Serialise via JsonNode.WriteTo
+        // into a UTF-8 buffer — no reflection, fully trim-safe, avoids a string allocation.
         EvaluationResults result;
         {
             var buffer = new System.Buffers.ArrayBufferWriter<byte>(4096);
@@ -305,14 +305,15 @@ internal static class YamlRuleValidator
         YamlMappingNode mapping, string path, Dictionary<string, int> lineMap)
     {
         var obj = new JsonObject();
+        var nonScalarIndex = 0; // ensures unique keys for non-scalar map entries
         foreach (var (keyNode, valueNode) in mapping)
         {
             var key = keyNode switch
             {
                 YamlScalarNode scalar => scalar.Value ?? string.Empty,
-                YamlSequenceNode      => "[sequence-key]",
-                YamlMappingNode       => "{mapping-key}",
-                _                     => keyNode.ToString() ?? string.Empty
+                YamlSequenceNode      => $"[sequence-key-{nonScalarIndex++}]",
+                YamlMappingNode       => $"{{mapping-key-{nonScalarIndex++}}}",
+                _                     => $"[key-{nonScalarIndex++}]"
             };
             var childPath = path + JsonPointerSep + EscapeJsonPointerSegment(key);
             obj[key] = ConvertToJson(valueNode, childPath, lineMap);

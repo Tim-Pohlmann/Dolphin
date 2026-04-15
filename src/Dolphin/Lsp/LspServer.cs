@@ -508,7 +508,9 @@ public static partial class LspServer
         var nonAscii = FindNonAsciiDiagnostic(text);
         if (nonAscii is not null) return Task.FromResult(nonAscii);
 
-        return Task.FromResult(YamlRuleValidator.Validate(text));
+        var diagnostics = YamlRuleValidator.Validate(text);
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(diagnostics);
     }
 
     // ── Wire protocol helpers ─────────────────────────────────────────────────

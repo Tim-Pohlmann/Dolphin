@@ -1431,12 +1431,14 @@
       "properties": {
         "focus-metavariable": {
           "title": "Focus on what a given metavariable is matching",
-          "items": {
-            "OneOf": [
-              "string",
-              "array"
-            ]
-          }
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array"
+            }
+          ]
         }
       },
       "required": [

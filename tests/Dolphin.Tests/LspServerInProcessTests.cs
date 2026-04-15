@@ -752,10 +752,11 @@ public partial class LspServerInProcessTests
         {
             if (Interlocked.Increment(ref callCount) <= 2)
                 throw new InvalidOperationException("Scanner not found.");
-            // Return the current process path, which is always a valid executable.
-            // RunValidateAsync will invoke it with `validate <yaml>`, it will exit non-zero,
-            // which is fine — the test only verifies that _lastScannerFailure is cleared.
-            return Task.FromResult(Environment.ProcessPath ?? Environment.GetCommandLineArgs()[0]);
+            // Return a non-existent path. Process.Start will throw immediately, which
+            // ValidateAndPublishAsync catches via its outer exception handler. The test
+            // only verifies that _lastScannerFailure is cleared (set during resolver success
+            // in TryResolveScannerAsync) — it does not assert on validation results.
+            return Task.FromResult("fake-binary");
         };
         try
         {

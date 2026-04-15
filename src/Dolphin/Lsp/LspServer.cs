@@ -502,6 +502,7 @@ public static partial class LspServer
         // Acquire the resolution lock so that concurrent validations don't race on
         // the shared fields (_opengrepBinary, _lastScannerFailure)
         // and don't trigger multiple simultaneous EnsureInstalledAsync calls or log lines.
+        string? newFailureMessage = null;
         await _resolutionLock.WaitAsync(ct);
         try
         {
@@ -524,8 +525,7 @@ public static partial class LspServer
                         ? ex.Message
                         : $"Failed to resolve scanner binary: {ex.Message}";
                     _lastScannerFailure = new ScannerFailure(message, DateTime.UtcNow);
-                    if (!ct.IsCancellationRequested)
-                        await Console.Error.WriteLineAsync($"[dolphin-lsp] opengrep: {message}");
+                    newFailureMessage = message; // captured for post-lock logging
                 }
             }
         }
@@ -533,6 +533,11 @@ public static partial class LspServer
         {
             _resolutionLock.Release();
         }
+
+        // Log after releasing the lock so console I/O does not block other validations
+        // that are waiting to acquire the lock.
+        if (newFailureMessage is not null && !ct.IsCancellationRequested)
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner: {newFailureMessage}");
 
         if (_lastScannerFailure is not null)
         {

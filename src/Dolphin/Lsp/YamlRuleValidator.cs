@@ -223,14 +223,32 @@ internal static class YamlRuleValidator
                 break;
             }
 
-            // All combinator / meta keywords are filtered before we get here, but
-            // list them defensively so they don't fall into the default case.
+            case "anyOf":
+            case "oneOf":
+            {
+                // Surface a user-oriented message for combinator failures so that
+                // invalid inputs (e.g. missing required properties inside a oneOf
+                // branch) are never silently dropped.
+                var raw = errorNode?.ToString();
+                if (!string.IsNullOrEmpty(raw))
+                {
+                    yield return raw;
+                    break;
+                }
+
+                var field = LastSegment(instancePath);
+                yield return string.IsNullOrEmpty(field)
+                    ? "Value does not match the expected schema shape."
+                    : $"Invalid value for '{field}': value does not match any allowed schema shape.";
+                break;
+            }
+
+            // All other combinator / meta keywords are filtered before we get here,
+            // but list them defensively so they don't fall into the default case.
             case "if":
             case "then":
             case "else":
             case "allOf":
-            case "anyOf":
-            case "oneOf":
             case "not":
                 break;
 

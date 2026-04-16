@@ -561,6 +561,7 @@ public partial class LspServerInProcessTests
         var diags = LspServer.FindNonAsciiDiagnostic(text);
 
         Assert.IsNotNull(diags, "Non-ASCII text should produce a diagnostic");
+        Assert.AreEqual(1, diags.Length, "Expected exactly one diagnostic");
         Assert.AreEqual(1, diags[0].Range.Start.Line, "Non-ASCII char is on line 1 (0-based) after one CRLF");
     }
 
@@ -573,6 +574,7 @@ public partial class LspServerInProcessTests
         var diags = LspServer.FindNonAsciiDiagnostic(text);
 
         Assert.IsNotNull(diags, "Non-ASCII text should produce a diagnostic");
+        Assert.AreEqual(1, diags.Length, "Expected exactly one diagnostic");
         Assert.AreEqual(1, diags[0].Range.Start.Line, "Non-ASCII char is on line 1 (0-based) after one CR");
     }
 

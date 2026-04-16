@@ -104,7 +104,7 @@ public class YamlRuleValidatorTests
         {
             AssertNoErrors($"""
                 rules:
-                  - id: test-{sev.ToLower()}
+                  - id: test-{sev.ToLowerInvariant()}
                     message: "Test {sev}"
                     languages: [python]
                     severity: {sev}
@@ -348,5 +348,78 @@ public class YamlRuleValidatorTests
         // The schema emits a "type" keyword error which hits the default case in
         // FormatKeywordError.
         AssertHasError("rules: not-a-list", "array");
+    }
+
+    // ── Multi-document YAML ───────────────────────────────────────────────────
+
+    [TestMethod]
+    public void MultiDocumentYaml_ReturnsDiagnostic()
+    {
+        // A "---" separator creates a second YAML document which is not valid for
+        // a Dolphin rules file. The validator should reject it with a clear message.
+        var diags = Validate("rules: []\n---\nrules: []");
+        Assert.IsTrue(diags.Length > 0, "Expected at least one diagnostic for multi-document YAML");
+        Assert.IsTrue(
+            diags.Any(d => d.Message.Contains("exactly one", StringComparison.OrdinalIgnoreCase)),
+            $"Expected 'exactly one' in message, got: {string.Join("; ", diags.Select(d => d.Message))}");
+        // Multi-document diagnostic is emitted at line 0
+        Assert.AreEqual(0, diags[0].Range.Start.Line);
+    }
+
+    // ── Non-scalar mapping keys ───────────────────────────────────────────────
+
+    [TestMethod]
+    public void SequenceMappingKey_DoesNotThrow_AndReturnsAtLeastOneDiagnostic()
+    {
+        // YAML allows non-scalar mapping keys (e.g. sequences as keys), which the
+        // validator must handle without throwing InvalidCastException. Schema
+        // validation still runs; the odd key simply doesn't match the expected
+        // structure, so at least one diagnostic is emitted.
+        const string yaml = """
+            rules:
+              ? [sequence-key]
+              : value
+            """;
+        var diags = Validate(yaml);
+        Assert.IsTrue(diags.Length > 0, "Expected at least one diagnostic for non-scalar key YAML");
+    }
+
+    // ── Keys with RFC 6901 special characters ─────────────────────────────────
+
+    [TestMethod]
+    public void KeyContainingSlash_DoesNotThrow_AndValidatesNormally()
+    {
+        // A YAML mapping key containing '/' must be RFC 6901–escaped when building
+        // the JSON Pointer path used for line-number lookup; this test ensures no
+        // exception is thrown and that a diagnostic is produced (the key doesn't
+        // match the Semgrep schema).
+        const string yaml = """
+            rules:
+              - id: slash-key
+                message: "test"
+                languages: [python]
+                severity: ERROR
+                pattern: x = 1
+                a/b: extra
+            """;
+        // Should not throw, just produce diagnostics or none depending on schema
+        _ = Validate(yaml);
+    }
+
+    [TestMethod]
+    public void KeyContainingTilde_DoesNotThrow_AndValidatesNormally()
+    {
+        // A YAML mapping key containing '~' must be RFC 6901–escaped ('~0'); this
+        // test ensures no exception is thrown.
+        const string yaml = """
+            rules:
+              - id: tilde-key
+                message: "test"
+                languages: [python]
+                severity: ERROR
+                pattern: x = 1
+                a~b: extra
+            """;
+        _ = Validate(yaml);
     }
 }

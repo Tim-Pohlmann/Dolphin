@@ -37,15 +37,9 @@ public static partial class LspServer
 
     // Cached failure message from the first scanner resolution failure in this LSP session
     // to avoid repeated retries and log spam (non-null = resolution previously failed this session).
-    private static ScannerFailure? _lastScannerFailure;
-
     // Test seam: allows tests to read/write the live failure cache so cooldown scenarios
     // can control elapsed time without waiting for the real cooldown to expire.
-    internal static ScannerFailure? LastScannerFailureForTesting
-    {
-        get => _lastScannerFailure;
-        set => _lastScannerFailure = value;
-    }
+    internal static ScannerFailure? LastScannerFailureForTesting { get; set; }
 
     // Test seam: true when at least one latest-per-URI validation CTS is still tracked.
     // This reflects _validationCts membership only; entries can also be removed by
@@ -91,7 +85,7 @@ public static partial class LspServer
 
         // Reset per-session state so a restart picks up a newly installed binary.
         _opengrepBinary = null;
-        _lastScannerFailure = null;
+        LastScannerFailureForTesting = null;
 
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await GetResolver()(); }
@@ -500,7 +494,7 @@ public static partial class LspServer
             return true;
 
         // Acquire the resolution lock so that concurrent validations don't race on
-        // the shared fields (_opengrepBinary, _lastScannerFailure)
+        // the shared fields (_opengrepBinary, LastScannerFailureForTesting)
         // and don't trigger multiple simultaneous EnsureInstalledAsync calls or log lines.
         string? newFailureMessage = null;
         await _resolutionLock.WaitAsync(ct);
@@ -509,25 +503,7 @@ public static partial class LspServer
             // The validation may have been superseded while waiting for the lock.
             // Check cancellation here to avoid unnecessary resolution attempts and stderr noise.
             ct.ThrowIfCancellationRequested();
-
-            // Double-check after acquiring: another task may have resolved it.
-            // Retry if we've never tried, or if the cooldown has elapsed since the last failure.
-            if (_opengrepBinary is null && (_lastScannerFailure is null || DateTime.UtcNow - _lastScannerFailure.Since >= ScannerRetryCooldown))
-            {
-                try
-                {
-                    _opengrepBinary = await GetResolver()();
-                    _lastScannerFailure = null; // clear on success
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    var message = ex is InvalidOperationException
-                        ? ex.Message
-                        : $"Failed to resolve scanner binary: {ex.Message}";
-                    _lastScannerFailure = new ScannerFailure(message, DateTime.UtcNow);
-                    newFailureMessage = message; // captured for post-lock logging
-                }
-            }
+            newFailureMessage = await ResolveUnderLockAsync();
         }
         finally
         {
@@ -539,7 +515,7 @@ public static partial class LspServer
         if (newFailureMessage is not null && !ct.IsCancellationRequested)
             await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner: {newFailureMessage}");
 
-        if (_lastScannerFailure is not null)
+        if (LastScannerFailureForTesting is not null)
         {
             if (!ct.IsCancellationRequested)
             {
@@ -550,7 +526,7 @@ public static partial class LspServer
                         Range: new LspRange(pos, pos),
                         Severity: DiagnosticSeverityError,
                         Source: "dolphin",
-                        Message: _lastScannerFailure.Message,
+                        Message: LastScannerFailureForTesting.Message,
                         Pending: false)], ct);
                 }
                 catch (OperationCanceledException)
@@ -562,6 +538,36 @@ public static partial class LspServer
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Called with <see cref="_resolutionLock"/> already held. Attempts to resolve the scanner binary
+    /// if not already resolved and the retry cooldown has elapsed.
+    /// Returns a failure message on resolution failure, or <c>null</c> on success or when skipped.
+    /// </summary>
+    private static async Task<string?> ResolveUnderLockAsync()
+    {
+        // Double-check after acquiring: another task may have resolved it.
+        // Skip if resolved, or if the cooldown since the last failure has not elapsed yet.
+        if (_opengrepBinary is not null)
+            return null;
+        if (LastScannerFailureForTesting is not null && DateTime.UtcNow - LastScannerFailureForTesting.Since < ScannerRetryCooldown)
+            return null;
+
+        try
+        {
+            _opengrepBinary = await GetResolver()();
+            LastScannerFailureForTesting = null; // clear on success
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var message = ex is InvalidOperationException
+                ? ex.Message
+                : $"Failed to resolve scanner binary: {ex.Message}";
+            LastScannerFailureForTesting = new ScannerFailure(message, DateTime.UtcNow);
+            return message; // captured for post-lock logging by the caller
+        }
     }
 
     /// <summary>

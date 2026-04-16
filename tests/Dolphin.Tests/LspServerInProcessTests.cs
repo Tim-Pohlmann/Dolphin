@@ -689,12 +689,12 @@ public partial class LspServerInProcessTests
         {
             const string uri = "file:///project/.dolphin/rules.yaml";
             // Wait deterministically for:
-            //   gap 1 (didOpen → didChange):   first validation has cached the scanner failure
+            //   gap 1 (didOpen → didChange):   first validation has completed (failure cached)
             //   gap 2 (didChange → shutdown):  second validation (triggered by didChange) has
-            //                                  appeared in-flight and then completed, so it
-            //                                  exercised the cached-failure path end-to-end.
-            bool sawSecondValidationInFlight = false;
+            //                                  completed, confirming it exercised the cached-failure
+            //                                  path end-to-end without calling the resolver again.
             int waitCallCount = 0;
+            int completedAfterOpen = 0;
             var responses = await RunServerCoreAsync(
                 [
                     "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
@@ -706,20 +706,16 @@ public partial class LspServerInProcessTests
                     waitCallCount++;
                     if (waitCallCount == 1)
                     {
-                        // Between didOpen and didChange: wait for the first validation to cache
-                        // the failure so the second edit is guaranteed to see it.
+                        // Between didOpen and didChange: wait for the first validation to complete
+                        // so the failure is cached and the second edit is guaranteed to see it.
                         await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting != null);
+                        completedAfterOpen = LspServer.ValidationCompletedCountForTesting;
                     }
                     else
                     {
-                        // Between didChange and shutdown: wait for the second validation to
-                        // appear in-flight and then complete, confirming it ran end-to-end.
-                        await WaitForConditionAsync(() =>
-                        {
-                            if (LspServer.HasInFlightValidationsForTesting)
-                                sawSecondValidationInFlight = true;
-                            return sawSecondValidationInFlight && !LspServer.HasInFlightValidationsForTesting;
-                        });
+                        // Between didChange and shutdown: wait for the second validation to complete
+                        // (its finally block has run), confirming it ran end-to-end.
+                        await WaitForConditionAsync(() => LspServer.ValidationCompletedCountForTesting > completedAfterOpen);
                     }
                 });
 

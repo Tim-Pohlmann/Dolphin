@@ -339,6 +339,43 @@ public class YamlRuleValidatorTests
             """, "severity");
     }
 
+    [TestMethod]
+    public void NanScalarValue_DoesNotThrow_AndValidatesNormally()
+    {
+        // Unquoted "NaN" is accepted by double.TryParse but must NOT be passed to
+        // JsonValue.Create because Utf8JsonWriter does not allow non-finite numbers.
+        // ConvertScalar must fall back to treating it as a plain string.
+        const string yaml = """
+            rules:
+              - id: nan-test
+                message: test
+                languages: [python]
+                severity: NaN
+                pattern: x = 1
+            """;
+        // Must not throw; schema validation should emit at least one diagnostic
+        // because "NaN" (a string after fallback) is not a valid severity enum value.
+        var diags = Validate(yaml);
+        Assert.IsTrue(diags.Length > 0, "Expected diagnostics for NaN severity");
+    }
+
+    [TestMethod]
+    public void InfinityScalarValue_DoesNotThrow_AndValidatesNormally()
+    {
+        // Same as NaN: "Infinity" is accepted by double.TryParse but must not be
+        // passed to JsonValue.Create. Fallback to string ensures no crash.
+        const string yaml = """
+            rules:
+              - id: infinity-test
+                message: test
+                languages: [python]
+                severity: Infinity
+                pattern: x = 1
+            """;
+        var diags = Validate(yaml);
+        Assert.IsTrue(diags.Length > 0, "Expected diagnostics for Infinity severity");
+    }
+
     // ── Type mismatch (exercises FormatKeywordError default case) ─────────────
 
     [TestMethod]

@@ -152,7 +152,7 @@ internal static class YamlRuleValidator
             var line = lineMap.TryGetValue(path, out var l) ? l : 0;
             const string msg =
                 "Rule is missing a required pattern key " +
-                "(e.g. 'pattern', 'patterns', 'pattern-regex', 'pattern-either').";
+                "(e.g. 'pattern', 'patterns', 'pattern-regex', 'pattern-either', 'match').";
             if (seen.Add($"{line}:{msg}"))
                 diagnostics.Add(MakeDiagnostic(line, 0, msg));
         }
@@ -303,7 +303,8 @@ internal static class YamlRuleValidator
 
         if (double.TryParse(value,
                 System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var d))
+                System.Globalization.CultureInfo.InvariantCulture, out var d)
+            && double.IsFinite(d))
             return JsonValue.Create(d);
 
         return JsonValue.Create(value);

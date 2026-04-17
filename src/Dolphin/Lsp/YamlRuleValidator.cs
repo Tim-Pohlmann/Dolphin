@@ -291,7 +291,7 @@ internal static class YamlRuleValidator
         if (IsQuotedStyle(scalar.Style))
             return JsonValue.Create(value);
 
-        // Unquoted scalars: apply YAML 1.1 type coercion rules
+        // Unquoted scalars: coerce true/false/null and numeric literals (not yes/no/on/off)
         if (value is "true"  or "True"  or "TRUE")  return JsonValue.Create(true);
         if (value is "false" or "False" or "FALSE") return JsonValue.Create(false);
         if (value is "null"  or "Null"  or "NULL"  or "~") return null;

@@ -501,16 +501,16 @@ public static partial class LspServer
         return (ch, 1);
     }
 
-    private static Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
+    private static async Task<LspDiagnostic[]> RunValidateAsync(string text, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
         var nonAscii = FindNonAsciiDiagnostic(text);
-        if (nonAscii is not null) return Task.FromResult(nonAscii);
+        if (nonAscii is not null) return nonAscii;
 
-        var diagnostics = YamlRuleValidator.Validate(text);
+        var diagnostics = await Task.Run(() => YamlRuleValidator.Validate(text), ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
-        return Task.FromResult(diagnostics);
+        return diagnostics;
     }
 
     // ── Wire protocol helpers ─────────────────────────────────────────────────

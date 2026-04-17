@@ -117,7 +117,7 @@
       <_VenvPython Condition="'$(OS)'!='Windows_NT'">$(_VenvPath)/bin/python</_VenvPython>
       <_SchemaYamlUrl>https://raw.githubusercontent.com/returntocorp/semgrep-interfaces/$(SemgrepInterfacesCommit)/rule_schema_v1.yaml</_SchemaYamlUrl>
       <_SchemaYamlCache>$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).yaml</_SchemaYamlCache>
-      <_SchemaJsonPath>$(MSBuildThisFileDirectory)Lsp\semgrep-schema.json</_SchemaJsonPath>
+      <_SchemaJsonPath>$(MSBuildThisFileDirectory)Lsp/semgrep-schema.json</_SchemaJsonPath>
       <_SchemaPyScript>$(IntermediateOutputPath)convert_schema.py</_SchemaPyScript>
     </PropertyGroup>
 

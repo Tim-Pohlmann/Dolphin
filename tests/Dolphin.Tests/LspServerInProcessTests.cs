@@ -709,6 +709,12 @@ public partial class LspServerInProcessTests
                         // Between didOpen and didChange: wait for the first validation to complete
                         // so the failure is cached and the second edit is guaranteed to see it.
                         await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting != null);
+                        // Also wait for the first validation's finally block to run so that
+                        // ValidationCompletedCountForTesting reflects the first validation only,
+                        // not an intermediate state. Without this, completedAfterOpen could be 0
+                        // and the gap-2 condition (> completedAfterOpen) would be satisfied by
+                        // the first validation completing rather than the second.
+                        await WaitForConditionAsync(() => LspServer.ValidationCompletedCountForTesting > 0);
                         completedAfterOpen = LspServer.ValidationCompletedCountForTesting;
                     }
                     else

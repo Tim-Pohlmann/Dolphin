@@ -61,6 +61,12 @@ public static partial class LspServer
     private static int _validationCompletedCount;
     internal static int ValidationCompletedCountForTesting => _validationCompletedCount;
 
+    // Tracks all in-flight ValidateAndPublishAsync tasks so DrainValidationsAsync can await their
+    // completion after cancellation. This ensures that per-session state (e.g. _opengrepBinary)
+    // is not reset until all tasks' finally blocks have run.
+    private static readonly ConcurrentDictionary<int, Task> _validationTasks = new();
+    private static int _nextTaskId;
+
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
 
@@ -194,14 +200,23 @@ public static partial class LspServer
     /// and the next iteration — but it is sufficient for the two call-sites (session start/end),
     /// which run outside the message loop where new validations are enqueued.
     /// </summary>
-    private static Task DrainValidationsAsync()
+    private static async Task DrainValidationsAsync()
     {
-        var tasks = new List<Task>();
+        var ctsTasks = new List<Task>();
         while (!_validationCts.IsEmpty)
             foreach (var key in _validationCts.Keys)
                 if (_validationCts.TryRemove(key, out var old))
-                    tasks.Add(old.CancelAsync());
-        return tasks.Count == 0 ? Task.CompletedTask : Task.WhenAll(tasks);
+                    ctsTasks.Add(old.CancelAsync());
+        if (ctsTasks.Count > 0)
+            await Task.WhenAll(ctsTasks);
+
+        // After signalling cancellation, await the actual ValidateAndPublishAsync tasks so
+        // their finally blocks (state cleanup, counter increment) complete before the caller
+        // resets per-session state.  ContinueWith removes each entry on normal completion;
+        // here we snapshot whatever is still pending and await it.
+        var pendingTasks = _validationTasks.Values.ToArray();
+        if (pendingTasks.Length > 0)
+            await Task.WhenAll(pendingTasks);
     }
 
     /// <summary>
@@ -331,7 +346,12 @@ public static partial class LspServer
                     var uri = td.GetProperty("uri").GetString() ?? "";
                     var text = td.GetProperty("text").GetString() ?? "";
                     if (IsDolphinRulesFile(uri))
-                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                    {
+                        var tid = Interlocked.Increment(ref _nextTaskId);
+                        var task = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                        _validationTasks[tid] = task;
+                        _ = task.ContinueWith(_ => _validationTasks.TryRemove(tid, out _), TaskContinuationOptions.ExecuteSynchronously);
+                    }
                     break;
                 }
 
@@ -340,9 +360,14 @@ public static partial class LspServer
                     var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                     var changes = p.GetProperty("contentChanges");
                     if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
-                        _ = ValidateAndPublishAsync(stdout, uri,
+                    {
+                        var tid = Interlocked.Increment(ref _nextTaskId);
+                        var task = ValidateAndPublishAsync(stdout, uri,
                             changes[0].GetProperty("text").GetString() ?? "",
                             CancelPrevious(uri));
+                        _validationTasks[tid] = task;
+                        _ = task.ContinueWith(_ => _validationTasks.TryRemove(tid, out _), TaskContinuationOptions.ExecuteSynchronously);
+                    }
                     break;
                 }
 

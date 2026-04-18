@@ -69,9 +69,18 @@ public static class Installer
         }
         catch
         {
-            // Includes OperationCanceledException from the timeout; kill the process so a
-            // hung --version probe does not leak into a zombie/long-lived child.
-            try { proc?.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            // Includes OperationCanceledException from the timeout; kill the process and
+            // reap it so a hung --version probe does not leak into a zombie on Unix.
+            if (proc is not null)
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+                try
+                {
+                    using var reaperCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    await proc.WaitForExitAsync(reaperCts.Token);
+                }
+                catch { /* best-effort reap */ }
+            }
             return null;
         }
         finally

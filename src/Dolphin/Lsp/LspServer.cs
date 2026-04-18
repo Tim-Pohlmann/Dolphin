@@ -225,17 +225,26 @@ public static partial class LspServer
         //
         // Bound the wait: SendAsync writes to stdout with CancellationToken.None (to avoid
         // partial framing), so a wedged client that stops reading without closing would
-        // otherwise hang shutdown forever.  Log and move on after the timeout.
-        var pendingTasks = _validationTasks.Values.ToArray();
-        if (pendingTasks.Length > 0)
+        // otherwise hang shutdown forever.  Log and move on after the timeout; also detach
+        // the abandoned entries from _validationTasks so stale tasks don't linger across
+        // in-process sessions.
+        var pendingEntries = _validationTasks.ToArray();
+        if (pendingEntries.Length > 0)
         {
+            var pendingTasks = Array.ConvertAll(pendingEntries, static e => e.Value);
             var all = Task.WhenAll(pendingTasks);
             var completed = await Task.WhenAny(all, Task.Delay(ValidationDrainTimeout));
             if (completed != all)
+            {
+                foreach (var e in pendingEntries)
+                    _validationTasks.TryRemove(e);
                 await Console.Error.WriteLineAsync(
                     $"[dolphin-lsp] timed out waiting for {pendingTasks.Length} validation task(s) to finish during shutdown; continuing.");
+            }
             else
+            {
                 await all; // observe any aggregated exceptions
+            }
         }
     }
 

@@ -45,8 +45,14 @@ public static class Installer
         return (binary, version);
     }
 
+    // Bounded wait for the --version probe.  Without this, a broken or hung scanner binary
+    // can block resolver callers (e.g. the LSP's ResolveUnderLockAsync) indefinitely, which
+    // in turn blocks DrainValidationsAsync on shutdown.
+    private static readonly TimeSpan VersionProbeTimeout = TimeSpan.FromSeconds(5);
+
     private static async Task<string?> GetVersionAsync(string binaryPath)
     {
+        Process? proc = null;
         try
         {
             var psi = new ProcessStartInfo(binaryPath, "--version")
@@ -55,14 +61,22 @@ public static class Installer
                 RedirectStandardError = true,
                 UseShellExecute = false
             };
-            using var proc = Process.Start(psi)!;
-            var output = await proc.StandardOutput.ReadToEndAsync();
-            await proc.WaitForExitAsync();
+            proc = Process.Start(psi)!;
+            using var timeoutCts = new CancellationTokenSource(VersionProbeTimeout);
+            var output = await proc.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            await proc.WaitForExitAsync(timeoutCts.Token);
             return proc.ExitCode == 0 ? output.Trim() : null;
         }
         catch
         {
+            // Includes OperationCanceledException from the timeout; kill the process so a
+            // hung --version probe does not leak into a zombie/long-lived child.
+            try { proc?.Kill(entireProcessTree: true); } catch { /* best-effort */ }
             return null;
+        }
+        finally
+        {
+            proc?.Dispose();
         }
     }
 

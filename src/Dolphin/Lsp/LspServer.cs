@@ -206,7 +206,15 @@ public static partial class LspServer
         while (!_validationCts.IsEmpty)
             foreach (var key in _validationCts.Keys)
                 if (_validationCts.TryRemove(key, out var old))
-                    ctsTasks.Add(old.CancelAsync());
+                {
+                    try { ctsTasks.Add(old.CancelAsync()); }
+                    catch (ObjectDisposedException)
+                    {
+                        // The CTS may have been disposed by its owning ValidateAndPublishAsync
+                        // between our TryRemove and CancelAsync call.  Cancellation is moot in
+                        // that case (the task is already completing), so swallow and continue.
+                    }
+                }
         if (ctsTasks.Count > 0)
             await Task.WhenAll(ctsTasks);
 

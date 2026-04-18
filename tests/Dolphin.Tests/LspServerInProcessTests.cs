@@ -622,14 +622,30 @@ public partial class LspServerInProcessTests
 
         var writerTask = Task.Run(async () =>
         {
-            for (int i = 0; i < messages.Length; i++)
+            // Always complete the writer, even if interMessageWaitAsync throws (e.g. a
+            // WaitForConditionAsync timeout triggers Assert.Fail). Without this, the server
+            // keeps waiting for more input and Task.WhenAll(serverTask, writerTask) hangs
+            // instead of surfacing the original failure.
+            Exception? writerException = null;
+            try
             {
-                if (i > 0) await interMessageWaitAsync();
-                var frame = FrameMessage(messages[i]);
-                await pipe.Writer.WriteAsync(frame);
-                await pipe.Writer.FlushAsync();
+                for (int i = 0; i < messages.Length; i++)
+                {
+                    if (i > 0) await interMessageWaitAsync();
+                    var frame = FrameMessage(messages[i]);
+                    await pipe.Writer.WriteAsync(frame);
+                    await pipe.Writer.FlushAsync();
+                }
             }
-            pipe.Writer.Complete();
+            catch (Exception ex)
+            {
+                writerException = ex;
+                throw;
+            }
+            finally
+            {
+                pipe.Writer.Complete(writerException);
+            }
         });
 
         await Task.WhenAll(serverTask, writerTask);

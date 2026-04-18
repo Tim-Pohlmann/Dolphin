@@ -633,8 +633,8 @@ public partial class LspServerInProcessTests
                 {
                     if (i > 0) await interMessageWaitAsync();
                     var frame = FrameMessage(messages[i]);
+                    // PipeWriter.WriteAsync writes AND flushes; no separate FlushAsync needed.
                     await pipe.Writer.WriteAsync(frame);
-                    await pipe.Writer.FlushAsync();
                 }
             }
             catch (Exception ex)
@@ -787,7 +787,6 @@ public partial class LspServerInProcessTests
             var openFrame = FrameMessage(
                 "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}");
             await pipe.Writer.WriteAsync(openFrame);
-            await pipe.Writer.FlushAsync();
 
             // Wait deterministically for the first validation to complete so the failure is in the cache
             await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting != null);
@@ -801,7 +800,6 @@ public partial class LspServerInProcessTests
             var changeFrame = FrameMessage(
                 "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}");
             await pipe.Writer.WriteAsync(changeFrame);
-            await pipe.Writer.FlushAsync();
 
             // Wait deterministically for the second validation to complete (resolver succeeds → cache cleared)
             await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting == null);
@@ -813,7 +811,6 @@ public partial class LspServerInProcessTests
             // Shutdown
             var shutdownFrame = FrameMessage("""{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
             await pipe.Writer.WriteAsync(shutdownFrame);
-            await pipe.Writer.FlushAsync();
             pipe.Writer.Complete();
 
             await serverTask;

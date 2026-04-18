@@ -358,7 +358,7 @@ public static partial class LspServer
                         var tid = Interlocked.Increment(ref _nextTaskId);
                         var task = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
                         _validationTasks[tid] = task;
-                        _ = task.ContinueWith(_ => _validationTasks.TryRemove(tid, out _), TaskContinuationOptions.ExecuteSynchronously);
+                        _ = task.ContinueWith(t => _validationTasks.TryRemove(tid, out _), TaskContinuationOptions.ExecuteSynchronously);
                     }
                     break;
                 }
@@ -374,7 +374,7 @@ public static partial class LspServer
                             changes[0].GetProperty("text").GetString() ?? "",
                             CancelPrevious(uri));
                         _validationTasks[tid] = task;
-                        _ = task.ContinueWith(_ => _validationTasks.TryRemove(tid, out _), TaskContinuationOptions.ExecuteSynchronously);
+                        _ = task.ContinueWith(t => _validationTasks.TryRemove(tid, out _), TaskContinuationOptions.ExecuteSynchronously);
                     }
                     break;
                 }
@@ -563,7 +563,11 @@ public static partial class LspServer
         if (newFailureMessage is not null && !ct.IsCancellationRequested)
             await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner: {newFailureMessage}");
 
-        if (_lastScannerFailure is not null)
+        // Snapshot once: a concurrent validation can clear _lastScannerFailure after the
+        // null check, which would otherwise risk a NullReferenceException or publishing an
+        // inconsistent message.
+        var failure = _lastScannerFailure;
+        if (failure is not null)
         {
             if (!ct.IsCancellationRequested)
             {
@@ -574,7 +578,7 @@ public static partial class LspServer
                         Range: new LspRange(pos, pos),
                         Severity: DiagnosticSeverityError,
                         Source: "dolphin",
-                        Message: _lastScannerFailure.Message,
+                        Message: failure.Message,
                         Pending: false)], ct);
                 }
                 catch (OperationCanceledException)

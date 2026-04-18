@@ -63,9 +63,14 @@ public static class Installer
             };
             proc = Process.Start(psi)!;
             using var timeoutCts = new CancellationTokenSource(VersionProbeTimeout);
-            var output = await proc.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            // Read stdout and stderr concurrently: stderr is redirected, so if the child
+            // writes enough to fill the pipe while we're only draining stdout, it will
+            // block forever and we'll hit the timeout even though the binary is fine.
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var stderrTask = proc.StandardError.ReadToEndAsync(timeoutCts.Token);
+            await Task.WhenAll(stdoutTask, stderrTask);
             await proc.WaitForExitAsync(timeoutCts.Token);
-            return proc.ExitCode == 0 ? output.Trim() : null;
+            return proc.ExitCode == 0 ? stdoutTask.Result.Trim() : null;
         }
         catch
         {

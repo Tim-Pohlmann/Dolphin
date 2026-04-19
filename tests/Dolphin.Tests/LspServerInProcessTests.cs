@@ -229,6 +229,23 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
+    public void Validate_SchemaInvalidYaml_ReturnsDiagnosticsWithLineAndCharacter()
+    {
+        // "something: value" is syntactically valid YAML but fails the Semgrep schema
+        // (missing the required top-level "rules:" key), so YamlRuleValidator.Validate
+        // returns at least one diagnostic. Testing the validator directly avoids a race
+        // between the fire-and-forget ValidateAndPublishAsync task and the shutdown/EOF
+        // sequence in LSP integration tests.
+        var diagnostics = YamlRuleValidator.Validate("something: value");
+
+        Assert.IsTrue(diagnostics.Length > 0, "Expected at least one diagnostic for schema-invalid YAML");
+        // Each diagnostic must have valid range.start.line and range.start.character
+        var first = diagnostics[0];
+        Assert.IsTrue(first.Range.Start.Line >= 0, $"Expected line >= 0, got {first.Range.Start.Line}");
+        Assert.IsTrue(first.Range.Start.Character >= 0, $"Expected character >= 0, got {first.Range.Start.Character}");
+    }
+
+    [TestMethod]
     public async Task HandleMessage_DidChange_NonDolphinFile_NoResponse()
     {
         var responses = await RunServerAsync(
@@ -519,6 +536,47 @@ public partial class LspServerInProcessTests
         Assert.IsNotNull(diags, "Unpaired surrogate is non-ASCII and should produce a diagnostic");
         Assert.AreEqual(1, diags.Length);
         Assert.IsTrue(diags[0].Message.Contains("Non-ASCII"));
+    }
+
+    [TestMethod]
+    public void FindNonAsciiDiagnostic_WithSurrogatePair_ReturnsDiagnostic()
+    {
+        // A valid surrogate pair (😀 = U+1F600 = \uD83D\uDE00) is non-ASCII and should
+        // be decoded as U+1F600 rather than reported as two separate code units.
+        var text = "rules: []\n# Emoji: \uD83D\uDE00";
+
+        var diags = LspServer.FindNonAsciiDiagnostic(text);
+
+        Assert.IsNotNull(diags, "Surrogate pair is non-ASCII and should produce a diagnostic");
+        Assert.AreEqual(1, diags.Length);
+        Assert.IsTrue(diags[0].Message.Contains("U+1F600"), $"Expected U+1F600 in message but got: {diags[0].Message}");
+    }
+
+    [TestMethod]
+    public void FindNonAsciiDiagnostic_WithCrlfLineEnding_ReportsCorrectLine()
+    {
+        // CRLF (\r\n) must be counted as a single newline so that the line number
+        // reported for a non-ASCII character on line 1 (0-based) is correct.
+        var text = "rules: []\r\n# Non-ASCII: \u00E9"; // é is U+00E9
+
+        var diags = LspServer.FindNonAsciiDiagnostic(text);
+
+        Assert.IsNotNull(diags, "Non-ASCII text should produce a diagnostic");
+        Assert.AreEqual(1, diags.Length, "Expected exactly one diagnostic");
+        Assert.AreEqual(1, diags[0].Range.Start.Line, "Non-ASCII char is on line 1 (0-based) after one CRLF");
+    }
+
+    [TestMethod]
+    public void FindNonAsciiDiagnostic_WithCrOnlyLineEnding_ReportsCorrectLine()
+    {
+        // Bare CR (\r, without following LF) must also count as a newline.
+        var text = "rules: []\r# Non-ASCII: \u00E9";
+
+        var diags = LspServer.FindNonAsciiDiagnostic(text);
+
+        Assert.IsNotNull(diags, "Non-ASCII text should produce a diagnostic");
+        Assert.AreEqual(1, diags.Length, "Expected exactly one diagnostic");
+        Assert.AreEqual(1, diags[0].Range.Start.Line, "Non-ASCII char is on line 1 (0-based) after one CR");
     }
 
     // ── StripAnsi ─────────────────────────────────────────────────────────────

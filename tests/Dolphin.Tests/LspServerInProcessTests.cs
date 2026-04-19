@@ -229,15 +229,16 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public void Validate_InvalidYaml_ReturnsDiagnosticsWithLineAndCharacter()
+    public void Validate_SchemaInvalidYaml_ReturnsDiagnosticsWithLineAndCharacter()
     {
-        // "something: value" is syntactically valid YAML but missing the required top-level
-        // "rules:" key, so YamlRuleValidator.Validate returns at least one diagnostic.
-        // Testing the validator directly avoids a race between the fire-and-forget
-        // ValidateAndPublishAsync task and the shutdown/EOF sequence in LSP integration tests.
+        // "something: value" is syntactically valid YAML but fails the Semgrep schema
+        // (missing the required top-level "rules:" key), so YamlRuleValidator.Validate
+        // returns at least one diagnostic. Testing the validator directly avoids a race
+        // between the fire-and-forget ValidateAndPublishAsync task and the shutdown/EOF
+        // sequence in LSP integration tests.
         var diagnostics = YamlRuleValidator.Validate("something: value");
 
-        Assert.IsTrue(diagnostics.Length > 0, "Expected at least one diagnostic for invalid YAML");
+        Assert.IsTrue(diagnostics.Length > 0, "Expected at least one diagnostic for schema-invalid YAML");
         // Each diagnostic must have valid range.start.line and range.start.character
         var first = diagnostics[0];
         Assert.IsTrue(first.Range.Start.Line >= 0, $"Expected line >= 0, got {first.Range.Start.Line}");

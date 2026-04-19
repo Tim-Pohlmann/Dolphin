@@ -1,4 +1,4 @@
-#!/usr/bin/env dotnet run
+#!/usr/bin/env -S dotnet run
 #:package YamlDotNet@17.0.1
 
 // Refreshes src/Dolphin/Lsp/semgrep-schema.json from the pinned upstream commit.

@@ -8,9 +8,6 @@
     <AssemblyName>dolphin</AssemblyName>
     <RootNamespace>Dolphin</RootNamespace>
     <OpengrepVersion>v1.16.4</OpengrepVersion>
-    <!-- Pinned commit in returntocorp/semgrep-interfaces for rule_schema_v1.yaml.
-         Update this SHA to pull in a newer version of the schema. -->
-    <SemgrepInterfacesCommit>656d6518e822a088c6e1907abf7c3acc61095103</SemgrepInterfacesCommit>
     <!-- Self-contained trimmed publish settings -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
@@ -90,65 +87,28 @@
     <Message Text="Opengrep bundled → $(PublishDir)$(_PublishedBinName)" Importance="High" />
   </Target>
   <!--
-    FetchSemgrepSchema: downloads rule_schema_v1.yaml from the pinned semgrep-interfaces
-    commit, converts it from YAML to JSON (overriding the $schema draft URI to match the
-    draft 2019-09 that JsonSchema.Net expects), and writes the result to
-    Lsp/semgrep-schema.json (committed to the repo) so normal builds work offline.
-
-    Run this target explicitly when the pinned commit (SemgrepInterfacesCommit) changes:
-      dotnet build /p:FetchSchema=true
-
-    Requires python3 (Linux/macOS) or python (Windows).  PyYAML is installed automatically
-    into an isolated venv inside obj/ (pinned version).  Using a venv avoids the
-    PEP 668 "externally-managed-environment" error on macOS Homebrew Python and other
-    systems that protect the system Python from direct pip installs.
+    The Semgrep rule schema (Lsp/semgrep-schema.json) is committed to the repo and embedded
+    into the dolphin binary as a .NET resource (see the EmbeddedResource item above), so
+    builds work offline. To refresh it against a newer upstream commit, run:
+      dotnet run scripts/update-schema.cs
 
     rule_schema_v1.yaml is sourced from https://github.com/returntocorp/semgrep-interfaces,
-    licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).
-    The file has not been modified beyond the $schema URI update noted above.
+    licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1). LGPL 2.1
+    redistribution obligations (satisfied by this project):
+      - The schema is converted YAML → JSON with only the documented modifications listed
+        in scripts/update-schema.cs.
+      - The LGPL license text (and link to source) is included in the published output as
+        SEMGREP-SCHEMA-LICENSE.txt (see BundleSemgrepSchemaLicense target below).
+      - Source code is available at https://github.com/returntocorp/semgrep-interfaces.
   -->
-  <Target Name="FetchSemgrepSchema" BeforeTargets="BeforeBuild"
-          Condition="'$(FetchSchema)' == 'true'">
-    <PropertyGroup>
-      <_PythonCmd Condition="'$(OS)'=='Windows_NT'">python</_PythonCmd>
-      <_PythonCmd Condition="'$(OS)'!='Windows_NT'">python3</_PythonCmd>
-      <_VenvPath>$(IntermediateOutputPath)py-venv</_VenvPath>
-      <_VenvPython Condition="'$(OS)'=='Windows_NT'">$(_VenvPath)\Scripts\python</_VenvPython>
-      <_VenvPython Condition="'$(OS)'!='Windows_NT'">$(_VenvPath)/bin/python</_VenvPython>
-      <_SchemaYamlUrl>https://raw.githubusercontent.com/returntocorp/semgrep-interfaces/$(SemgrepInterfacesCommit)/rule_schema_v1.yaml</_SchemaYamlUrl>
-      <_SchemaYamlCache>$(IntermediateOutputPath)semgrep-schema-$(SemgrepInterfacesCommit).yaml</_SchemaYamlCache>
-      <_SchemaJsonPath>$(MSBuildThisFileDirectory)Lsp/semgrep-schema.json</_SchemaJsonPath>
-      <_SchemaPyScript>$(IntermediateOutputPath)convert_schema.py</_SchemaPyScript>
-    </PropertyGroup>
 
-    <!-- Ensure the obj/ subdirectory exists before writing files into it -->
-    <MakeDir Directories="$(IntermediateOutputPath)" />
-
-    <!-- Download YAML (always re-download when FetchSchema=true to get the latest) -->
-    <Message Text="Fetching Semgrep rule schema ($(SemgrepInterfacesCommit))…" Importance="High" />
-    <Exec Command="curl -fsSL --proto =https --tlsv1.2 -o &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaYamlUrl)&quot;" />
-
-    <!-- Convert YAML → JSON and overwrite the committed file -->
-    <!--   Step 1: write a small Python helper script to the intermediate directory -->
-    <ItemGroup>
-      <_SchemaScriptLine Include="import yaml" />
-      <_SchemaScriptLine Include="import json" />
-      <_SchemaScriptLine Include="import sys" />
-      <_SchemaScriptLine Include="with open(sys.argv[1]) as f: data = yaml.safe_load(f)" />
-      <_SchemaScriptLine Include="data['$schema'] = 'https://json-schema.org/draft/2019-09/schema'" />
-      <_SchemaScriptLine Include="with open(sys.argv[2], 'w') as f: json.dump(data, f, indent=2)" />
-    </ItemGroup>
-    <WriteLinesToFile
-      File="$(_SchemaPyScript)"
-      Overwrite="true"
-      Lines="@(_SchemaScriptLine)" />
-    <!--   Step 2: create an isolated venv and install PyYAML into it -->
-    <Exec Command="$(_PythonCmd) -m venv &quot;$(_VenvPath)&quot;" />
-    <Exec Command="&quot;$(_VenvPython)&quot; -m pip install --quiet --disable-pip-version-check pyyaml==6.0.2" />
-    <!--   Step 3: run the helper script to produce the committed JSON file -->
-    <Exec Command="&quot;$(_VenvPython)&quot; &quot;$(_SchemaPyScript)&quot; &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaJsonPath)&quot;" />
-
-    <Message Text="Semgrep rule schema updated → $(_SchemaJsonPath)" Importance="High" />
+  <!--
+    BundleSemgrepSchemaLicense: writes a brief LGPL attribution file next to the published
+    binary. The Semgrep rule schema is embedded in dolphin as a .NET resource, so the LGPL
+    obligation travels with every published artifact regardless of runtime identifier.
+  -->
+  <Target Name="BundleSemgrepSchemaLicense" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' != ''">
+    <WriteLinesToFile File="$(PublishDir)SEMGREP-SCHEMA-LICENSE.txt" Overwrite="true" Lines="Dolphin embeds the Semgrep rule schema from https://github.com/returntocorp/semgrep-interfaces (rule_schema_v1.yaml), licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).%0AThe schema has been converted from YAML to JSON%3B modifications are documented in scripts/update-schema.cs. Source is available at https://github.com/returntocorp/semgrep-interfaces.%0AThe full license text is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" />
   </Target>
 
 </Project>

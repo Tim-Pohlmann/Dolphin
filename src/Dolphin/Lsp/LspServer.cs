@@ -37,9 +37,8 @@ public static partial class LspServer
 
     // Cached failure from the first scanner resolution failure in this LSP session
     // to avoid repeated retries and log spam (non-null = resolution previously failed this session).
-    // Exposed as internal so tests can control cooldown elapsed time without waiting for the
-    // real cooldown to expire; production code uses the same accessor.
-    internal static ScannerFailure? LastScannerFailureForTesting { get; set; }
+    // Internal so tests can control cooldown elapsed time without waiting for the real cooldown.
+    internal static ScannerFailure? LastScannerFailure { get; set; }
 
     // Test seam: true when at least one latest-per-URI validation CTS is still tracked.
     // This reflects _validationCts membership only; entries can also be removed by
@@ -106,7 +105,7 @@ public static partial class LspServer
         // runs its finally block in between will see its captured generation no longer match and
         // will skip the increment (preserving the 0 baseline).
         _opengrepBinary = null;
-        LastScannerFailureForTesting = null;
+        LastScannerFailure = null;
         _validationCompletedCount = 0;
         Interlocked.Increment(ref _sessionGeneration);
 
@@ -584,7 +583,7 @@ public static partial class LspServer
             return true;
 
         // Acquire the resolution lock so that concurrent validations don't race on
-        // the shared state (_opengrepBinary, LastScannerFailureForTesting)
+        // the shared state (_opengrepBinary, LastScannerFailure)
         // and don't trigger multiple simultaneous EnsureInstalledAsync calls or log lines.
         string? newFailureMessage = null;
         await _resolutionLock.WaitAsync(ct);
@@ -605,10 +604,10 @@ public static partial class LspServer
         if (newFailureMessage is not null && !ct.IsCancellationRequested)
             await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner: {newFailureMessage}");
 
-        // Snapshot once: a concurrent validation can clear LastScannerFailureForTesting after the
+        // Snapshot once: a concurrent validation can clear LastScannerFailure after the
         // null check, which would otherwise risk a NullReferenceException or publishing an
         // inconsistent message.
-        var failure = LastScannerFailureForTesting;
+        var failure = LastScannerFailure;
         if (failure is not null)
         {
             if (!ct.IsCancellationRequested)
@@ -645,14 +644,14 @@ public static partial class LspServer
         // Skip if resolved, or if the cooldown since the last failure has not elapsed yet.
         if (_opengrepBinary is not null)
             return null;
-        var prior = LastScannerFailureForTesting;
+        var prior = LastScannerFailure;
         if (prior is not null && DateTime.UtcNow - prior.Since < ScannerRetryCooldown)
             return null;
 
         try
         {
             _opengrepBinary = await GetResolver()();
-            LastScannerFailureForTesting = null; // clear on success
+            LastScannerFailure = null; // clear on success
             return null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -660,7 +659,7 @@ public static partial class LspServer
             var message = ex is InvalidOperationException
                 ? ex.Message
                 : $"Failed to resolve scanner binary: {ex.Message}";
-            LastScannerFailureForTesting = new ScannerFailure(message, DateTime.UtcNow);
+            LastScannerFailure = new ScannerFailure(message, DateTime.UtcNow);
             return message; // captured for post-lock logging by the caller
         }
     }

@@ -674,7 +674,7 @@ public partial class LspServerInProcessTests
             // block ran, meaning PublishDiagnosticsAsync has already finished writing) before
             // sending shutdown, so the EOF/DrainValidationsAsync cannot cancel the in-flight publish.
             var responses = await RunServerWithConditionAsync(
-                () => LspServer.LastScannerFailureForTesting != null && !LspServer.HasInFlightValidationsForTesting,
+                () => LspServer.LastScannerFailure != null && !LspServer.HasInFlightValidationsForTesting,
                 "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
                 """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
@@ -725,7 +725,7 @@ public partial class LspServerInProcessTests
                     {
                         // Between didOpen and didChange: wait for the first validation to complete
                         // so the failure is cached and the second edit is guaranteed to see it.
-                        await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting != null);
+                        await WaitForConditionAsync(() => LspServer.LastScannerFailure != null);
                         // Also wait for the first validation's finally block to run so that
                         // ValidationCompletedCountForTesting reflects the first validation only,
                         // not an intermediate state. Without this, completedAfterOpen could be 0
@@ -790,12 +790,12 @@ public partial class LspServerInProcessTests
             await pipe.Writer.WriteAsync(openFrame);
 
             // Wait deterministically for the first validation to complete so the failure is in the cache
-            await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting != null);
+            await WaitForConditionAsync(() => LspServer.LastScannerFailure != null);
 
             // Back-date the cached failure so the cooldown appears already elapsed
-            var failure = LspServer.LastScannerFailureForTesting;
+            var failure = LspServer.LastScannerFailure;
             Assert.IsNotNull(failure, "A scanner-missing failure should have been cached after didOpen");
-            LspServer.LastScannerFailureForTesting = failure with { Since = DateTime.UtcNow - TimeSpan.FromMinutes(5) };
+            LspServer.LastScannerFailure = failure with { Since = DateTime.UtcNow - TimeSpan.FromMinutes(5) };
 
             // Phase 2: send didChange → stale failure → retry → succeeds → cache cleared
             var changeFrame = FrameMessage(
@@ -803,10 +803,10 @@ public partial class LspServerInProcessTests
             await pipe.Writer.WriteAsync(changeFrame);
 
             // Wait deterministically for the second validation to complete (resolver succeeds → cache cleared)
-            await WaitForConditionAsync(() => LspServer.LastScannerFailureForTesting == null);
+            await WaitForConditionAsync(() => LspServer.LastScannerFailure == null);
 
             // After successful recovery, the failure cache must be cleared
-            Assert.IsNull(LspServer.LastScannerFailureForTesting,
+            Assert.IsNull(LspServer.LastScannerFailure,
                 "Cached failure should be cleared after the resolver succeeds");
 
             // Shutdown
@@ -823,7 +823,7 @@ public partial class LspServerInProcessTests
         finally
         {
             LspServer.BinaryResolverOverride = null;
-            LspServer.LastScannerFailureForTesting = null;
+            LspServer.LastScannerFailure = null;
         }
     }
 

@@ -35,18 +35,11 @@ public static partial class LspServer
     // EnsureInstalledAsync calls and multiple stderr log lines from racing validations.
     private static readonly SemaphoreSlim _resolutionLock = new(1, 1);
 
-    // Cached failure message from the first scanner resolution failure in this LSP session
+    // Cached failure from the first scanner resolution failure in this LSP session
     // to avoid repeated retries and log spam (non-null = resolution previously failed this session).
-    private static ScannerFailure? _lastScannerFailure;
-
-    // Test seam: allows tests to read/write the live failure cache so cooldown scenarios
-    // can control elapsed time without waiting for the real cooldown to expire.
-    // Production code must use the private _lastScannerFailure field directly.
-    internal static ScannerFailure? LastScannerFailureForTesting
-    {
-        get => _lastScannerFailure;
-        set => _lastScannerFailure = value;
-    }
+    // Exposed as internal so tests can control cooldown elapsed time without waiting for the
+    // real cooldown to expire; production code uses the same accessor.
+    internal static ScannerFailure? LastScannerFailureForTesting { get; set; }
 
     // Test seam: true when at least one latest-per-URI validation CTS is still tracked.
     // This reflects _validationCts membership only; entries can also be removed by
@@ -104,7 +97,7 @@ public static partial class LspServer
 
         // Reset per-session state so a restart picks up a newly installed binary.
         _opengrepBinary = null;
-        _lastScannerFailure = null;
+        LastScannerFailureForTesting = null;
         _validationCompletedCount = 0;
 
         // Best-effort early resolution; if it fails we retry on first validate.
@@ -202,50 +195,61 @@ public static partial class LspServer
     /// </summary>
     private static async Task DrainValidationsAsync()
     {
+        await CancelAllInFlightValidationsAsync();
+        await AwaitPendingValidationTasksAsync();
+    }
+
+    /// <summary>
+    /// Drains <see cref="_validationCts"/> by cancelling every in-flight validation.
+    /// Loops until the map appears empty to cover entries inserted concurrently.
+    /// </summary>
+    private static async Task CancelAllInFlightValidationsAsync()
+    {
         var ctsTasks = new List<Task>();
         while (!_validationCts.IsEmpty)
-            foreach (var key in _validationCts.Keys)
-                if (_validationCts.TryRemove(key, out var old))
-                {
-                    try { ctsTasks.Add(old.CancelAsync()); }
-                    catch (ObjectDisposedException)
-                    {
-                        // The CTS may have been disposed by its owning ValidateAndPublishAsync
-                        // between our TryRemove and CancelAsync call.  Cancellation is moot in
-                        // that case (the task is already completing), so swallow and continue.
-                    }
-                }
-        if (ctsTasks.Count > 0)
-            await Task.WhenAll(ctsTasks);
-
-        // After signalling cancellation, await the actual ValidateAndPublishAsync tasks so
-        // their finally blocks (state cleanup, counter increment) complete before the caller
-        // resets per-session state.  ContinueWith removes each entry on normal completion;
-        // here we snapshot whatever is still pending and await it.
-        //
-        // Bound the wait: SendAsync writes to stdout with CancellationToken.None (to avoid
-        // partial framing), so a wedged client that stops reading without closing would
-        // otherwise hang shutdown forever.  Log and move on after the timeout; also detach
-        // the abandoned entries from _validationTasks so stale tasks don't linger across
-        // in-process sessions.
-        var pendingEntries = _validationTasks.ToArray();
-        if (pendingEntries.Length > 0)
         {
-            var pendingTasks = Array.ConvertAll(pendingEntries, static e => e.Value);
-            var all = Task.WhenAll(pendingTasks);
-            var completed = await Task.WhenAny(all, Task.Delay(ValidationDrainTimeout));
-            if (completed != all)
+            foreach (var key in _validationCts.Keys)
             {
-                foreach (var e in pendingEntries)
-                    _validationTasks.TryRemove(e);
-                await Console.Error.WriteLineAsync(
-                    $"[dolphin-lsp] timed out waiting for {pendingTasks.Length} validation task(s) to finish during shutdown; continuing.");
-            }
-            else
-            {
-                await all; // observe any aggregated exceptions
+                if (!_validationCts.TryRemove(key, out var old)) continue;
+                try { ctsTasks.Add(old.CancelAsync()); }
+                catch (ObjectDisposedException)
+                {
+                    // The CTS may have been disposed by its owning ValidateAndPublishAsync
+                    // between our TryRemove and CancelAsync call.  Cancellation is moot in
+                    // that case (the task is already completing), so swallow and continue.
+                }
             }
         }
+        if (ctsTasks.Count > 0)
+            await Task.WhenAll(ctsTasks);
+    }
+
+    /// <summary>
+    /// Awaits the actual ValidateAndPublishAsync tasks so their finally blocks
+    /// (state cleanup, counter increment) run before the caller resets per-session state.
+    /// Bound the wait: SendAsync writes to stdout with CancellationToken.None (to avoid
+    /// partial framing), so a wedged client that stops reading without closing would
+    /// otherwise hang shutdown forever. On timeout, log and detach the abandoned entries
+    /// from <see cref="_validationTasks"/> so stale tasks don't linger across in-process sessions.
+    /// </summary>
+    private static async Task AwaitPendingValidationTasksAsync()
+    {
+        var pendingEntries = _validationTasks.ToArray();
+        if (pendingEntries.Length == 0) return;
+
+        var pendingTasks = Array.ConvertAll(pendingEntries, static e => e.Value);
+        var all = Task.WhenAll(pendingTasks);
+        var completed = await Task.WhenAny(all, Task.Delay(ValidationDrainTimeout));
+        if (completed == all)
+        {
+            await all; // observe any aggregated exceptions
+            return;
+        }
+
+        foreach (var e in pendingEntries)
+            _validationTasks.TryRemove(e);
+        await Console.Error.WriteLineAsync(
+            $"[dolphin-lsp] timed out waiting for {pendingTasks.Length} validation task(s) to finish during shutdown; continuing.");
     }
 
     private static readonly TimeSpan ValidationDrainTimeout = TimeSpan.FromSeconds(5);
@@ -565,7 +569,7 @@ public static partial class LspServer
             return true;
 
         // Acquire the resolution lock so that concurrent validations don't race on
-        // the shared fields (_opengrepBinary, _lastScannerFailure)
+        // the shared state (_opengrepBinary, LastScannerFailureForTesting)
         // and don't trigger multiple simultaneous EnsureInstalledAsync calls or log lines.
         string? newFailureMessage = null;
         await _resolutionLock.WaitAsync(ct);
@@ -586,10 +590,10 @@ public static partial class LspServer
         if (newFailureMessage is not null && !ct.IsCancellationRequested)
             await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner: {newFailureMessage}");
 
-        // Snapshot once: a concurrent validation can clear _lastScannerFailure after the
+        // Snapshot once: a concurrent validation can clear LastScannerFailureForTesting after the
         // null check, which would otherwise risk a NullReferenceException or publishing an
         // inconsistent message.
-        var failure = _lastScannerFailure;
+        var failure = LastScannerFailureForTesting;
         if (failure is not null)
         {
             if (!ct.IsCancellationRequested)
@@ -626,13 +630,14 @@ public static partial class LspServer
         // Skip if resolved, or if the cooldown since the last failure has not elapsed yet.
         if (_opengrepBinary is not null)
             return null;
-        if (_lastScannerFailure is not null && DateTime.UtcNow - _lastScannerFailure.Since < ScannerRetryCooldown)
+        var prior = LastScannerFailureForTesting;
+        if (prior is not null && DateTime.UtcNow - prior.Since < ScannerRetryCooldown)
             return null;
 
         try
         {
             _opengrepBinary = await GetResolver()();
-            _lastScannerFailure = null; // clear on success
+            LastScannerFailureForTesting = null; // clear on success
             return null;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -640,7 +645,7 @@ public static partial class LspServer
             var message = ex is InvalidOperationException
                 ? ex.Message
                 : $"Failed to resolve scanner binary: {ex.Message}";
-            _lastScannerFailure = new ScannerFailure(message, DateTime.UtcNow);
+            LastScannerFailureForTesting = new ScannerFailure(message, DateTime.UtcNow);
             return message; // captured for post-lock logging by the caller
         }
     }

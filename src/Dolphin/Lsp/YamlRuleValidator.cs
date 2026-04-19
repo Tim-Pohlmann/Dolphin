@@ -64,7 +64,8 @@ internal static class YamlRuleValidator
         catch (YamlDotNet.Core.YamlException ex)
         {
             var line = (int)Math.Clamp(ex.Start.Line - 1, 0, int.MaxValue);
-            diagnostics.Add(MakeDiagnostic(line, 0, $"YAML syntax error: {ex.Message}"));
+            var character = (int)Math.Clamp(ex.Start.Column - 1, 0, int.MaxValue);
+            diagnostics.Add(MakeDiagnostic(line, character, $"YAML syntax error: {ex.Message}"));
             return [.. diagnostics];
         }
 
@@ -213,7 +214,7 @@ internal static class YamlRuleValidator
             case "required":
             {
                 // Error node is a string like "Required properties ["id"] are not present"
-                var raw = errorNode?.ToString();
+                var raw = GetStringValue(errorNode);
                 if (!string.IsNullOrEmpty(raw))
                     yield return raw;
                 break;
@@ -235,7 +236,7 @@ internal static class YamlRuleValidator
                 // Surface a user-oriented message for combinator failures so that
                 // invalid inputs (e.g. missing required properties inside a oneOf
                 // branch) are never silently dropped.
-                var raw = errorNode?.ToString();
+                var raw = GetStringValue(errorNode);
                 if (!string.IsNullOrEmpty(raw))
                 {
                     yield return raw;
@@ -260,14 +261,22 @@ internal static class YamlRuleValidator
 
             default:
                 // Emit unknown keyword errors only when the error is a plain string
-                var str = errorNode?.GetValueKind() == System.Text.Json.JsonValueKind.String
-                    ? errorNode.GetValue<string>()
-                    : null;
+                var str = GetStringValue(errorNode);
                 if (!string.IsNullOrEmpty(str))
                     yield return str;
                 break;
         }
     }
+
+    /// <summary>
+    /// Extracts the raw string payload from a schema-error node, or null when the node
+    /// isn't a string. Avoids <c>JsonNode.ToString()</c> on non-string nodes, which would
+    /// emit JSON-encoded output (e.g. with surrounding quotes) into user-visible messages.
+    /// </summary>
+    private static string? GetStringValue(JsonNode? node) =>
+        node?.GetValueKind() == System.Text.Json.JsonValueKind.String
+            ? node.GetValue<string>()
+            : null;
 
     // ── YAML → JsonNode conversion ────────────────────────────────────────────
 

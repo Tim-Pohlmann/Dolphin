@@ -48,11 +48,17 @@ public static partial class LspServer
     // those paths, !IsEmpty reliably indicates the task's finally block has not yet run.
     internal static bool HasInFlightValidationsForTesting => !_validationCts.IsEmpty;
 
-    // Test seam: monotonically incremented each time a ValidateAndPublishAsync finally block runs.
-    // Lets tests wait for a specific number of validations to complete without relying on
-    // HasInFlightValidationsForTesting (which can be empty before the task even starts).
+    // Test seam: monotonically incremented each time a ValidateAndPublishAsync finally block runs
+    // within the current session. Lets tests wait for a specific number of validations to complete
+    // without relying on HasInFlightValidationsForTesting (which can be empty before the task even starts).
     private static int _validationCompletedCount;
     internal static int ValidationCompletedCountForTesting => _validationCompletedCount;
+
+    // Session generation: bumped at the start of each RunAsync. Validation tasks capture this at
+    // startup; after a drain timeout detaches a task, its finally block can still run later, but
+    // its captured generation no longer matches and it skips mutating shared session state
+    // (otherwise in-process restarts would observe stale completion-count bumps from the prior session).
+    private static int _sessionGeneration;
 
     // Tracks all in-flight ValidateAndPublishAsync tasks so DrainValidationsAsync can await their
     // completion after cancellation. This ensures that per-session state (e.g. _opengrepBinary)
@@ -96,9 +102,13 @@ public static partial class LspServer
         await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
 
         // Reset per-session state so a restart picks up a newly installed binary.
+        // Bump the generation *after* clearing the counter so any detached prior-session task that
+        // runs its finally block in between will see its captured generation no longer match and
+        // will skip the increment (preserving the 0 baseline).
         _opengrepBinary = null;
         LastScannerFailureForTesting = null;
         _validationCompletedCount = 0;
+        Interlocked.Increment(ref _sessionGeneration);
 
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await GetResolver()(); }
@@ -533,6 +543,7 @@ public static partial class LspServer
     private static async Task ValidateAndPublishAsync(
         Stream stdout, string uri, string text, CancellationTokenSource cts)
     {
+        var generation = Volatile.Read(ref _sessionGeneration);
         using (cts) // owns disposal; keeps the token alive for the full duration
         {
             var ct = cts.Token;
@@ -551,7 +562,11 @@ public static partial class LspServer
                 // Remove from the map before disposal; if CancelPrevious already replaced
                 // this CTS with a newer one the TryRemove is a no-op and the new CTS is safe.
                 _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
-                Interlocked.Increment(ref _validationCompletedCount);
+                // Only bump the completion counter if we are still in the session that started us.
+                // After a drain timeout detaches us, a later session would otherwise see a bumped
+                // counter it never issued the work for.
+                if (Volatile.Read(ref _sessionGeneration) == generation)
+                    Interlocked.Increment(ref _validationCompletedCount);
             }
         }
     }

@@ -98,7 +98,16 @@ public static partial class LspServer
 
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
-        await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
+        // Cancel any leftovers from a previous in-process session. If the drain times out, a
+        // prior-session task is still running (possibly blocked in SendAsync holding _stdoutLock,
+        // or about to mutate _opengrepBinary/LastScannerFailure). Refusing to start avoids
+        // poisoning the new session with stale state or stdout contention.
+        if (!await DrainValidationsAsync())
+        {
+            await Console.Error.WriteLineAsync(
+                "[dolphin-lsp] aborting start: prior-session validation tasks did not complete; in-process reuse is not safe.");
+            return 1;
+        }
 
         // Reset per-session state so a restart picks up a newly installed binary.
         // Bump the generation *after* clearing the counter so any detached prior-session task that
@@ -127,7 +136,9 @@ public static partial class LspServer
             else if (action == MessageAction.ExitRequested) break;
         }
 
-        await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
+        // Cancel any validations still in flight on disconnect. A drain timeout here isn't
+        // fatal for this session (we're exiting); the next RunAsync guards the restart path.
+        _ = await DrainValidationsAsync();
         // Per LSP spec, exit without a prior shutdown is an error (code 1).
         return shutdownReceived ? 0 : 1;
     }
@@ -201,11 +212,12 @@ public static partial class LspServer
     /// This is still not strictly atomic — a new entry can arrive between the IsEmpty check
     /// and the next iteration — but it is sufficient for the two call-sites (session start/end),
     /// which run outside the message loop where new validations are enqueued.
+    /// Returns <c>true</c> if all tasks completed within the timeout, <c>false</c> on timeout.
     /// </summary>
-    private static async Task DrainValidationsAsync()
+    private static async Task<bool> DrainValidationsAsync()
     {
         await CancelAllInFlightValidationsAsync();
-        await AwaitPendingValidationTasksAsync();
+        return await AwaitPendingValidationTasksAsync();
     }
 
     /// <summary>
@@ -238,13 +250,15 @@ public static partial class LspServer
     /// (state cleanup, counter increment) run before the caller resets per-session state.
     /// Bound the wait: SendAsync writes to stdout with CancellationToken.None (to avoid
     /// partial framing), so a wedged client that stops reading without closing would
-    /// otherwise hang shutdown forever. On timeout, log and detach the abandoned entries
-    /// from <see cref="_validationTasks"/> so stale tasks don't linger across in-process sessions.
+    /// otherwise hang shutdown forever. Returns <c>true</c> if drained cleanly, <c>false</c>
+    /// on timeout (abandoned entries are detached from <see cref="_validationTasks"/>, but
+    /// the underlying tasks may still be running — the caller must treat this as unsafe
+    /// for in-process reuse).
     /// </summary>
-    private static async Task AwaitPendingValidationTasksAsync()
+    private static async Task<bool> AwaitPendingValidationTasksAsync()
     {
         var pendingEntries = _validationTasks.ToArray();
-        if (pendingEntries.Length == 0) return;
+        if (pendingEntries.Length == 0) return true;
 
         var pendingTasks = Array.ConvertAll(pendingEntries, static e => e.Value);
         var all = Task.WhenAll(pendingTasks);
@@ -252,13 +266,14 @@ public static partial class LspServer
         if (completed == all)
         {
             await all; // observe any aggregated exceptions
-            return;
+            return true;
         }
 
         foreach (var e in pendingEntries)
             _validationTasks.TryRemove(e);
         await Console.Error.WriteLineAsync(
-            $"[dolphin-lsp] timed out waiting for {pendingTasks.Length} validation task(s) to finish during shutdown; continuing.");
+            $"[dolphin-lsp] timed out waiting for {pendingTasks.Length} validation task(s) to finish during shutdown.");
+        return false;
     }
 
     private static readonly TimeSpan ValidationDrainTimeout = TimeSpan.FromSeconds(5);

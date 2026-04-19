@@ -472,4 +472,19 @@ public class YamlRuleValidatorTests
     {
         Assert.AreEqual(expected, YamlRuleValidator.UnescapeJsonPointerSegment(escaped));
     }
+
+    // ── LastSegment ───────────────────────────────────────────────────────────
+
+    [TestMethod]
+    [DataRow("/rules/0/severity", "severity")]
+    [DataRow("/rules/0/languages/0", "languages")]         // skips numeric tail
+    [DataRow("/rules/0/patterns/2/pattern", "pattern")]
+    [DataRow("/rules/0/a~1b", "a/b")]                      // unescapes
+    [DataRow("/rules/0/a~1b/0", "a/b")]                    // skips numeric, unescapes
+    [DataRow("/0/1/2", "")]                                // all numeric → empty
+    [DataRow("", "")]
+    public void LastSegment_SkipsNumericIndicesAndUnescapes(string pointer, string expected)
+    {
+        Assert.AreEqual(expected, YamlRuleValidator.LastSegment(pointer));
+    }
 }

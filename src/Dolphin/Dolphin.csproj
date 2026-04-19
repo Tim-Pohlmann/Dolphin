@@ -126,7 +126,7 @@
 
     <!-- Download YAML (always re-download when FetchSchema=true to get the latest) -->
     <Message Text="Fetching Semgrep rule schema ($(SemgrepInterfacesCommit))…" Importance="High" />
-    <Exec Command="curl -fsSL --proto '=https' --tlsv1.2 -o &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaYamlUrl)&quot;" />
+    <Exec Command="curl -fsSL --proto =https --tlsv1.2 -o &quot;$(_SchemaYamlCache)&quot; &quot;$(_SchemaYamlUrl)&quot;" />
 
     <!-- Convert YAML → JSON and overwrite the committed file -->
     <!--   Step 1: write a small Python helper script to the intermediate directory -->

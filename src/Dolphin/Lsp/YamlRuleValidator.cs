@@ -219,7 +219,9 @@ internal static class YamlRuleValidator
             {
                 // Include the field name since the raw schema message doesn't mention it
                 var field = LastSegment(instancePath);
-                yield return $"Invalid value for '{field}'. See allowed values in the Semgrep rule schema.";
+                yield return string.IsNullOrEmpty(field)
+                    ? "Invalid value. See allowed values in the Semgrep rule schema."
+                    : $"Invalid value for '{field}'. See allowed values in the Semgrep rule schema.";
                 break;
             }
 
@@ -355,11 +357,32 @@ internal static class YamlRuleValidator
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static string LastSegment(string jsonPointerPath)
+    /// <summary>
+    /// Returns the last non-numeric segment of a JSON Pointer path, unescaped per RFC 6901.
+    /// Numeric segments are array indices (e.g., ".../languages/0") and are skipped so that
+    /// diagnostic messages reference the owning field name (e.g., "languages") instead of
+    /// an unhelpful index like "0".
+    /// </summary>
+    internal static string LastSegment(string jsonPointerPath)
     {
-        var idx = jsonPointerPath.LastIndexOf('/');
-        var segment = idx >= 0 ? jsonPointerPath[(idx + 1)..] : jsonPointerPath;
-        return UnescapeJsonPointerSegment(segment);
+        var segments = jsonPointerPath.Split('/');
+        for (var i = segments.Length - 1; i >= 0; i--)
+        {
+            if (segments[i].Length == 0) continue;
+            if (IsArrayIndex(segments[i])) continue;
+            return UnescapeJsonPointerSegment(segments[i]);
+        }
+        return string.Empty;
+    }
+
+    private static bool IsArrayIndex(string segment)
+    {
+        if (segment.Length == 0) return false;
+        foreach (var c in segment)
+        {
+            if (c is < '0' or > '9') return false;
+        }
+        return true;
     }
 
     /// <summary>

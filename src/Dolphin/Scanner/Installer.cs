@@ -45,8 +45,14 @@ public static class Installer
         return (binary, version);
     }
 
+    // Bounded wait for the --version probe.  Without this, a broken or hung scanner binary
+    // can block resolver callers (e.g. the LSP's ResolveUnderLockAsync) indefinitely, which
+    // in turn blocks DrainValidationsAsync on shutdown.
+    private static readonly TimeSpan VersionProbeTimeout = TimeSpan.FromSeconds(5);
+
     private static async Task<string?> GetVersionAsync(string binaryPath)
     {
+        Process? proc = null;
         try
         {
             var psi = new ProcessStartInfo(binaryPath, "--version")
@@ -55,14 +61,36 @@ public static class Installer
                 RedirectStandardError = true,
                 UseShellExecute = false
             };
-            using var proc = Process.Start(psi)!;
-            var output = await proc.StandardOutput.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-            return proc.ExitCode == 0 ? output.Trim() : null;
+            proc = Process.Start(psi)!;
+            using var timeoutCts = new CancellationTokenSource(VersionProbeTimeout);
+            // Read stdout and stderr concurrently: stderr is redirected, so if the child
+            // writes enough to fill the pipe while we're only draining stdout, it will
+            // block forever and we'll hit the timeout even though the binary is fine.
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var stderrTask = proc.StandardError.ReadToEndAsync(timeoutCts.Token);
+            await Task.WhenAll(stdoutTask, stderrTask);
+            await proc.WaitForExitAsync(timeoutCts.Token);
+            return proc.ExitCode == 0 ? stdoutTask.Result.Trim() : null;
         }
         catch
         {
+            // Includes OperationCanceledException from the timeout; kill the process and
+            // reap it so a hung --version probe does not leak into a zombie on Unix.
+            if (proc is not null)
+            {
+                try { proc.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+                try
+                {
+                    using var reaperCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    await proc.WaitForExitAsync(reaperCts.Token);
+                }
+                catch { /* best-effort reap */ }
+            }
             return null;
+        }
+        finally
+        {
+            proc?.Dispose();
         }
     }
 

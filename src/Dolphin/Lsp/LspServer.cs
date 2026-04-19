@@ -19,6 +19,52 @@ public static partial class LspServer
 {
     private static string? _opengrepBinary;
 
+    // Test seam: when set, replaces Installer.EnsureInstalledAsync() in both RunAsync and ValidateAndPublishAsync.
+    internal static Func<Task<string>>? BinaryResolverOverride { get; set; }
+
+    // Combines the failure message and its timestamp into one atomic piece of state.
+    // Non-null means resolution previously failed this session; null means no failure (or cleared).
+    internal record ScannerFailure(string Message, DateTime Since);
+
+    private static readonly TimeSpan ScannerRetryCooldown = TimeSpan.FromSeconds(30);
+
+    // LSP DiagnosticSeverity: 1=Error, 2=Warning, 3=Information, 4=Hint
+    private const int DiagnosticSeverityError = 1;
+
+    // Ensures only one concurrent resolution attempt runs at a time, preventing duplicate
+    // EnsureInstalledAsync calls and multiple stderr log lines from racing validations.
+    private static readonly SemaphoreSlim _resolutionLock = new(1, 1);
+
+    // Cached failure from the first scanner resolution failure in this LSP session
+    // to avoid repeated retries and log spam (non-null = resolution previously failed this session).
+    // Internal so tests can control cooldown elapsed time without waiting for the real cooldown.
+    internal static ScannerFailure? LastScannerFailure { get; set; }
+
+    // Test seam: true when at least one latest-per-URI validation CTS is still tracked.
+    // This reflects _validationCts membership only; entries can also be removed by
+    // CancelAndRemove (didClose) or DrainValidationsAsync without the corresponding
+    // ValidateAndPublishAsync task having completed yet. In tests that do not trigger
+    // those paths, !IsEmpty reliably indicates the task's finally block has not yet run.
+    internal static bool HasInFlightValidationsForTesting => !_validationCts.IsEmpty;
+
+    // Test seam: monotonically incremented each time a ValidateAndPublishAsync finally block runs
+    // within the current session. Lets tests wait for a specific number of validations to complete
+    // without relying on HasInFlightValidationsForTesting (which can be empty before the task even starts).
+    private static int _validationCompletedCount;
+    internal static int ValidationCompletedCountForTesting => _validationCompletedCount;
+
+    // Session generation: bumped at the start of each RunAsync. Validation tasks capture this at
+    // startup; after a drain timeout detaches a task, its finally block can still run later, but
+    // its captured generation no longer matches and it skips mutating shared session state
+    // (otherwise in-process restarts would observe stale completion-count bumps from the prior session).
+    private static int _sessionGeneration;
+
+    // Tracks all in-flight ValidateAndPublishAsync tasks so DrainValidationsAsync can await their
+    // completion after cancellation. This ensures that per-session state (e.g. _opengrepBinary)
+    // is not reset until all tasks' finally blocks have run.
+    private static readonly ConcurrentDictionary<int, Task> _validationTasks = new();
+    private static int _nextTaskId;
+
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
 
@@ -48,12 +94,32 @@ public static partial class LspServer
 
     internal static string StripAnsi(string s) => AnsiEscapeRegex().Replace(s, "");
 
+    private static Func<Task<string>> GetResolver() => BinaryResolverOverride ?? Installer.EnsureInstalledAsync;
+
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
-        await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
+        // Cancel any leftovers from a previous in-process session. If the drain times out, a
+        // prior-session task is still running (possibly blocked in SendAsync holding _stdoutLock,
+        // or about to mutate _opengrepBinary/LastScannerFailure). Refusing to start avoids
+        // poisoning the new session with stale state or stdout contention.
+        if (!await DrainValidationsAsync())
+        {
+            await Console.Error.WriteLineAsync(
+                "[dolphin-lsp] aborting start: prior-session validation tasks did not complete; in-process reuse is not safe.");
+            return 1;
+        }
+
+        // Reset per-session state so a restart picks up a newly installed binary.
+        // Bump the generation *after* clearing the counter so any detached prior-session task that
+        // runs its finally block in between will see its captured generation no longer match and
+        // will skip the increment (preserving the 0 baseline).
+        _opengrepBinary = null;
+        LastScannerFailure = null;
+        _validationCompletedCount = 0;
+        Interlocked.Increment(ref _sessionGeneration);
 
         // Best-effort early resolution; if it fails we retry on first validate.
-        try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
+        try { _opengrepBinary = await GetResolver()(); }
         catch { /* will retry lazily */ }
 
         var reader = new LspReader(inputStream ?? Console.OpenStandardInput());
@@ -70,7 +136,9 @@ public static partial class LspServer
             else if (action == MessageAction.ExitRequested) break;
         }
 
-        await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
+        // Cancel any validations still in flight on disconnect. A drain timeout here isn't
+        // fatal for this session (we're exiting); the next RunAsync guards the restart path.
+        _ = await DrainValidationsAsync();
         // Per LSP spec, exit without a prior shutdown is an error (code 1).
         return shutdownReceived ? 0 : 1;
     }
@@ -144,16 +212,71 @@ public static partial class LspServer
     /// This is still not strictly atomic — a new entry can arrive between the IsEmpty check
     /// and the next iteration — but it is sufficient for the two call-sites (session start/end),
     /// which run outside the message loop where new validations are enqueued.
+    /// Returns <c>true</c> if all tasks completed within the timeout, <c>false</c> on timeout.
     /// </summary>
-    private static Task DrainValidationsAsync()
+    private static async Task<bool> DrainValidationsAsync()
     {
-        var tasks = new List<Task>();
-        while (!_validationCts.IsEmpty)
-            foreach (var key in _validationCts.Keys)
-                if (_validationCts.TryRemove(key, out var old))
-                    tasks.Add(old.CancelAsync());
-        return tasks.Count == 0 ? Task.CompletedTask : Task.WhenAll(tasks);
+        await CancelAllInFlightValidationsAsync();
+        return await AwaitPendingValidationTasksAsync();
     }
+
+    /// <summary>
+    /// Drains <see cref="_validationCts"/> by cancelling every in-flight validation.
+    /// Loops until the map appears empty to cover entries inserted concurrently.
+    /// </summary>
+    private static async Task CancelAllInFlightValidationsAsync()
+    {
+        var ctsTasks = new List<Task>();
+        while (!_validationCts.IsEmpty)
+        {
+            foreach (var key in _validationCts.Keys)
+            {
+                if (!_validationCts.TryRemove(key, out var old)) continue;
+                try { ctsTasks.Add(old.CancelAsync()); }
+                catch (ObjectDisposedException)
+                {
+                    // The CTS may have been disposed by its owning ValidateAndPublishAsync
+                    // between our TryRemove and CancelAsync call.  Cancellation is moot in
+                    // that case (the task is already completing), so swallow and continue.
+                }
+            }
+        }
+        if (ctsTasks.Count > 0)
+            await Task.WhenAll(ctsTasks);
+    }
+
+    /// <summary>
+    /// Awaits the actual ValidateAndPublishAsync tasks so their finally blocks
+    /// (state cleanup, counter increment) run before the caller resets per-session state.
+    /// Bound the wait: SendAsync writes to stdout with CancellationToken.None (to avoid
+    /// partial framing), so a wedged client that stops reading without closing would
+    /// otherwise hang shutdown forever. Returns <c>true</c> if drained cleanly, <c>false</c>
+    /// on timeout (abandoned entries are detached from <see cref="_validationTasks"/>, but
+    /// the underlying tasks may still be running — the caller must treat this as unsafe
+    /// for in-process reuse).
+    /// </summary>
+    private static async Task<bool> AwaitPendingValidationTasksAsync()
+    {
+        var pendingEntries = _validationTasks.ToArray();
+        if (pendingEntries.Length == 0) return true;
+
+        var pendingTasks = Array.ConvertAll(pendingEntries, static e => e.Value);
+        var all = Task.WhenAll(pendingTasks);
+        var completed = await Task.WhenAny(all, Task.Delay(ValidationDrainTimeout));
+        if (completed == all)
+        {
+            await all; // observe any aggregated exceptions
+            return true;
+        }
+
+        foreach (var e in pendingEntries)
+            _validationTasks.TryRemove(e);
+        await Console.Error.WriteLineAsync(
+            $"[dolphin-lsp] timed out waiting for {pendingTasks.Length} validation task(s) to finish during shutdown.");
+        return false;
+    }
+
+    private static readonly TimeSpan ValidationDrainTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// Reads the next LSP header + body from <paramref name="reader"/>.
@@ -282,7 +405,12 @@ public static partial class LspServer
                     var uri = td.GetProperty("uri").GetString() ?? "";
                     var text = td.GetProperty("text").GetString() ?? "";
                     if (IsDolphinRulesFile(uri))
-                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                    {
+                        var tid = Interlocked.Increment(ref _nextTaskId);
+                        var task = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                        _validationTasks[tid] = task;
+                        _ = task.ContinueWith(t => _validationTasks.TryRemove(tid, out _), TaskContinuationOptions.ExecuteSynchronously);
+                    }
                     break;
                 }
 
@@ -291,9 +419,14 @@ public static partial class LspServer
                     var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                     var changes = p.GetProperty("contentChanges");
                     if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
-                        _ = ValidateAndPublishAsync(stdout, uri,
+                    {
+                        var tid = Interlocked.Increment(ref _nextTaskId);
+                        var task = ValidateAndPublishAsync(stdout, uri,
                             changes[0].GetProperty("text").GetString() ?? "",
                             CancelPrevious(uri));
+                        _validationTasks[tid] = task;
+                        _ = task.ContinueWith(t => _validationTasks.TryRemove(tid, out _), TaskContinuationOptions.ExecuteSynchronously);
+                    }
                     break;
                 }
 
@@ -424,17 +557,14 @@ public static partial class LspServer
     private static async Task ValidateAndPublishAsync(
         Stream stdout, string uri, string text, CancellationTokenSource cts)
     {
+        var generation = Volatile.Read(ref _sessionGeneration);
         using (cts) // owns disposal; keeps the token alive for the full duration
         {
             var ct = cts.Token;
             try
             {
-                // Lazy retry: attempt resolution if startup failed.
-                if (_opengrepBinary is null)
-                {
-                    try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-                    catch { return; }
-                }
+                if (!await TryResolveScannerAsync(stdout, uri, ct))
+                    return;
 
                 var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
@@ -446,7 +576,106 @@ public static partial class LspServer
                 // Remove from the map before disposal; if CancelPrevious already replaced
                 // this CTS with a newer one the TryRemove is a no-op and the new CTS is safe.
                 _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
+                // Only bump the completion counter if we are still in the session that started us.
+                // After a drain timeout detaches us, a later session would otherwise see a bumped
+                // counter it never issued the work for.
+                if (Volatile.Read(ref _sessionGeneration) == generation)
+                    Interlocked.Increment(ref _validationCompletedCount);
             }
+        }
+    }
+
+    /// <summary>
+    /// Ensures the scanner binary is resolved. Returns <c>true</c> if the scanner is available,
+    /// <c>false</c> if unavailable. When validation has not been cancelled, a failure
+    /// diagnostic has already been published to the client before returning <c>false</c>.
+    /// Throws <see cref="OperationCanceledException"/> if <paramref name="ct"/> is cancelled
+    /// while waiting for the resolution lock or immediately after acquiring it.
+    /// </summary>
+    private static async Task<bool> TryResolveScannerAsync(Stream stdout, string uri, CancellationToken ct)
+    {
+        if (_opengrepBinary is not null)
+            return true;
+
+        // Acquire the resolution lock so that concurrent validations don't race on
+        // the shared state (_opengrepBinary, LastScannerFailure)
+        // and don't trigger multiple simultaneous EnsureInstalledAsync calls or log lines.
+        string? newFailureMessage = null;
+        await _resolutionLock.WaitAsync(ct);
+        try
+        {
+            // The validation may have been superseded while waiting for the lock.
+            // Check cancellation here to avoid unnecessary resolution attempts and stderr noise.
+            ct.ThrowIfCancellationRequested();
+            newFailureMessage = await ResolveUnderLockAsync();
+        }
+        finally
+        {
+            _resolutionLock.Release();
+        }
+
+        // Log after releasing the lock so console I/O does not block other validations
+        // that are waiting to acquire the lock.
+        if (newFailureMessage is not null && !ct.IsCancellationRequested)
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner: {newFailureMessage}");
+
+        // Snapshot once: a concurrent validation can clear LastScannerFailure after the
+        // null check, which would otherwise risk a NullReferenceException or publishing an
+        // inconsistent message.
+        var failure = LastScannerFailure;
+        if (failure is not null)
+        {
+            if (!ct.IsCancellationRequested)
+            {
+                var pos = new LspPosition(0, 0);
+                try
+                {
+                    await PublishDiagnosticsAsync(stdout, uri, [new LspDiagnostic(
+                        Range: new LspRange(pos, pos),
+                        Severity: DiagnosticSeverityError,
+                        Source: "dolphin",
+                        Message: failure.Message,
+                        Pending: false)], ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    /* superseded by a newer edit while publishing diagnostics */
+                }
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Called with <see cref="_resolutionLock"/> already held. Attempts to resolve the scanner binary
+    /// if not already resolved and the retry cooldown has elapsed.
+    /// Returns a failure message on resolution failure, or <c>null</c> on success or when skipped.
+    /// </summary>
+    private static async Task<string?> ResolveUnderLockAsync()
+    {
+        // Double-check after acquiring: another task may have resolved it.
+        // Skip if resolved, or if the cooldown since the last failure has not elapsed yet.
+        if (_opengrepBinary is not null)
+            return null;
+        var prior = LastScannerFailure;
+        if (prior is not null && DateTime.UtcNow - prior.Since < ScannerRetryCooldown)
+            return null;
+
+        try
+        {
+            _opengrepBinary = await GetResolver()();
+            LastScannerFailure = null; // clear on success
+            return null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var message = ex is InvalidOperationException
+                ? ex.Message
+                : $"Failed to resolve scanner binary: {ex.Message}";
+            LastScannerFailure = new ScannerFailure(message, DateTime.UtcNow);
+            return message; // captured for post-lock logging by the caller
         }
     }
 
@@ -467,7 +696,7 @@ public static partial class LspServer
                 var pos = new LspPosition(line, col);
                 return [new LspDiagnostic(
                     Range: new LspRange(pos, new LspPosition(line, col + utf16Len)),
-                    Severity: 1,
+                    Severity: DiagnosticSeverityError,
                     Source: "dolphin",
                     Message: $"Non-ASCII character (U+{codePoint:X4}): Dolphin rules files must contain only ASCII characters.",
                     Pending: false)];

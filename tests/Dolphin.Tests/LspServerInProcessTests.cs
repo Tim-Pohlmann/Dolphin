@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Dolphin;
 using Dolphin.Lsp;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -11,8 +12,11 @@ namespace Dolphin.Tests;
 /// In-process tests for LspServer and the Program.cs routing (via Startup.RunAsync).
 /// These run the server with injected MemoryStream pipes so that code-coverage tools
 /// instrument the server code directly — unlike the spawned-process integration tests.
+/// This class manipulates mutable static test seams on LspServer (e.g. BinaryResolverOverride)
+/// and must not run in parallel with other tests that use the same seams.
 /// </summary>
 [TestClass]
+[DoNotParallelize]
 public partial class LspServerInProcessTests
 {
     // ── Wire-protocol helpers ─────────────────────────────────────────────────
@@ -575,6 +579,251 @@ public partial class LspServerInProcessTests
         catch (OperationCanceledException)
         {
             Assert.Fail("RunAsync([\"--help\"]) must complete promptly — CLI routing hung or threw");
+        }
+    }
+
+    // ── Scanner-missing diagnostic paths ────────────────────────────────────
+
+    /// <summary>Encodes a single JSON-RPC message as an LSP-framed byte array.</summary>
+    private static byte[] FrameMessage(string json) => BuildInput(json);
+
+    /// <summary>
+    /// Polls <paramref name="condition"/> every 10 ms until it returns <c>true</c>
+    /// or <paramref name="timeout"/> elapses (default: 5 seconds).
+    /// Fails the test if the timeout expires before the condition becomes true.
+    /// </summary>
+    private static async Task WaitForConditionAsync(Func<bool> condition, TimeSpan? timeout = null)
+    {
+        var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(5);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < effectiveTimeout)
+        {
+            if (condition()) return;
+            await Task.Delay(10);
+        }
+        Assert.Fail($"Condition was not met within {effectiveTimeout}.");
+    }
+
+    /// <summary>
+    /// Core pipe-based runner: feeds <paramref name="messages"/> one at a time, calling
+    /// <paramref name="interMessageWaitAsync"/> between consecutive messages so that
+    /// fire-and-forget validation tasks can complete before the next message is processed.
+    /// Unlike a pre-built MemoryStream, the pipe prevents LspReader from buffering all
+    /// messages in a single ReadAsync call.
+    /// </summary>
+    private static async Task<List<JsonObject>> RunServerCoreAsync(
+        string[] messages, Func<Task> interMessageWaitAsync)
+    {
+        var pipe = new System.IO.Pipelines.Pipe();
+        var output = new MemoryStream();
+
+        var serverTask = LspServer.RunAsync(
+            inputStream: pipe.Reader.AsStream(),
+            outputStream: output);
+
+        var writerTask = Task.Run(async () =>
+        {
+            // Always complete the writer, even if interMessageWaitAsync throws (e.g. a
+            // WaitForConditionAsync timeout triggers Assert.Fail). Without this, the server
+            // keeps waiting for more input and Task.WhenAll(serverTask, writerTask) hangs
+            // instead of surfacing the original failure.
+            Exception? writerException = null;
+            try
+            {
+                for (int i = 0; i < messages.Length; i++)
+                {
+                    if (i > 0) await interMessageWaitAsync();
+                    var frame = FrameMessage(messages[i]);
+                    // PipeWriter.WriteAsync writes AND flushes; no separate FlushAsync needed.
+                    await pipe.Writer.WriteAsync(frame);
+                }
+            }
+            catch (Exception ex)
+            {
+                writerException = ex;
+                throw;
+            }
+            finally
+            {
+                pipe.Writer.Complete(writerException);
+            }
+        });
+
+        await Task.WhenAll(serverTask, writerTask);
+        return ParseOutput(output.ToArray());
+    }
+
+    /// <summary>
+    /// Feeds LSP messages with a condition-based wait between each, polling
+    /// <paramref name="readyCondition"/> until it returns <c>true</c> (max 5 s).
+    /// </summary>
+    private static Task<List<JsonObject>> RunServerWithConditionAsync(
+        Func<bool> readyCondition, params string[] messages)
+        => RunServerCoreAsync(messages, () => WaitForConditionAsync(readyCondition));
+
+    [TestMethod]
+    public async Task ScannerMissing_DidOpen_PublishesErrorDiagnostic()
+    {
+        // Force scanner resolution to always fail so the missing-scanner path is exercised
+        // regardless of what is installed in the test environment.
+        LspServer.BinaryResolverOverride = () => throw new InvalidOperationException("Scanner not found. See: https://opengrep.dev");
+        try
+        {
+            const string uri = "file:///project/.dolphin/rules.yaml";
+            // Wait until the validation has fully completed (failure cached AND task's finally
+            // block ran, meaning PublishDiagnosticsAsync has already finished writing) before
+            // sending shutdown, so the EOF/DrainValidationsAsync cannot cancel the in-flight publish.
+            var responses = await RunServerWithConditionAsync(
+                () => LspServer.LastScannerFailure != null && !LspServer.HasInFlightValidationsForTesting,
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+            var publish = responses.FirstOrDefault(r =>
+                r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics" &&
+                r["params"]?["diagnostics"]?.AsArray().Count > 0);
+
+            Assert.IsNotNull(publish, "A scanner-missing diagnostic must be published");
+            var diag = publish!["params"]!["diagnostics"]!.AsArray()[0]!;
+            Assert.AreEqual(1, diag["severity"]?.GetValue<int>(), "Severity should be Error (1)");
+            Assert.AreEqual("dolphin", diag["source"]?.GetValue<string>());
+            StringAssert.Contains(diag["message"]?.GetValue<string>(), "Scanner not found");
+        }
+        finally { LspServer.BinaryResolverOverride = null; }
+    }
+
+    [TestMethod]
+    public async Task ScannerMissing_SecondEdit_UsesCachedMessageWithoutRetry()
+    {
+        // After the first failure, the second edit must reuse the cached message (cooldown in effect)
+        // rather than calling the resolver again.
+        int resolverCallCount = 0;
+        LspServer.BinaryResolverOverride = () =>
+        {
+            resolverCallCount++;
+            throw new InvalidOperationException("Scanner not found.");
+        };
+        try
+        {
+            const string uri = "file:///project/.dolphin/rules.yaml";
+            // Wait deterministically for:
+            //   gap 1 (didOpen → didChange):   first validation has completed (failure cached)
+            //   gap 2 (didChange → shutdown):  second validation (triggered by didChange) has
+            //                                  completed, confirming it exercised the cached-failure
+            //                                  path end-to-end without calling the resolver again.
+            int waitCallCount = 0;
+            int completedAfterOpen = 0;
+            var responses = await RunServerCoreAsync(
+                [
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}",
+                    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}",
+                    """{"jsonrpc":"2.0","id":1,"method":"shutdown"}"""
+                ],
+                async () =>
+                {
+                    waitCallCount++;
+                    if (waitCallCount == 1)
+                    {
+                        // Between didOpen and didChange: wait for the first validation to complete
+                        // so the failure is cached and the second edit is guaranteed to see it.
+                        await WaitForConditionAsync(() => LspServer.LastScannerFailure != null);
+                        // Also wait for the first validation's finally block to run so that
+                        // ValidationCompletedCountForTesting reflects the first validation only,
+                        // not an intermediate state. Without this, completedAfterOpen could be 0
+                        // and the gap-2 condition (> completedAfterOpen) would be satisfied by
+                        // the first validation completing rather than the second.
+                        await WaitForConditionAsync(() => LspServer.ValidationCompletedCountForTesting > 0);
+                        completedAfterOpen = LspServer.ValidationCompletedCountForTesting;
+                    }
+                    else
+                    {
+                        // Between didChange and shutdown: wait for the second validation to complete
+                        // (its finally block has run), confirming it ran end-to-end.
+                        await WaitForConditionAsync(() => LspServer.ValidationCompletedCountForTesting > completedAfterOpen);
+                    }
+                });
+
+            var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
+            Assert.IsNotNull(shutdown, "Shutdown response must arrive");
+
+            // Resolver is called once at startup (fails) and once for the first lazy retry.
+            // The second edit should hit the cooldown and NOT call the resolver again.
+            Assert.IsTrue(resolverCallCount <= 2,
+                $"Resolver should not be retried on every edit; was called {resolverCallCount} times");
+        }
+        finally { LspServer.BinaryResolverOverride = null; }
+    }
+
+    [TestMethod]
+    public async Task ScannerMissing_ThenRecovered_ClearsCachedFailure()
+    {
+        // Simulate a two-phase scenario:
+        //   Phase 1 (didOpen):   resolver fails → failure is cached with DateTime.UtcNow
+        //   Between phases:      manually back-date the cached failure so the cooldown appears elapsed
+        //   Phase 2 (didChange): resolver succeeds → stale failure triggers a retry → cache is cleared
+        //
+        // The resolver is called once by RunAsync (early resolution, fails silently) and once per
+        // lazy retry inside TryResolveScannerAsync.  We count calls to control behavior:
+        //   call 1 (early resolution): fail silently  → _opengrepBinary stays null
+        //   call 2 (first lazy retry): fail and cache → diagnostic published
+        //   call 3+ (stale retry):     succeed         → cache cleared, no more diagnostics
+        int callCount = 0;
+        LspServer.BinaryResolverOverride = () =>
+        {
+            if (Interlocked.Increment(ref callCount) <= 2)
+                throw new InvalidOperationException("Scanner not found.");
+            // Return a non-existent path. Process.Start will throw immediately, which
+            // ValidateAndPublishAsync catches via its outer exception handler. The test
+            // only verifies that _lastScannerFailure is cleared (set during resolver success
+            // in TryResolveScannerAsync) — it does not assert on validation results.
+            return Task.FromResult("fake-binary");
+        };
+        try
+        {
+            const string uri = "file:///project/.dolphin/rules.yaml";
+            var pipe = new System.IO.Pipelines.Pipe();
+            var output = new MemoryStream();
+            var serverTask = LspServer.RunAsync(pipe.Reader.AsStream(), output);
+
+            // Phase 1: send didOpen → first validation → resolver fails → failure cached
+            var openFrame = FrameMessage(
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\"}}}");
+            await pipe.Writer.WriteAsync(openFrame);
+
+            // Wait deterministically for the first validation to complete so the failure is in the cache
+            await WaitForConditionAsync(() => LspServer.LastScannerFailure != null);
+
+            // Back-date the cached failure so the cooldown appears already elapsed
+            var failure = LspServer.LastScannerFailure;
+            Assert.IsNotNull(failure, "A scanner-missing failure should have been cached after didOpen");
+            LspServer.LastScannerFailure = failure with { Since = DateTime.UtcNow - TimeSpan.FromMinutes(5) };
+
+            // Phase 2: send didChange → stale failure → retry → succeeds → cache cleared
+            var changeFrame = FrameMessage(
+                "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"version\":2},\"contentChanges\":[{\"text\":\"rules: []\"}]}}");
+            await pipe.Writer.WriteAsync(changeFrame);
+
+            // Wait deterministically for the second validation to complete (resolver succeeds → cache cleared)
+            await WaitForConditionAsync(() => LspServer.LastScannerFailure == null);
+
+            // After successful recovery, the failure cache must be cleared
+            Assert.IsNull(LspServer.LastScannerFailure,
+                "Cached failure should be cleared after the resolver succeeds");
+
+            // Shutdown
+            var shutdownFrame = FrameMessage("""{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+            await pipe.Writer.WriteAsync(shutdownFrame);
+            pipe.Writer.Complete();
+
+            await serverTask;
+            var responses = ParseOutput(output.ToArray());
+
+            var shutdown = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 1 && r.ContainsKey("result"));
+            Assert.IsNotNull(shutdown, "Shutdown response must arrive");
+        }
+        finally
+        {
+            LspServer.BinaryResolverOverride = null;
+            LspServer.LastScannerFailure = null;
         }
     }
 

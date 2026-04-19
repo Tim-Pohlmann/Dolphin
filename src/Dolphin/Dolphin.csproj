@@ -107,7 +107,7 @@
     binary. The Semgrep rule schema is embedded in dolphin as a .NET resource, so the LGPL
     obligation travels with every published artifact regardless of runtime identifier.
   -->
-  <Target Name="BundleSemgrepSchemaLicense" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' != ''">
+  <Target Name="BundleSemgrepSchemaLicense" AfterTargets="Publish">
     <WriteLinesToFile File="$(PublishDir)SEMGREP-SCHEMA-LICENSE.txt" Overwrite="true" Lines="Dolphin embeds the Semgrep rule schema from https://github.com/returntocorp/semgrep-interfaces (rule_schema_v1.yaml), licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).%0AThe schema has been converted from YAML to JSON%3B modifications are documented in scripts/update-schema.cs. Source is available at https://github.com/returntocorp/semgrep-interfaces.%0AThe full license text is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" />
   </Target>
 

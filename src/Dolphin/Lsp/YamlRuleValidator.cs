@@ -110,15 +110,26 @@ internal static class YamlRuleValidator
         // We emit ONE human-friendly message per affected rule instead of one per branch.
         var missingPatternPaths = new HashSet<string>();
 
+        // Pre-pass: instance paths where the `/else` combinator itself succeeded (one of its
+        // branches matched). For those paths the individual branch failures are evaluation
+        // noise, not a "missing pattern key" signal — e.g. a rule using `match:` still reports
+        // failures for the five non-match branches.
+        var passingElsePaths = new HashSet<string>();
+        foreach (var d in result.Details!)
+            if (d.IsValid && d.EvaluationPath.ToString().EndsWith("/else", StringComparison.Ordinal))
+                passingElsePaths.Add(d.InstanceLocation.ToString());
+
         foreach (var detail in result.Details!.Where(d => !d.IsValid && d.Errors is not null && d.Errors.Count > 0))
         {
             var instancePath = detail.InstanceLocation.ToString();
             var evalPath     = detail.EvaluationPath.ToString();
 
-            // Collect "else/oneOf/N" branch failures → will emit one missing-pattern message.
+            // Collect "else/oneOf/N" branch failures → will emit one missing-pattern message,
+            // but only when the parent `/else` combinator itself failed (otherwise it's noise).
             if (ContainsIndexedSegment(evalPath, "/else/oneOf/"))
             {
-                missingPatternPaths.Add(instancePath);
+                if (!passingElsePaths.Contains(instancePath))
+                    missingPatternPaths.Add(instancePath);
                 continue;
             }
 

@@ -142,6 +142,26 @@ public class YamlRuleValidatorTests
         AssertHasError("", "rules");
     }
 
+    [TestMethod]
+    public void ValidMatchRule_WithUnrelatedError_NoSpuriousMissingPatternDiagnostic()
+    {
+        // `match:` is a valid pattern-key alternative. When combined with an unrelated
+        // schema error (here: invalid severity), the non-match else/oneOf branches still
+        // report failures — those are evaluation noise and must not produce a
+        // "missing pattern key" diagnostic.
+        var diags = Validate("""
+            rules:
+              - id: uses-match
+                message: "uses match"
+                languages: [python]
+                severity: BOGUS
+                match: x = 1
+            """);
+        Assert.IsFalse(
+            diags.Any(d => d.Message.Contains("pattern key", StringComparison.OrdinalIgnoreCase)),
+            $"Expected no 'missing pattern key' diagnostic but got: {string.Join("; ", diags.Select(d => d.Message))}");
+    }
+
     // ── Missing required fields ───────────────────────────────────────────────
 
     [TestMethod]

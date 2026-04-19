@@ -595,12 +595,13 @@ public partial class LspServerInProcessTests
     private static async Task WaitForConditionAsync(Func<bool> condition, TimeSpan? timeout = null)
     {
         var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(5);
-        var deadline = DateTime.UtcNow + effectiveTimeout;
-        while (!condition() && DateTime.UtcNow < deadline)
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (sw.Elapsed < effectiveTimeout)
+        {
+            if (condition()) return;
             await Task.Delay(10);
-
-        if (!condition())
-            Assert.Fail($"Condition was not met within {effectiveTimeout}.");
+        }
+        Assert.Fail($"Condition was not met within {effectiveTimeout}.");
     }
 
     /// <summary>

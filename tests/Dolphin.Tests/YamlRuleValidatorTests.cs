@@ -459,4 +459,17 @@ public class YamlRuleValidatorTests
             """;
         _ = Validate(yaml);
     }
+
+    // ── RFC 6901 unescape ─────────────────────────────────────────────────────
+
+    [TestMethod]
+    [DataRow("severity", "severity")]
+    [DataRow("a~1b", "a/b")]
+    [DataRow("a~0b", "a~b")]
+    [DataRow("a~01b", "a~1b")]
+    [DataRow("~1~0", "/~")]
+    public void UnescapeJsonPointerSegment_RestoresOriginalKey(string escaped, string expected)
+    {
+        Assert.AreEqual(expected, YamlRuleValidator.UnescapeJsonPointerSegment(escaped));
+    }
 }

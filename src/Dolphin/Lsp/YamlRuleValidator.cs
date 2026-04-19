@@ -358,7 +358,8 @@ internal static class YamlRuleValidator
     private static string LastSegment(string jsonPointerPath)
     {
         var idx = jsonPointerPath.LastIndexOf('/');
-        return idx >= 0 ? jsonPointerPath[(idx + 1)..] : jsonPointerPath;
+        var segment = idx >= 0 ? jsonPointerPath[(idx + 1)..] : jsonPointerPath;
+        return UnescapeJsonPointerSegment(segment);
     }
 
     /// <summary>
@@ -367,6 +368,13 @@ internal static class YamlRuleValidator
     /// </summary>
     private static string EscapeJsonPointerSegment(string segment) =>
         segment.Replace("~", "~0").Replace("/", "~1");
+
+    /// <summary>
+    /// Unescapes a JSON Pointer segment per RFC 6901. Order matters: '~1' must be
+    /// replaced before '~0', otherwise '~01' would decode as '/' instead of '~1'.
+    /// </summary>
+    internal static string UnescapeJsonPointerSegment(string segment) =>
+        segment.Replace("~1", "/").Replace("~0", "~");
 
     private static LspDiagnostic MakeDiagnostic(int line, int col, string message)
     {

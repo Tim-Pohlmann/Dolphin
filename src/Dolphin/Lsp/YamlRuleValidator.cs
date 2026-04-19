@@ -73,25 +73,29 @@ internal static class YamlRuleValidator
 
         // ── Validate against the embedded Semgrep schema ──────────────────────
         var options = new EvaluationOptions { OutputFormat = OutputFormat.List };
-        // JsonSchema.Net 9.x Evaluate takes JsonElement.  Serialise via JsonNode.WriteTo
-        // into a UTF-8 buffer — no reflection, fully trim-safe, avoids a string allocation.
-        EvaluationResults result;
-        {
-            var buffer = new System.Buffers.ArrayBufferWriter<byte>(4096);
-            using (var writer = new System.Text.Json.Utf8JsonWriter(buffer))
-            {
-                if (jsonNode is null) writer.WriteNullValue();
-                else jsonNode.WriteTo(writer);
-            }
-            using var doc = System.Text.Json.JsonDocument.Parse(buffer.WrittenMemory);
-            result = _schema.Value.Evaluate(doc.RootElement, options);
-        }
+        var result = EvaluateAgainstSchema(jsonNode, options);
         if (result.IsValid) return [];
 
         // ── Map validation errors to LSP diagnostics ──────────────────────────
         ProcessValidationResults(result, lineMap, diagnostics);
 
         return [.. diagnostics];
+    }
+
+    /// <summary>
+    /// JsonSchema.Net 9.x Evaluate takes JsonElement. Serialises via JsonNode.WriteTo into a
+    /// UTF-8 buffer — no reflection, fully trim-safe, avoids a string allocation.
+    /// </summary>
+    private static EvaluationResults EvaluateAgainstSchema(JsonNode? jsonNode, EvaluationOptions options)
+    {
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>(4096);
+        using (var writer = new System.Text.Json.Utf8JsonWriter(buffer))
+        {
+            if (jsonNode is null) writer.WriteNullValue();
+            else jsonNode.WriteTo(writer);
+        }
+        using var doc = System.Text.Json.JsonDocument.Parse(buffer.WrittenMemory);
+        return _schema.Value.Evaluate(doc.RootElement, options);
     }
 
     private static void ProcessValidationResults(
@@ -375,15 +379,8 @@ internal static class YamlRuleValidator
         return string.Empty;
     }
 
-    private static bool IsArrayIndex(string segment)
-    {
-        if (segment.Length == 0) return false;
-        foreach (var c in segment)
-        {
-            if (c is < '0' or > '9') return false;
-        }
-        return true;
-    }
+    private static bool IsArrayIndex(string segment) =>
+        segment.Length > 0 && segment.All(char.IsAsciiDigit);
 
     /// <summary>
     /// Escapes a JSON Pointer segment per RFC 6901:

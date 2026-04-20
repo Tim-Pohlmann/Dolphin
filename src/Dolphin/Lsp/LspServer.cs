@@ -25,6 +25,9 @@ public static partial class LspServer
     // Per-URI cancellation: cancels superseded validations on rapid edits.
     private static readonly ConcurrentDictionary<string, CancellationTokenSource> _validationCts = new();
 
+    // Stores document text for pull diagnostics (textDocument/diagnostic).
+    private static readonly ConcurrentDictionary<string, string> _documentText = new();
+
     // Safety caps to prevent OOM from malformed/hostile clients.
     internal const int MaxHeaderBytes = 8 * 1024;        // 8 KB — headers are tiny
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
@@ -270,6 +273,11 @@ public static partial class LspServer
                         w.WritePropertyName("capabilities");
                         w.WriteStartObject();
                         w.WriteNumber("textDocumentSync", 1); // full sync
+                        w.WritePropertyName("diagnosticProvider");
+                        w.WriteStartObject();
+                        w.WriteBoolean("interFileDependencies", false);
+                        w.WriteBoolean("workspaceDiagnostics", false);
+                        w.WriteEndObject();
                         w.WriteEndObject();
                         w.WriteEndObject();
                         w.WriteEndObject();
@@ -281,6 +289,7 @@ public static partial class LspServer
                     var td = p.GetProperty("textDocument");
                     var uri = td.GetProperty("uri").GetString() ?? "";
                     var text = td.GetProperty("text").GetString() ?? "";
+                    _documentText[uri] = text;
                     if (IsDolphinRulesFile(uri))
                         _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
                     break;
@@ -290,20 +299,80 @@ public static partial class LspServer
                 {
                     var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                     var changes = p.GetProperty("contentChanges");
-                    if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
-                        _ = ValidateAndPublishAsync(stdout, uri,
-                            changes[0].GetProperty("text").GetString() ?? "",
-                            CancelPrevious(uri));
+                    if (changes.GetArrayLength() > 0)
+                    {
+                        var text = changes[0].GetProperty("text").GetString() ?? "";
+                        _documentText[uri] = text;
+                        if (IsDolphinRulesFile(uri))
+                            _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                    }
                     break;
                 }
 
                 case "textDocument/didClose":
                 {
                     var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
+                    _documentText.TryRemove(uri, out _);
                     CancelAndRemove(uri);
                     // Only clear diagnostics we published; don't stomp on other servers.
                     if (IsDolphinRulesFile(uri))
                         await PublishDiagnosticsAsync(stdout, uri, []);
+                    break;
+                }
+
+                case "textDocument/diagnostic":
+                {
+                    var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
+                    if (!IsDolphinRulesFile(uri))
+                    {
+                        await MaybeSendAsync(stdout, id, w =>
+                        {
+                            w.WriteStartObject();
+                            w.WriteString(JsonRpc, "2.0");
+                            WriteId(w, id);
+                            w.WritePropertyName("result");
+                            w.WriteStartObject();
+                            w.WriteString("kind", "full");
+                            w.WritePropertyName("items");
+                            w.WriteStartArray();
+                            w.WriteEndArray();
+                            w.WriteEndObject();
+                            w.WriteEndObject();
+                        });
+                    }
+                    else
+                    {
+                        var diagnostics = await PullDiagnosticsAsync(uri);
+                        await MaybeSendAsync(stdout, id, w =>
+                        {
+                            w.WriteStartObject();
+                            w.WriteString(JsonRpc, "2.0");
+                            WriteId(w, id);
+                            w.WritePropertyName("result");
+                            w.WriteStartObject();
+                            w.WriteString("kind", "full");
+                            w.WritePropertyName("items");
+                            w.WriteStartArray();
+                            foreach (var d in diagnostics)
+                            {
+                                w.WriteStartObject();
+                                w.WritePropertyName("range");
+                                w.WriteStartObject();
+                                w.WritePropertyName("start");
+                                WritePosition(w, d.Range.Start);
+                                w.WritePropertyName("end");
+                                WritePosition(w, d.Range.End);
+                                w.WriteEndObject();
+                                w.WriteNumber("severity", d.Severity);
+                                w.WriteString("source", d.Source);
+                                w.WriteString(MessageProperty, d.Message);
+                                w.WriteEndObject();
+                            }
+                            w.WriteEndArray();
+                            w.WriteEndObject();
+                            w.WriteEndObject();
+                        });
+                    }
                     break;
                 }
 
@@ -447,6 +516,27 @@ public static partial class LspServer
                 // this CTS with a newer one the TryRemove is a no-op and the new CTS is safe.
                 _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
             }
+        }
+    }
+
+    private static async Task<LspDiagnostic[]> PullDiagnosticsAsync(string uri)
+    {
+        var text = _documentText.GetValueOrDefault(uri, "");
+        var cts = CancelPrevious(uri);
+        try
+        {
+            if (_opengrepBinary is null)
+            {
+                try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
+                catch { return []; }
+            }
+            return await RunValidateAsync(text, Path.GetFileName(uri), cts.Token);
+        }
+        catch (OperationCanceledException) { return []; }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] pull diagnostic error for {uri}: {ex.Message}");
+            return [];
         }
     }
 

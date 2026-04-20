@@ -38,6 +38,9 @@ public static partial class LspServer
     private const int JsonRpcMethodNotFound  = -32601;
     private const int JsonRpcInvalidParams   = -32602;
     private const int JsonRpcInternalError   = -32603;
+    // LSP 3.17: sent when a pull diagnostic is superseded by a newer edit so the
+    // client preserves the last-known diagnostics instead of clearing them.
+    private const int LspRequestCancelled    = -32800;
 
     private const string JsonRpc        = "jsonrpc";
     private const string ErrorProperty   = "error";
@@ -325,53 +328,15 @@ public static partial class LspServer
                     var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                     if (!IsDolphinRulesFile(uri))
                     {
-                        await MaybeSendAsync(stdout, id, w =>
-                        {
-                            w.WriteStartObject();
-                            w.WriteString(JsonRpc, "2.0");
-                            WriteId(w, id);
-                            w.WritePropertyName("result");
-                            w.WriteStartObject();
-                            w.WriteString("kind", "full");
-                            w.WritePropertyName("items");
-                            w.WriteStartArray();
-                            w.WriteEndArray();
-                            w.WriteEndObject();
-                            w.WriteEndObject();
-                        });
+                        await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, []));
                     }
-                    else
+                    else if (id.ValueKind != JsonValueKind.Undefined)
                     {
-                        var diagnostics = await PullDiagnosticsAsync(uri);
-                        await MaybeSendAsync(stdout, id, w =>
-                        {
-                            w.WriteStartObject();
-                            w.WriteString(JsonRpc, "2.0");
-                            WriteId(w, id);
-                            w.WritePropertyName("result");
-                            w.WriteStartObject();
-                            w.WriteString("kind", "full");
-                            w.WritePropertyName("items");
-                            w.WriteStartArray();
-                            foreach (var d in diagnostics)
-                            {
-                                w.WriteStartObject();
-                                w.WritePropertyName("range");
-                                w.WriteStartObject();
-                                w.WritePropertyName("start");
-                                WritePosition(w, d.Range.Start);
-                                w.WritePropertyName("end");
-                                WritePosition(w, d.Range.End);
-                                w.WriteEndObject();
-                                w.WriteNumber("severity", d.Severity);
-                                w.WriteString("source", d.Source);
-                                w.WriteString(MessageProperty, d.Message);
-                                w.WriteEndObject();
-                            }
-                            w.WriteEndArray();
-                            w.WriteEndObject();
-                            w.WriteEndObject();
-                        });
+                        // Run off the message loop: validation can invoke an external process
+                        // and must not block didChange/didClose/shutdown from being handled.
+                        // Clone the id so it outlives the JsonDocument owned by HandleBodyAsync.
+                        var idClone = id.Clone();
+                        _ = HandlePullDiagnosticsAsync(stdout, uri, idClone);
                     }
                     break;
                 }
@@ -498,13 +463,8 @@ public static partial class LspServer
             var ct = cts.Token;
             try
             {
-                // Lazy retry: attempt resolution if startup failed.
-                if (_opengrepBinary is null)
-                {
-                    try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-                    catch { return; }
-                }
-
+                // RunValidateAsync handles opengrep resolution itself so the non-ASCII
+                // fast path can still report even if the scanner isn't installed.
                 var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
             }
@@ -519,25 +479,84 @@ public static partial class LspServer
         }
     }
 
-    private static async Task<LspDiagnostic[]> PullDiagnosticsAsync(string uri)
+    /// <summary>
+    /// Computes diagnostics for a pull request and writes the JSON-RPC response.
+    /// Runs off the message loop (see <c>textDocument/diagnostic</c> case) so validation
+    /// can't block subsequent messages. Owns CTS disposal and map removal just like
+    /// <see cref="ValidateAndPublishAsync"/>. On cancellation (newer edit or close)
+    /// it responds with LSP RequestCancelled (-32800) so the client preserves its
+    /// last-known diagnostics rather than clearing them from an empty full report.
+    /// </summary>
+    private static async Task HandlePullDiagnosticsAsync(Stream stdout, string uri, JsonElement id)
     {
-        var text = _documentText.GetValueOrDefault(uri, "");
         var cts = CancelPrevious(uri);
-        try
+        using (cts)
         {
-            if (_opengrepBinary is null)
+            var ct = cts.Token;
+            try
             {
-                try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-                catch { return []; }
+                // RunValidateAsync handles opengrep resolution itself so the non-ASCII
+                // fast path can still report even if the scanner isn't installed.
+                var text = _documentText.GetValueOrDefault(uri, "");
+                var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
+                ct.ThrowIfCancellationRequested();
+                await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics));
             }
-            return await RunValidateAsync(text, Path.GetFileName(uri), cts.Token);
+            catch (OperationCanceledException)
+            {
+                await MaybeSendAsync(stdout, id, w =>
+                {
+                    w.WriteStartObject();
+                    w.WriteString(JsonRpc, "2.0");
+                    WriteId(w, id);
+                    w.WritePropertyName(ErrorProperty);
+                    w.WriteStartObject();
+                    w.WriteNumber("code", LspRequestCancelled);
+                    w.WriteString(MessageProperty, "Request cancelled");
+                    w.WriteEndObject();
+                    w.WriteEndObject();
+                });
+            }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"[dolphin-lsp] pull diagnostic error for {uri}: {ex.Message}");
+                await TrySendErrorAsync(stdout, id);
+            }
+            finally
+            {
+                _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
+            }
         }
-        catch (OperationCanceledException) { return []; }
-        catch (Exception ex)
+    }
+
+    private static void WritePullFullReport(Utf8JsonWriter w, JsonElement id, LspDiagnostic[] diagnostics)
+    {
+        w.WriteStartObject();
+        w.WriteString(JsonRpc, "2.0");
+        WriteId(w, id);
+        w.WritePropertyName("result");
+        w.WriteStartObject();
+        w.WriteString("kind", "full");
+        w.WritePropertyName("items");
+        w.WriteStartArray();
+        foreach (var d in diagnostics)
         {
-            await Console.Error.WriteLineAsync($"[dolphin-lsp] pull diagnostic error for {uri}: {ex.Message}");
-            return [];
+            w.WriteStartObject();
+            w.WritePropertyName("range");
+            w.WriteStartObject();
+            w.WritePropertyName("start");
+            WritePosition(w, d.Range.Start);
+            w.WritePropertyName("end");
+            WritePosition(w, d.Range.End);
+            w.WriteEndObject();
+            w.WriteNumber("severity", d.Severity);
+            w.WriteString("source", d.Source);
+            w.WriteString(MessageProperty, d.Message);
+            w.WriteEndObject();
         }
+        w.WriteEndArray();
+        w.WriteEndObject();
+        w.WriteEndObject();
     }
 
     /// <summary>
@@ -610,6 +629,14 @@ public static partial class LspServer
     {
         var nonAscii = FindNonAsciiDiagnostic(text);
         if (nonAscii is not null) return nonAscii;
+
+        // Opengrep resolution is just-in-time so the non-ASCII fast path above still
+        // reports even when the scanner isn't installed. Callers rely on this.
+        if (_opengrepBinary is null)
+        {
+            try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
+            catch { return []; }
+        }
 
         var tmp = Path.Combine(Path.GetTempPath(), $"dolphin-lsp-{Guid.NewGuid():N}.yaml");
         try

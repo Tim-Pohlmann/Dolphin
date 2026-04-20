@@ -181,6 +181,58 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
+    public async Task HandleMessage_Initialize_AdvertisesDiagnosticProvider()
+    {
+        // LSP 3.17 pull diagnostics: initialize must advertise diagnosticProvider so
+        // capability-aware clients issue textDocument/diagnostic requests.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
+
+        var provider = responses[0]["result"]?["capabilities"]?["diagnosticProvider"];
+        Assert.IsNotNull(provider, "diagnosticProvider must be present in capabilities");
+        Assert.AreEqual(false, provider["interFileDependencies"]?.GetValue<bool>());
+        Assert.AreEqual(false, provider["workspaceDiagnostics"]?.GetValue<bool>());
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_NonDolphinFile_ReturnsEmptyFullReport()
+    {
+        // Non-dolphin URIs never run validation: respond with an empty full report
+        // so the client doesn't stall waiting and doesn't conflate with our rules file.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":42,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///src/app.ts"}}}""",
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 42);
+        Assert.IsNotNull(pull, "Pull diagnostic request must produce a response");
+        Assert.AreEqual("full", pull["result"]?["kind"]?.GetValue<string>());
+        Assert.AreEqual(0, pull["result"]?["items"]?.AsArray().Count);
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_DolphinFile_NonAsciiText_ReturnsDiagnostic()
+    {
+        // Non-ASCII fast path runs synchronously (no opengrep needed) so we can assert
+        // on the returned diagnostic regardless of whether the scanner is installed.
+        const string uri = "file:///project/.dolphin/rules.yaml";
+        var openJson = "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\\n# \\u2708\"}}}";
+        var pullJson = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\"}}}";
+
+        var responses = await RunServerAsync(
+            openJson,
+            pullJson,
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 7);
+        Assert.IsNotNull(pull, "Pull diagnostic response with id=7 expected");
+        Assert.AreEqual("full", pull["result"]?["kind"]?.GetValue<string>());
+        var items = pull["result"]?["items"]?.AsArray();
+        Assert.IsNotNull(items);
+        Assert.AreEqual(1, items.Count, "Non-ASCII text must produce exactly one diagnostic");
+        Assert.IsTrue(items[0]!["message"]!.GetValue<string>().Contains("Non-ASCII"));
+    }
+
+    [TestMethod]
     public async Task HandleMessage_Initialize_StringId_EchoesId()
     {
         var responses = await RunServerAsync(

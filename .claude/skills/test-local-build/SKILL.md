@@ -1,6 +1,6 @@
 ---
 name: test-local-build
-description: Deploy a local Dolphin build to the Claude Code plugin cache so Claude Code picks it up for testing
+description: Knowledge about deploying local Dolphin builds for testing
 ---
 
 # Knowledge base

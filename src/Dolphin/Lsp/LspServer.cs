@@ -292,9 +292,13 @@ public static partial class LspServer
                     var td = p.GetProperty("textDocument");
                     var uri = td.GetProperty("uri").GetString() ?? "";
                     var text = td.GetProperty("text").GetString() ?? "";
-                    _documentText[uri] = text;
+                    // Only cache text for files we can validate; otherwise a client
+                    // opening many large unrelated documents would grow memory without bound.
                     if (IsDolphinRulesFile(uri))
+                    {
+                        _documentText[uri] = text;
                         _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                    }
                     break;
                 }
 
@@ -302,12 +306,11 @@ public static partial class LspServer
                 {
                     var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                     var changes = p.GetProperty("contentChanges");
-                    if (changes.GetArrayLength() > 0)
+                    if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
                     {
                         var text = changes[0].GetProperty("text").GetString() ?? "";
                         _documentText[uri] = text;
-                        if (IsDolphinRulesFile(uri))
-                            _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
                     }
                     break;
                 }
@@ -500,27 +503,35 @@ public static partial class LspServer
                 var text = _documentText.GetValueOrDefault(uri, "");
                 var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 ct.ThrowIfCancellationRequested();
-                await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics));
+                try { await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics)); }
+                catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
             }
             catch (OperationCanceledException)
             {
-                await MaybeSendAsync(stdout, id, w =>
+                // Background task: swallow transport failures so they don't surface
+                // as unobserved task exceptions after the client has disconnected.
+                try
                 {
-                    w.WriteStartObject();
-                    w.WriteString(JsonRpc, "2.0");
-                    WriteId(w, id);
-                    w.WritePropertyName(ErrorProperty);
-                    w.WriteStartObject();
-                    w.WriteNumber("code", LspRequestCancelled);
-                    w.WriteString(MessageProperty, "Request cancelled");
-                    w.WriteEndObject();
-                    w.WriteEndObject();
-                });
+                    await MaybeSendAsync(stdout, id, w =>
+                    {
+                        w.WriteStartObject();
+                        w.WriteString(JsonRpc, "2.0");
+                        WriteId(w, id);
+                        w.WritePropertyName(ErrorProperty);
+                        w.WriteStartObject();
+                        w.WriteNumber("code", LspRequestCancelled);
+                        w.WriteString(MessageProperty, "Request cancelled");
+                        w.WriteEndObject();
+                        w.WriteEndObject();
+                    });
+                }
+                catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
             }
             catch (Exception ex)
             {
                 await Console.Error.WriteLineAsync($"[dolphin-lsp] pull diagnostic error for {uri}: {ex.Message}");
-                await TrySendErrorAsync(stdout, id);
+                try { await TrySendErrorAsync(stdout, id); }
+                catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
             }
             finally
             {

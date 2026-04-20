@@ -32,4 +32,7 @@ coverage/
 # OS
 .DS_Store
 Thumbs.db
-.claude/
+
+# Claude Code harness local state
+.dev/
+.orphaned_at

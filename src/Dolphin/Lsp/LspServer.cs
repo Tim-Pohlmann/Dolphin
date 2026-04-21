@@ -38,6 +38,12 @@ public static partial class LspServer
     internal const int MaxHeaderBytes = 8 * 1024;        // 8 KB — headers are tiny
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
 
+    // _documentText caps: Dolphin rules files are small in practice, so these limits are
+    // generous but bounded. Texts above MaxCachedTextBytes are not cached (pull falls
+    // back to an empty report); cache entries above MaxCachedDocuments are refused.
+    internal const int MaxCachedTextBytes = 1 * 1024 * 1024; // 1 MB
+    internal const int MaxCachedDocuments = 64;
+
     private const int ProcessReaperTimeoutSeconds = 5;
     private const int JsonRpcParseError      = -32700;
     private const int JsonRpcInvalidRequest  = -32600;
@@ -312,7 +318,7 @@ public static partial class LspServer
                     // opening many large unrelated documents would grow memory without bound.
                     if (IsDolphinRulesFile(uri))
                     {
-                        _documentText[uri] = text;
+                        TryCacheDocumentText(uri, text);
                         _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
                     }
                     break;
@@ -325,7 +331,11 @@ public static partial class LspServer
                     if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
                     {
                         var text = changes[0].GetProperty("text").GetString() ?? "";
-                        _documentText[uri] = text;
+                        TryCacheDocumentText(uri, text);
+                        // Cancel any in-flight pull for this URI: its cached text is now stale,
+                        // and we want the superseded pull to resolve with RequestCancelled
+                        // rather than a stale full report computed from pre-edit content.
+                        if (_pullValidationCts.TryGetValue(uri, out var stalePull)) stalePull.Cancel();
                         _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
                     }
                     break;
@@ -460,6 +470,18 @@ public static partial class LspServer
             return cts;
         });
         return cts;
+    }
+
+    /// <summary>
+    /// Stores document text for pull diagnostics, subject to size and count caps.
+    /// Updates to an already-cached URI are always allowed; the count cap only
+    /// blocks caching brand-new URIs once the dictionary is full.
+    /// </summary>
+    private static void TryCacheDocumentText(string uri, string text)
+    {
+        if (text.Length > MaxCachedTextBytes) return;
+        if (!_documentText.ContainsKey(uri) && _documentText.Count >= MaxCachedDocuments) return;
+        _documentText[uri] = text;
     }
 
     /// <summary>

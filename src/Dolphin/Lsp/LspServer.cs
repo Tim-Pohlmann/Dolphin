@@ -553,31 +553,40 @@ public static partial class LspServer
     /// </summary>
     private static async Task HandlePullDiagnosticsAsync(Stream stdout, string uri, JsonElement id)
     {
-        // Cache miss (pull before didOpen, after didClose, or beyond cache caps):
-        // reply with RequestCancelled+retriggerRequest so the client preserves its
-        // last-known diagnostics instead of treating an empty full report as
-        // "validated successfully with zero findings".
-        if (!_documentText.TryGetValue(uri, out var text))
-        {
-            await SendRequestCancelledAsync(stdout, id, CancellationToken.None);
-            return;
-        }
-
-        // Use a dedicated pull map so a pull doesn't cancel an in-flight push that the
-        // client may also be listening to (LSP 3.17 permits clients to use both channels).
+        // Register the pull CTS before reading the cache so a concurrent didChange
+        // reliably cancels this pull (didChange looks up _pullValidationCts to cancel
+        // supersedees). Use a dedicated pull map so a pull doesn't cancel an in-flight
+        // push that the client may also be listening to (LSP 3.17 permits both channels).
         var cts = CancelPrevious(_pullValidationCts, uri);
         using (cts)
         {
             var ct = cts.Token;
             try
             {
+                // Cache miss (pull before didOpen, after didClose, or beyond cache caps):
+                // reply with RequestCancelled+retriggerRequest so the client preserves its
+                // last-known diagnostics instead of treating an empty full report as
+                // "validated successfully with zero findings".
+                if (!_documentText.TryGetValue(uri, out var text))
+                {
+                    await SendRequestCancelledAsync(stdout, id, CancellationToken.None);
+                    return;
+                }
+                ct.ThrowIfCancellationRequested();
                 // RunValidateAsync handles opengrep resolution itself so the non-ASCII
                 // fast path can still report even if the scanner isn't installed.
                 var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 ct.ThrowIfCancellationRequested();
                 // Pass the pull token so a newer pull that fires while we wait on
-                // _stdoutLock can preempt this stale full report.
-                try { await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics), ct); }
+                // _stdoutLock can preempt this stale full report. Re-check after the
+                // send: SendAsync silently returns (no throw) if cancellation fires
+                // between lock acquisition and write, so without this the response
+                // could be dropped and the client would hang.
+                try
+                {
+                    await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics), ct);
+                    ct.ThrowIfCancellationRequested();
+                }
                 catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
             }
             catch (OperationCanceledException)

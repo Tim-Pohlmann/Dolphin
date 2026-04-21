@@ -57,9 +57,11 @@ public static partial class LspServer
     private const int JsonRpcMethodNotFound  = -32601;
     private const int JsonRpcInvalidParams   = -32602;
     private const int JsonRpcInternalError   = -32603;
-    // LSP 3.17: sent when a pull diagnostic is superseded by a newer edit so the
-    // client preserves the last-known diagnostics instead of clearing them.
-    private const int LspRequestCancelled    = -32800;
+    // LSP 3.17: -32802 is server-initiated cancellation (our case: a newer edit or
+    // pull supersedes an in-flight request). -32800 is reserved for client-initiated
+    // cancellation, so using -32802 is the spec-correct signal for clients that only
+    // retrigger on server cancellation.
+    private const int LspServerCancelled     = -32802;
 
     private const string JsonRpc        = "jsonrpc";
     private const string ErrorProperty   = "error";
@@ -500,7 +502,13 @@ public static partial class LspServer
     {
         // UTF-8 byte count so the cap matches the memory the string will actually
         // occupy on the wire / after encoding, not UTF-16 code units.
-        if (Encoding.UTF8.GetByteCount(text) > MaxCachedTextBytes) return;
+        if (Encoding.UTF8.GetByteCount(text) > MaxCachedTextBytes)
+        {
+            // Evict any prior entry so a subsequent pull hits the cache-miss branch
+            // instead of validating stale pre-edit content.
+            _documentText.TryRemove(uri, out _);
+            return;
+        }
         lock (_documentTextAdmissionLock)
         {
             if (!_documentText.ContainsKey(uri) && _documentText.Count >= MaxCachedDocuments) return;
@@ -548,7 +556,7 @@ public static partial class LspServer
     /// Runs off the message loop (see <c>textDocument/diagnostic</c> case) so validation
     /// can't block subsequent messages. Owns CTS disposal and map removal just like
     /// <see cref="ValidateAndPublishAsync"/>. On cancellation (newer edit or close)
-    /// it responds with LSP RequestCancelled (-32800) so the client preserves its
+    /// it responds with LSP ServerCancelled (-32802) so the client preserves its
     /// last-known diagnostics rather than clearing them from an empty full report.
     /// </summary>
     private static async Task HandlePullDiagnosticsAsync(Stream stdout, string uri, JsonElement id)
@@ -609,7 +617,7 @@ public static partial class LspServer
     }
 
     /// <summary>
-    /// Writes a JSON-RPC RequestCancelled (-32800) error with the LSP
+    /// Writes a JSON-RPC ServerCancelled (-32802) error with the LSP
     /// <c>data.retriggerRequest = true</c> hint so conformant clients re-issue
     /// the pull after the superseding edit settles. Swallows transport errors
     /// because this is called from fire-and-forget tasks.
@@ -625,7 +633,7 @@ public static partial class LspServer
                 WriteId(w, id);
                 w.WritePropertyName(ErrorProperty);
                 w.WriteStartObject();
-                w.WriteNumber("code", LspRequestCancelled);
+                w.WriteNumber("code", LspServerCancelled);
                 w.WriteString(MessageProperty, "Request cancelled");
                 w.WritePropertyName("data");
                 w.WriteStartObject();

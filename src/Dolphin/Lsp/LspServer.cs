@@ -377,13 +377,16 @@ public static partial class LspServer
                     }
                     else if (id.ValueKind != JsonValueKind.Undefined)
                     {
-                        // Fire-and-forget: all blocking work inside the handler (opengrep
-                        // validate, SemaphoreSlim.WaitAsync on _stdoutLock) is genuinely
-                        // async and yields back to the message loop on its first await.
-                        // Intentionally NOT Task.Run'd: we rely on the handler registering
-                        // its CTS in _pullValidationCts synchronously on this thread so
-                        // DrainValidationsAsync sees it on shutdown. Moving to Task.Run
-                        // races the handler against shutdown and drops pull responses.
+                        // Fire-and-forget. The handler MAY run partly or entirely inline
+                        // on this thread: the non-ASCII fast path has no process spawn,
+                        // and SemaphoreSlim.WaitAsync returns a completed Task when the
+                        // lock is free, so every await can complete synchronously. That
+                        // is acceptable because the bounded work (short-text regex scan
+                        // plus small JSON write) blocks the message loop for microseconds
+                        // only. Intentionally NOT Task.Run'd: we rely on the handler
+                        // registering its CTS in _pullValidationCts synchronously on this
+                        // thread so DrainValidationsAsync sees it on shutdown — moving to
+                        // Task.Run races the handler against shutdown and drops responses.
                         // Clone the id so it outlives the JsonDocument owned by HandleBodyAsync.
                         var idClone = id.Clone();
                         _ = HandlePullDiagnosticsAsync(stdout, uri, idClone);
@@ -586,15 +589,13 @@ public static partial class LspServer
                 var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 ct.ThrowIfCancellationRequested();
                 // Pass the pull token so a newer pull that fires while we wait on
-                // _stdoutLock can preempt this stale full report. Re-check after the
-                // send: SendAsync silently returns (no throw) if cancellation fires
-                // between lock acquisition and write, so without this the response
-                // could be dropped and the client would hang.
-                try
-                {
-                    await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics), ct);
-                    ct.ThrowIfCancellationRequested();
-                }
+                // _stdoutLock can preempt this stale full report. SendAsync now
+                // throws OperationCanceledException if the token fires before the
+                // write starts — the outer catch converts that into a single
+                // ServerCancelled response. Do NOT re-check cancellation after the
+                // send returns normally: the full report was already written, and
+                // throwing here would emit a second response with the same id.
+                try { await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics), ct); }
                 catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
             }
             catch (OperationCanceledException)
@@ -858,9 +859,12 @@ public static partial class LspServer
         await _stdoutLock.WaitAsync(ct);
         try
         {
-            // Re-check after acquiring: the token may have fired while we waited,
-            // so skip the write to avoid publishing stale diagnostics.
-            if (ct.IsCancellationRequested) return;
+            // Re-check after acquiring: the token may have fired while we waited.
+            // Throw (not silently return) so the caller can distinguish "write did
+            // not happen" from "write succeeded" — a pull handler has to send a
+            // cancel response only in the former case, otherwise it would emit two
+            // responses for the same request id.
+            ct.ThrowIfCancellationRequested();
 
             await stdout.WriteAsync(headerBytes, CancellationToken.None);
             await stdout.WriteAsync(buf.WrittenMemory, CancellationToken.None);

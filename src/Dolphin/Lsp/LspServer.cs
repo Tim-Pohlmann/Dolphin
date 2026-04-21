@@ -529,7 +529,9 @@ public static partial class LspServer
                 // fast path can still report even if the scanner isn't installed.
                 var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 ct.ThrowIfCancellationRequested();
-                try { await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics)); }
+                // Pass the pull token so a newer pull that fires while we wait on
+                // _stdoutLock can preempt this stale full report.
+                try { await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics), ct); }
                 catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
             }
             catch (OperationCanceledException)
@@ -786,6 +788,9 @@ public static partial class LspServer
     /// </summary>
     private static Task MaybeSendAsync(Stream stdout, JsonElement id, Action<Utf8JsonWriter> write) =>
         id.ValueKind == JsonValueKind.Undefined ? Task.CompletedTask : SendAsync(stdout, write);
+
+    private static Task MaybeSendAsync(Stream stdout, JsonElement id, Action<Utf8JsonWriter> write, CancellationToken ct) =>
+        id.ValueKind == JsonValueKind.Undefined ? Task.CompletedTask : SendAsync(stdout, write, ct);
 
     private static Task TrySendErrorAsync(Stream stdout, JsonElement id) =>
         MaybeSendAsync(stdout, id, w =>

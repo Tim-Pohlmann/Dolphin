@@ -215,8 +215,8 @@ public partial class LspServerInProcessTests
         // Non-ASCII fast path runs synchronously (no opengrep needed) so we can assert
         // on the returned diagnostic regardless of whether the scanner is installed.
         const string uri = "file:///project/.dolphin/rules.yaml";
-        var openJson = "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\",\"languageId\":\"yaml\",\"version\":1,\"text\":\"rules: []\\n# \\u2708\"}}}";
-        var pullJson = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"textDocument/diagnostic\",\"params\":{\"textDocument\":{\"uri\":\"" + uri + "\"}}}";
+        var openJson = $$$$"""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"{{{{uri}}}}","languageId":"yaml","version":1,"text":"rules: []\n# \u2708"}}}""";
+        var pullJson = $$$$"""{"jsonrpc":"2.0","id":7,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"{{{{uri}}}}"}}}""";
 
         var responses = await RunServerAsync(
             openJson,

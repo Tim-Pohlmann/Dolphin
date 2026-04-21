@@ -56,7 +56,10 @@ public static partial class LspServer
 
     public static async Task<int> RunAsync(Stream? inputStream = null, Stream? outputStream = null)
     {
-        await DrainValidationsAsync(); // cancel any leftovers from a previous in-process session
+        // Clear any state left over from a previous in-process session (tests run the
+        // server multiple times in one process; production hosts may too).
+        await DrainValidationsAsync();
+        _documentText.Clear();
 
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
@@ -77,6 +80,7 @@ public static partial class LspServer
         }
 
         await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
+        _documentText.Clear();
         // Per LSP spec, exit without a prior shutdown is an error (code 1).
         return shutdownReceived ? 0 : 1;
     }
@@ -492,6 +496,16 @@ public static partial class LspServer
     /// </summary>
     private static async Task HandlePullDiagnosticsAsync(Stream stdout, string uri, JsonElement id)
     {
+        // Cache miss (pull before didOpen or after didClose): reply with an empty
+        // full report rather than validating "" — opengrep against an empty file
+        // produces misleading errors that don't reflect the client's actual buffer.
+        if (!_documentText.TryGetValue(uri, out var text))
+        {
+            try { await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, [])); }
+            catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
+            return;
+        }
+
         var cts = CancelPrevious(uri);
         using (cts)
         {
@@ -500,7 +514,6 @@ public static partial class LspServer
             {
                 // RunValidateAsync handles opengrep resolution itself so the non-ASCII
                 // fast path can still report even if the scanner isn't installed.
-                var text = _documentText.GetValueOrDefault(uri, "");
                 var diagnostics = await RunValidateAsync(text, Path.GetFileName(uri), ct);
                 ct.ThrowIfCancellationRequested();
                 try { await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, diagnostics)); }
@@ -643,11 +656,12 @@ public static partial class LspServer
 
         // Opengrep resolution is just-in-time so the non-ASCII fast path above still
         // reports even when the scanner isn't installed. Callers rely on this.
+        //
+        // If resolution fails we propagate the exception instead of returning []: that
+        // lets callers distinguish "no findings" from "validation could not run" and
+        // avoid clearing previously published diagnostics for the document.
         if (_opengrepBinary is null)
-        {
-            try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
-            catch { return []; }
-        }
+            _opengrepBinary = await Installer.EnsureInstalledAsync();
 
         var tmp = Path.Combine(Path.GetTempPath(), $"dolphin-lsp-{Guid.NewGuid():N}.yaml");
         try

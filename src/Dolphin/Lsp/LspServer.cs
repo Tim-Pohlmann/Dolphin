@@ -563,7 +563,7 @@ public static partial class LspServer
     {
         // Register the pull CTS before reading the cache so a concurrent didChange
         // reliably cancels this pull (didChange looks up _pullValidationCts to cancel
-        // supersedees). Use a dedicated pull map so a pull doesn't cancel an in-flight
+        // supersedes). Use a dedicated pull map so a pull doesn't cancel an in-flight
         // push that the client may also be listening to (LSP 3.17 permits both channels).
         var cts = CancelPrevious(_pullValidationCts, uri);
         using (cts)
@@ -658,6 +658,18 @@ public static partial class LspServer
         w.WriteStartObject();
         w.WriteString("kind", "full");
         w.WritePropertyName("items");
+        WriteDiagnosticsArray(w, diagnostics);
+        w.WriteEndObject();
+        w.WriteEndObject();
+    }
+
+    /// <summary>
+    /// Writes a JSON array of diagnostics in the LSP Diagnostic shape. Shared by
+    /// publishDiagnostics (push) and pull full-report paths so schema additions
+    /// (code, tags, ...) land in one place.
+    /// </summary>
+    private static void WriteDiagnosticsArray(Utf8JsonWriter w, LspDiagnostic[] diagnostics)
+    {
         w.WriteStartArray();
         foreach (var d in diagnostics)
         {
@@ -675,8 +687,6 @@ public static partial class LspServer
             w.WriteEndObject();
         }
         w.WriteEndArray();
-        w.WriteEndObject();
-        w.WriteEndObject();
     }
 
     /// <summary>
@@ -920,23 +930,7 @@ public static partial class LspServer
             w.WriteStartObject();
             w.WriteString("uri", uri);
             w.WritePropertyName("diagnostics");
-            w.WriteStartArray();
-            foreach (var d in diagnostics)
-            {
-                w.WriteStartObject();
-                w.WritePropertyName("range");
-                w.WriteStartObject();
-                w.WritePropertyName("start");
-                WritePosition(w, d.Range.Start);
-                w.WritePropertyName("end");
-                WritePosition(w, d.Range.End);
-                w.WriteEndObject();
-                w.WriteNumber("severity", d.Severity);
-                w.WriteString("source", d.Source);
-                w.WriteString(MessageProperty, d.Message);
-                w.WriteEndObject();
-            }
-            w.WriteEndArray();
+            WriteDiagnosticsArray(w, diagnostics);
             w.WriteEndObject();
             w.WriteEndObject();
         }, ct);

@@ -39,10 +39,17 @@ public static partial class LspServer
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
 
     // _documentText caps: Dolphin rules files are small in practice, so these limits are
-    // generous but bounded. Texts above MaxCachedTextBytes are not cached (pull falls
-    // back to an empty report); cache entries above MaxCachedDocuments are refused.
+    // generous but bounded. Texts above MaxCachedTextBytes are not cached, so a later
+    // pull diagnostic returns RequestCancelled (the cache-miss branch of
+    // HandlePullDiagnosticsAsync); cache entries above MaxCachedDocuments are refused.
     internal const int MaxCachedTextBytes = 1 * 1024 * 1024; // 1 MB
     internal const int MaxCachedDocuments = 64;
+
+    // Serialises admission into _documentText so the size cap is enforced atomically:
+    // ContainsKey + Count on ConcurrentDictionary are individually atomic but not
+    // composable, so without this lock two concurrent didOpens could both pass the
+    // guard and blow past MaxCachedDocuments.
+    private static readonly object _documentTextAdmissionLock = new();
 
     private const int ProcessReaperTimeoutSeconds = 5;
     private const int JsonRpcParseError      = -32700;
@@ -335,7 +342,14 @@ public static partial class LspServer
                         // Cancel any in-flight pull for this URI: its cached text is now stale,
                         // and we want the superseded pull to resolve with RequestCancelled
                         // rather than a stale full report computed from pre-edit content.
-                        if (_pullValidationCts.TryGetValue(uri, out var stalePull)) stalePull.Cancel();
+                        if (_pullValidationCts.TryGetValue(uri, out var stalePull))
+                        {
+                            // The pull task owns CTS disposal via `using`, so it can race with us:
+                            // the handler may complete and dispose between TryGetValue and Cancel.
+                            // Treat ObjectDisposedException as "nothing left to cancel".
+                            try { stalePull.Cancel(); }
+                            catch (ObjectDisposedException) { /* pull already finished */ }
+                        }
                         _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
                     }
                     break;
@@ -482,8 +496,11 @@ public static partial class LspServer
         // UTF-8 byte count so the cap matches the memory the string will actually
         // occupy on the wire / after encoding, not UTF-16 code units.
         if (Encoding.UTF8.GetByteCount(text) > MaxCachedTextBytes) return;
-        if (!_documentText.ContainsKey(uri) && _documentText.Count >= MaxCachedDocuments) return;
-        _documentText[uri] = text;
+        lock (_documentTextAdmissionLock)
+        {
+            if (!_documentText.ContainsKey(uri) && _documentText.Count >= MaxCachedDocuments) return;
+            _documentText[uri] = text;
+        }
     }
 
     /// <summary>

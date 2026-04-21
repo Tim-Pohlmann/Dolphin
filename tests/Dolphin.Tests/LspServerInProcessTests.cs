@@ -188,6 +188,7 @@ public partial class LspServerInProcessTests
         var responses = await RunServerAsync(
             """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
 
+        Assert.AreEqual(1, responses.Count, "initialize must produce exactly one response");
         var provider = responses[0]["result"]?["capabilities"]?["diagnosticProvider"];
         Assert.IsNotNull(provider, "diagnosticProvider must be present in capabilities");
         Assert.AreEqual(false, provider["interFileDependencies"]?.GetValue<bool>());

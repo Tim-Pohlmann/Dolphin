@@ -34,6 +34,12 @@ public static partial class LspServer
     // Stores document text for pull diagnostics (textDocument/diagnostic).
     private static readonly ConcurrentDictionary<string, string> _documentText = new();
 
+    // URIs whose text TryCacheDocumentText refused to cache (too large, or cache full).
+    // Distinguishes "transient cache miss" (no entry, no refusal → client should retrigger)
+    // from "intentionally uncached" (in this set → a retrigger signal would make a
+    // conformant client spin forever, so we reply with a plain InternalError instead).
+    private static readonly ConcurrentDictionary<string, byte> _uncacheableDocs = new();
+
     // Safety caps to prevent OOM from malformed/hostile clients.
     internal const int MaxHeaderBytes = 8 * 1024;        // 8 KB — headers are tiny
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
@@ -81,6 +87,7 @@ public static partial class LspServer
         // server multiple times in one process; production hosts may too).
         await DrainValidationsAsync();
         _documentText.Clear();
+        _uncacheableDocs.Clear();
 
         // Best-effort early resolution; if it fails we retry on first validate.
         try { _opengrepBinary = await Installer.EnsureInstalledAsync(); }
@@ -102,6 +109,7 @@ public static partial class LspServer
 
         await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
         _documentText.Clear();
+        _uncacheableDocs.Clear();
         // Per LSP spec, exit without a prior shutdown is an error (code 1).
         return shutdownReceived ? 0 : 1;
     }
@@ -361,6 +369,7 @@ public static partial class LspServer
                 {
                     var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
                     _documentText.TryRemove(uri, out _);
+                    _uncacheableDocs.TryRemove(uri, out _);
                     CancelAndRemove(uri);
                     // Only clear diagnostics we published; don't stomp on other servers.
                     if (IsDolphinRulesFile(uri))
@@ -510,13 +519,21 @@ public static partial class LspServer
             // Evict any prior entry so a subsequent pull hits the cache-miss branch
             // instead of validating stale pre-edit content.
             _documentText.TryRemove(uri, out _);
+            _uncacheableDocs[uri] = 0;
             return;
         }
         lock (_documentTextAdmissionLock)
         {
-            if (!_documentText.ContainsKey(uri) && _documentText.Count >= MaxCachedDocuments) return;
+            if (!_documentText.ContainsKey(uri) && _documentText.Count >= MaxCachedDocuments)
+            {
+                _uncacheableDocs[uri] = 0;
+                return;
+            }
             _documentText[uri] = text;
         }
+        // Accepted after a previous refusal (e.g. smaller edit replaces an oversized one,
+        // or a close freed a slot under the count cap).
+        _uncacheableDocs.TryRemove(uri, out _);
     }
 
     /// <summary>
@@ -574,13 +591,27 @@ public static partial class LspServer
             var ct = cts.Token;
             try
             {
-                // Cache miss (pull before didOpen, after didClose, or beyond cache caps):
-                // reply with ServerCancelled+retriggerRequest so the client preserves its
-                // last-known diagnostics instead of treating an empty full report as
-                // "validated successfully with zero findings".
                 if (!_documentText.TryGetValue(uri, out var text))
                 {
-                    await SendServerCancelledAsync(stdout, id, CancellationToken.None);
+                    // Two flavours of cache miss:
+                    //   - Transient: pull arrived before didOpen or after didClose.
+                    //     Reply with ServerCancelled+retriggerRequest so the client
+                    //     re-asks once state catches up and preserves its last-known
+                    //     diagnostics meanwhile.
+                    //   - Permanent: TryCacheDocumentText refused the document (too
+                    //     big or cache full). retriggerRequest=true would make
+                    //     conformant clients spin forever, so reply with a plain
+                    //     InternalError — no retrigger hint, no empty full report
+                    //     (which would be mis-read as "0 findings").
+                    if (_uncacheableDocs.ContainsKey(uri))
+                    {
+                        try { await TrySendErrorAsync(stdout, id); }
+                        catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
+                    }
+                    else
+                    {
+                        await SendServerCancelledAsync(stdout, id, CancellationToken.None);
+                    }
                     return;
                 }
                 ct.ThrowIfCancellationRequested();

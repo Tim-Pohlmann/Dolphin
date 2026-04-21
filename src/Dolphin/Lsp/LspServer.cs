@@ -375,8 +375,13 @@ public static partial class LspServer
                     }
                     else if (id.ValueKind != JsonValueKind.Undefined)
                     {
-                        // Run off the message loop: validation can invoke an external process
-                        // and must not block didChange/didClose/shutdown from being handled.
+                        // Fire-and-forget: all blocking work inside the handler (opengrep
+                        // validate, SemaphoreSlim.WaitAsync on _stdoutLock) is genuinely
+                        // async and yields back to the message loop on its first await.
+                        // Intentionally NOT Task.Run'd: we rely on the handler registering
+                        // its CTS in _pullValidationCts synchronously on this thread so
+                        // DrainValidationsAsync sees it on shutdown. Moving to Task.Run
+                        // races the handler against shutdown and drops pull responses.
                         // Clone the id so it outlives the JsonDocument owned by HandleBodyAsync.
                         var idClone = id.Clone();
                         _ = HandlePullDiagnosticsAsync(stdout, uri, idClone);
@@ -621,7 +626,10 @@ public static partial class LspServer
                 w.WriteEndObject();
             }, ct);
         }
-        catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
+        // OperationCanceledException covers the pull-CTS-cancelled case: MaybeSendAsync →
+        // SendAsync → _stdoutLock.WaitAsync(ct) will throw OCE if the token is cancelled
+        // before we acquire the lock, and that's equivalent to "nothing left to send".
+        catch (Exception e) when (e is IOException or ObjectDisposedException or OperationCanceledException) { /* disconnected/canceled */ }
     }
 
     private static void WritePullFullReport(Utf8JsonWriter w, JsonElement id, LspDiagnostic[] diagnostics)

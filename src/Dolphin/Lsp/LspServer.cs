@@ -40,7 +40,7 @@ public static partial class LspServer
 
     // _documentText caps: Dolphin rules files are small in practice, so these limits are
     // generous but bounded. Texts above MaxCachedTextBytes are not cached, so a later
-    // pull diagnostic returns RequestCancelled (the cache-miss branch of
+    // pull diagnostic returns ServerCancelled (the cache-miss branch of
     // HandlePullDiagnosticsAsync); cache entries above MaxCachedDocuments are refused.
     internal const int MaxCachedTextBytes = 1 * 1024 * 1024; // 1 MB
     internal const int MaxCachedDocuments = 64;
@@ -342,7 +342,7 @@ public static partial class LspServer
                         var text = changes[0].GetProperty("text").GetString() ?? "";
                         TryCacheDocumentText(uri, text);
                         // Cancel any in-flight pull for this URI: its cached text is now stale,
-                        // and we want the superseded pull to resolve with RequestCancelled
+                        // and we want the superseded pull to resolve with ServerCancelled
                         // rather than a stale full report computed from pre-edit content.
                         if (_pullValidationCts.TryGetValue(uri, out var stalePull))
                         {
@@ -572,12 +572,12 @@ public static partial class LspServer
             try
             {
                 // Cache miss (pull before didOpen, after didClose, or beyond cache caps):
-                // reply with RequestCancelled+retriggerRequest so the client preserves its
+                // reply with ServerCancelled+retriggerRequest so the client preserves its
                 // last-known diagnostics instead of treating an empty full report as
                 // "validated successfully with zero findings".
                 if (!_documentText.TryGetValue(uri, out var text))
                 {
-                    await SendRequestCancelledAsync(stdout, id, CancellationToken.None);
+                    await SendServerCancelledAsync(stdout, id, CancellationToken.None);
                     return;
                 }
                 ct.ThrowIfCancellationRequested();
@@ -601,7 +601,7 @@ public static partial class LspServer
             {
                 // Always send the cancellation response with CancellationToken.None:
                 // the pull CTS is already cancelled, so using it would skip the write.
-                await SendRequestCancelledAsync(stdout, id, CancellationToken.None);
+                await SendServerCancelledAsync(stdout, id, CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -622,7 +622,7 @@ public static partial class LspServer
     /// the pull after the superseding edit settles. Swallows transport errors
     /// because this is called from fire-and-forget tasks.
     /// </summary>
-    private static async Task SendRequestCancelledAsync(Stream stdout, JsonElement id, CancellationToken ct)
+    private static async Task SendServerCancelledAsync(Stream stdout, JsonElement id, CancellationToken ct)
     {
         try
         {
@@ -634,7 +634,7 @@ public static partial class LspServer
                 w.WritePropertyName(ErrorProperty);
                 w.WriteStartObject();
                 w.WriteNumber("code", LspServerCancelled);
-                w.WriteString(MessageProperty, "Request cancelled");
+                w.WriteString(MessageProperty, "Server cancelled");
                 w.WritePropertyName("data");
                 w.WriteStartObject();
                 w.WriteBoolean("retriggerRequest", true);

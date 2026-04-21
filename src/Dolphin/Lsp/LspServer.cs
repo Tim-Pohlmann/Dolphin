@@ -45,9 +45,11 @@ public static partial class LspServer
     internal const int MaxBodyBytes   = 10 * 1024 * 1024; // 10 MB
 
     // _documentText caps: Dolphin rules files are small in practice, so these limits are
-    // generous but bounded. Texts above MaxCachedTextBytes are not cached, so a later
-    // pull diagnostic returns ServerCancelled (the cache-miss branch of
-    // HandlePullDiagnosticsAsync); cache entries above MaxCachedDocuments are refused.
+    // generous but bounded. Texts above MaxCachedTextBytes, or texts refused because the
+    // cache is already at MaxCachedDocuments, are marked as intentionally uncacheable
+    // (see _uncacheableDocs) rather than treated as transient cache misses; a later
+    // pull diagnostic for such a URI returns a plain InternalError response instead of
+    // ServerCancelled+retriggerRequest, so conformant clients don't retry forever.
     internal const int MaxCachedTextBytes = 1 * 1024 * 1024; // 1 MB
     internal const int MaxCachedDocuments = 64;
 

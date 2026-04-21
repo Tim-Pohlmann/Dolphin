@@ -473,13 +473,15 @@ public static partial class LspServer
     }
 
     /// <summary>
-    /// Stores document text for pull diagnostics, subject to size and count caps.
+    /// Stores document text for pull diagnostics, subject to byte-size and count caps.
     /// Updates to an already-cached URI are always allowed; the count cap only
     /// blocks caching brand-new URIs once the dictionary is full.
     /// </summary>
     private static void TryCacheDocumentText(string uri, string text)
     {
-        if (text.Length > MaxCachedTextBytes) return;
+        // UTF-8 byte count so the cap matches the memory the string will actually
+        // occupy on the wire / after encoding, not UTF-16 code units.
+        if (Encoding.UTF8.GetByteCount(text) > MaxCachedTextBytes) return;
         if (!_documentText.ContainsKey(uri) && _documentText.Count >= MaxCachedDocuments) return;
         _documentText[uri] = text;
     }
@@ -529,13 +531,13 @@ public static partial class LspServer
     /// </summary>
     private static async Task HandlePullDiagnosticsAsync(Stream stdout, string uri, JsonElement id)
     {
-        // Cache miss (pull before didOpen or after didClose): reply with an empty
-        // full report rather than validating "" — opengrep against an empty file
-        // produces misleading errors that don't reflect the client's actual buffer.
+        // Cache miss (pull before didOpen, after didClose, or beyond cache caps):
+        // reply with RequestCancelled+retriggerRequest so the client preserves its
+        // last-known diagnostics instead of treating an empty full report as
+        // "validated successfully with zero findings".
         if (!_documentText.TryGetValue(uri, out var text))
         {
-            try { await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, [])); }
-            catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
+            await SendRequestCancelledAsync(stdout, id, CancellationToken.None);
             return;
         }
 
@@ -558,24 +560,9 @@ public static partial class LspServer
             }
             catch (OperationCanceledException)
             {
-                // Background task: swallow transport failures so they don't surface
-                // as unobserved task exceptions after the client has disconnected.
-                try
-                {
-                    await MaybeSendAsync(stdout, id, w =>
-                    {
-                        w.WriteStartObject();
-                        w.WriteString(JsonRpc, "2.0");
-                        WriteId(w, id);
-                        w.WritePropertyName(ErrorProperty);
-                        w.WriteStartObject();
-                        w.WriteNumber("code", LspRequestCancelled);
-                        w.WriteString(MessageProperty, "Request cancelled");
-                        w.WriteEndObject();
-                        w.WriteEndObject();
-                    });
-                }
-                catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
+                // Always send the cancellation response with CancellationToken.None:
+                // the pull CTS is already cancelled, so using it would skip the write.
+                await SendRequestCancelledAsync(stdout, id, CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -588,6 +575,36 @@ public static partial class LspServer
                 _pullValidationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
             }
         }
+    }
+
+    /// <summary>
+    /// Writes a JSON-RPC RequestCancelled (-32800) error with the LSP
+    /// <c>data.retriggerRequest = true</c> hint so conformant clients re-issue
+    /// the pull after the superseding edit settles. Swallows transport errors
+    /// because this is called from fire-and-forget tasks.
+    /// </summary>
+    private static async Task SendRequestCancelledAsync(Stream stdout, JsonElement id, CancellationToken ct)
+    {
+        try
+        {
+            await MaybeSendAsync(stdout, id, w =>
+            {
+                w.WriteStartObject();
+                w.WriteString(JsonRpc, "2.0");
+                WriteId(w, id);
+                w.WritePropertyName(ErrorProperty);
+                w.WriteStartObject();
+                w.WriteNumber("code", LspRequestCancelled);
+                w.WriteString(MessageProperty, "Request cancelled");
+                w.WritePropertyName("data");
+                w.WriteStartObject();
+                w.WriteBoolean("retriggerRequest", true);
+                w.WriteEndObject();
+                w.WriteEndObject();
+                w.WriteEndObject();
+            }, ct);
+        }
+        catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
     }
 
     private static void WritePullFullReport(Utf8JsonWriter w, JsonElement id, LspDiagnostic[] diagnostics)

@@ -22,8 +22,14 @@ public static partial class LspServer
     // Guards concurrent writes to stdout (validation runs off the message loop).
     private static readonly SemaphoreSlim _stdoutLock = new(1, 1);
 
-    // Per-URI cancellation: cancels superseded validations on rapid edits.
+    // Per-URI cancellation for push validations (didOpen/didChange → publishDiagnostics).
+    // Kept separate from the pull map so a pull request never supersedes an in-flight
+    // push that the client may also be listening to (LSP 3.17 allows both channels).
     private static readonly ConcurrentDictionary<string, CancellationTokenSource> _validationCts = new();
+
+    // Per-URI cancellation for pull validations (textDocument/diagnostic).
+    // A newer pull for the same URI supersedes the older one.
+    private static readonly ConcurrentDictionary<string, CancellationTokenSource> _pullValidationCts = new();
 
     // Stores document text for pull diagnostics (textDocument/diagnostic).
     private static readonly ConcurrentDictionary<string, string> _documentText = new();
@@ -158,11 +164,17 @@ public static partial class LspServer
     private static Task DrainValidationsAsync()
     {
         var tasks = new List<Task>();
-        while (!_validationCts.IsEmpty)
-            foreach (var key in _validationCts.Keys)
-                if (_validationCts.TryRemove(key, out var old))
-                    tasks.Add(old.CancelAsync());
+        DrainOne(_validationCts, tasks);
+        DrainOne(_pullValidationCts, tasks);
         return tasks.Count == 0 ? Task.CompletedTask : Task.WhenAll(tasks);
+
+        static void DrainOne(ConcurrentDictionary<string, CancellationTokenSource> map, List<Task> tasks)
+        {
+            while (!map.IsEmpty)
+                foreach (var key in map.Keys)
+                    if (map.TryRemove(key, out var old))
+                        tasks.Add(old.CancelAsync());
+        }
     }
 
     /// <summary>
@@ -301,7 +313,7 @@ public static partial class LspServer
                     if (IsDolphinRulesFile(uri))
                     {
                         _documentText[uri] = text;
-                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
                     }
                     break;
                 }
@@ -314,7 +326,7 @@ public static partial class LspServer
                     {
                         var text = changes[0].GetProperty("text").GetString() ?? "";
                         _documentText[uri] = text;
-                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(uri));
+                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
                     }
                     break;
                 }
@@ -435,31 +447,30 @@ public static partial class LspServer
     /// The caller must pass the returned CTS to <see cref="ValidateAndPublishAsync"/>,
     /// which owns its disposal via <c>using</c>.
     /// </summary>
-    private static CancellationTokenSource CancelPrevious(string uri)
+    private static CancellationTokenSource CancelPrevious(
+        ConcurrentDictionary<string, CancellationTokenSource> map, string uri)
     {
         var cts = new CancellationTokenSource();
-        _validationCts.AddOrUpdate(uri, cts, (_, prev) =>
+        map.AddOrUpdate(uri, cts, (_, prev) =>
         {
             prev.Cancel();
             // Do not dispose prev here: disposal is owned by its associated
-            // ValidateAndPublishAsync task (via using(cts)), so the token remains
-            // valid for any in-flight WaitForExitAsync/Register calls.
+            // validation task (via using(cts)), so the token remains valid for
+            // any in-flight WaitForExitAsync/Register calls.
             return cts;
         });
         return cts;
     }
 
     /// <summary>
-    /// Cancels any in-flight validation for <paramref name="uri"/> and removes it from the map.
+    /// Cancels any in-flight push and pull validations for <paramref name="uri"/>.
     /// Called on document close to prevent stale publish and reclaim the CTS.
     /// </summary>
     private static void CancelAndRemove(string uri)
     {
-        if (_validationCts.TryRemove(uri, out var cts))
-        {
-            cts.Cancel();
-            // Disposal is owned by the associated ValidateAndPublishAsync task.
-        }
+        if (_validationCts.TryRemove(uri, out var push)) push.Cancel();
+        if (_pullValidationCts.TryRemove(uri, out var pull)) pull.Cancel();
+        // Disposal is owned by each associated validation task.
     }
 
     private static async Task ValidateAndPublishAsync(
@@ -506,7 +517,9 @@ public static partial class LspServer
             return;
         }
 
-        var cts = CancelPrevious(uri);
+        // Use a dedicated pull map so a pull doesn't cancel an in-flight push that the
+        // client may also be listening to (LSP 3.17 permits clients to use both channels).
+        var cts = CancelPrevious(_pullValidationCts, uri);
         using (cts)
         {
             var ct = cts.Token;
@@ -548,7 +561,7 @@ public static partial class LspServer
             }
             finally
             {
-                _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
+                _pullValidationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
             }
         }
     }

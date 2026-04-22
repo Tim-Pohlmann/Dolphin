@@ -35,6 +35,8 @@ public static partial class LspServer
     // Distinguishes "transient cache miss" (no entry, no refusal → client should retrigger)
     // from "intentionally uncached" (in this set → a retrigger signal would make a
     // conformant client spin forever, so we reply with a plain InternalError instead).
+    // Capped at MaxCachedDocuments under _documentTextAdmissionLock to prevent OOM
+    // from clients that open many oversized or over-limit documents without closing them.
     private static readonly ConcurrentDictionary<string, byte> _uncacheableDocs = new();
 
     // Safety caps to prevent OOM from malformed/hostile clients.
@@ -507,19 +509,22 @@ public static partial class LspServer
     {
         // UTF-8 byte count so the cap matches the memory the string will actually
         // occupy on the wire / after encoding, not UTF-16 code units.
-        if (Encoding.UTF8.GetByteCount(text) > MaxCachedTextBytes)
-        {
-            // Evict any prior entry so a subsequent pull hits the cache-miss branch
-            // instead of validating stale pre-edit content.
-            _documentText.TryRemove(uri, out _);
-            _uncacheableDocs[uri] = 0;
-            return;
-        }
+        var byteCount = Encoding.UTF8.GetByteCount(text);
         lock (_documentTextAdmissionLock)
         {
+            if (byteCount > MaxCachedTextBytes)
+            {
+                // Evict any prior entry so a subsequent pull hits the cache-miss branch
+                // instead of validating stale pre-edit content.
+                _documentText.TryRemove(uri, out _);
+                if (_uncacheableDocs.Count < MaxCachedDocuments)
+                    _uncacheableDocs[uri] = 0;
+                return;
+            }
             if (!_documentText.ContainsKey(uri) && _documentText.Count >= MaxCachedDocuments)
             {
-                _uncacheableDocs[uri] = 0;
+                if (_uncacheableDocs.Count < MaxCachedDocuments)
+                    _uncacheableDocs[uri] = 0;
                 return;
             }
             _documentText[uri] = text;
@@ -596,7 +601,7 @@ public static partial class LspServer
                     //     (which would be mis-read as "0 findings").
                     if (_uncacheableDocs.ContainsKey(uri))
                     {
-                        try { await TrySendErrorAsync(stdout, id); }
+                        try { await TrySendErrorAsync(stdout, id, "Pull diagnostics unavailable: document text exceeds cache limits"); }
                         catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
                     }
                     else
@@ -834,7 +839,7 @@ public static partial class LspServer
     private static Task MaybeSendAsync(Stream stdout, JsonElement id, Action<Utf8JsonWriter> write, CancellationToken ct) =>
         id.ValueKind == JsonValueKind.Undefined ? Task.CompletedTask : SendAsync(stdout, write, ct);
 
-    private static Task TrySendErrorAsync(Stream stdout, JsonElement id) =>
+    private static Task TrySendErrorAsync(Stream stdout, JsonElement id, string message = "Internal error") =>
         MaybeSendAsync(stdout, id, w =>
         {
             // Send a generic message; full details are already logged to stderr.
@@ -845,7 +850,7 @@ public static partial class LspServer
             w.WritePropertyName(ErrorProperty);
             w.WriteStartObject();
             w.WriteNumber("code", JsonRpcInternalError);
-            w.WriteString(MessageProperty, "Internal error");
+            w.WriteString(MessageProperty, message);
             w.WriteEndObject();
             w.WriteEndObject();
         });

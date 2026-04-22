@@ -473,9 +473,7 @@ public class RunnerTests
             $"#!/bin/sh\ncat '{stdoutFile}'\nexit {exitCode}\n");
 #pragma warning disable CA1416
         File.SetUnixFileMode(script,
-            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
-            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
-            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
 #pragma warning restore CA1416
         return script;
     }

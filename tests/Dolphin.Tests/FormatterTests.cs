@@ -111,13 +111,14 @@ public class FormatterTests
             new("rule-e", Severity.Error,   "a.ts", 1, 1, "err",  ""),
             new("rule-e", Severity.Error,   "a.ts", 2, 1, "err",  ""),
             new("rule-w", Severity.Warning, "a.ts", 3, 1, "warn", ""),
-            new("rule-i", Severity.Info,    "a.ts", 4, 1, "info", ""),
+            new("rule-w", Severity.Warning, "a.ts", 4, 1, "warn", ""),
+            new("rule-i", Severity.Info,    "a.ts", 5, 1, "info", ""),
         };
 
         var output = CaptureText(findings);
 
         StringAssert.Contains(output, "2 errors");
-        StringAssert.Contains(output, "1 warnings");
+        StringAssert.Contains(output, "2 warnings");
         StringAssert.Contains(output, "1 info");
     }
 

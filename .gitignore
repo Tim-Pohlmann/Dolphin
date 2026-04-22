@@ -28,6 +28,7 @@ src/Dolphin/obj/semgrep-*
 
 # Test coverage reports
 coverage/
+tests/Dolphin.Tests/TestResults/
 
 # OS
 .DS_Store

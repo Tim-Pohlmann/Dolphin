@@ -146,7 +146,8 @@ public class FormatterTests
         Assert.AreEqual(1, doc.RootElement.GetArrayLength());
 
         var item = doc.RootElement[0];
-        // FindingDto uses PascalCase (no custom naming policy); verify both key and value.
+        // Formatter.PrintJson serializes via FindingDto with the source-generated
+        // FormatterJsonContext, which uses PascalCase property names by default.
         Assert.AreEqual("my-rule",    item.GetProperty("RuleId").GetString());
         Assert.AreEqual("error",      item.GetProperty("Severity").GetString());
         Assert.AreEqual("src/foo.ts", item.GetProperty("FilePath").GetString());

@@ -24,9 +24,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Lsp\semgrep-schema.json"
+                      LogicalName="Dolphin.Lsp.semgrep-schema.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="JsonSchema.Net" Version="9.1.5" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
     <PackageReference Include="ModelContextProtocol" Version="0.2.0-preview.3" />
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <PackageReference Include="YamlDotNet" Version="17.0.1" />
   </ItemGroup>
 
   <!--
@@ -46,8 +53,7 @@
 
     Only runs when RuntimeIdentifier is specified (i.e. during a platform publish).
   -->
-  <Target Name="BundleOpengrep" AfterTargets="Publish"
-          Condition="'$(RuntimeIdentifier)' != ''">
+  <Target Name="BundleOpengrep" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' != ''">
     <PropertyGroup>
       <!-- Opengrep binary name per RID -->
       <_OpengrepBin Condition="'$(RuntimeIdentifier)'=='linux-x64'">opengrep_manylinux_x86</_OpengrepBin>
@@ -63,27 +69,46 @@
       <_PublishedBinName Condition="'$(RuntimeIdentifier)'!='win-x64'">opengrep</_PublishedBinName>
     </PropertyGroup>
 
-    <Error Condition="'$(_OpengrepBin)'==''"
-           Text="Unsupported RuntimeIdentifier '$(RuntimeIdentifier)'. Supported: linux-x64, linux-arm64, osx-x64, osx-arm64, win-x64" />
+    <Error Condition="'$(_OpengrepBin)'==''" Text="Unsupported RuntimeIdentifier '$(RuntimeIdentifier)'. Supported: linux-x64, linux-arm64, osx-x64, osx-arm64, win-x64" />
 
     <Message Text="Bundling Opengrep (LGPL 2.1) as opengrep for $(RuntimeIdentifier)..." Importance="High" />
 
     <!-- Download only when not already cached -->
-    <Exec Condition="!Exists('$(_OpengrepCache)')"
-          Command="curl -fsSL -o &quot;$(_OpengrepCache)&quot; &quot;$(_OpengrepUrl)&quot;" />
-    <Exec Condition="'$(OS)'!='Windows_NT'"
-          Command="chmod +x &quot;$(_OpengrepCache)&quot;" />
+    <Exec Condition="!Exists('$(_OpengrepCache)')" Command="curl -fsSL -o &quot;$(_OpengrepCache)&quot; &quot;$(_OpengrepUrl)&quot;" />
+    <Exec Condition="'$(OS)'!='Windows_NT'" Command="chmod +x &quot;$(_OpengrepCache)&quot;" />
 
     <!-- Copy cached binary into the publish output -->
     <Copy SourceFiles="$(_OpengrepCache)" DestinationFiles="$(PublishDir)$(_PublishedBinName)" />
-    <Exec Condition="'$(OS)'!='Windows_NT'"
-          Command="chmod +x &quot;$(PublishDir)$(_PublishedBinName)&quot;" />
+    <Exec Condition="'$(OS)'!='Windows_NT'" Command="chmod +x &quot;$(PublishDir)$(_PublishedBinName)&quot;" />
 
     <!-- Write a brief LGPL attribution file next to the binary -->
-    <WriteLinesToFile File="$(PublishDir)OPENGREP-LICENSE.txt" Overwrite="true"
-      Lines="Dolphin bundles Opengrep (https://github.com/opengrep/opengrep), licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).%0AThe binary has not been modified. Source code is available at https://github.com/opengrep/opengrep.%0AThe full license text is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" />
+    <WriteLinesToFile File="$(PublishDir)OPENGREP-LICENSE.txt" Overwrite="true" Lines="Dolphin bundles Opengrep (https://github.com/opengrep/opengrep), licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).%0AThe binary has not been modified. Source code is available at https://github.com/opengrep/opengrep.%0AThe full license text is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" />
 
     <Message Text="Opengrep bundled → $(PublishDir)$(_PublishedBinName)" Importance="High" />
+  </Target>
+  <!--
+    The Semgrep rule schema (Lsp/semgrep-schema.json) is committed to the repo and embedded
+    into the dolphin binary as a .NET resource (see the EmbeddedResource item above), so
+    builds work offline. To refresh it against a newer upstream commit, run:
+      dotnet run scripts/update-schema.cs
+
+    rule_schema_v1.yaml is sourced from https://github.com/returntocorp/semgrep-interfaces,
+    licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1). LGPL 2.1
+    redistribution obligations (satisfied by this project):
+      - The schema is converted YAML → JSON with only the documented modifications listed
+        in scripts/update-schema.cs.
+      - The LGPL license text (and link to source) is included in the published output as
+        SEMGREP-SCHEMA-LICENSE.txt (see BundleSemgrepSchemaLicense target below).
+      - Source code is available at https://github.com/returntocorp/semgrep-interfaces.
+  -->
+
+  <!--
+    BundleSemgrepSchemaLicense: writes a brief LGPL attribution file next to the published
+    binary. The Semgrep rule schema is embedded in dolphin as a .NET resource, so the LGPL
+    obligation travels with every published artifact regardless of runtime identifier.
+  -->
+  <Target Name="BundleSemgrepSchemaLicense" AfterTargets="Publish">
+    <WriteLinesToFile File="$(PublishDir)SEMGREP-SCHEMA-LICENSE.txt" Overwrite="true" Lines="Dolphin embeds the Semgrep rule schema from https://github.com/returntocorp/semgrep-interfaces (rule_schema_v1.yaml), licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).%0AThe schema has been converted from YAML to JSON%3B modifications are documented in scripts/update-schema.cs. Source is available at https://github.com/returntocorp/semgrep-interfaces.%0AThe full license text is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" />
   </Target>
 
 </Project>

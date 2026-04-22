@@ -92,6 +92,23 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
+    public async Task RunAsync_OversizedHeader_ClosesConnectionAndLogsError()
+    {
+        // MaxHeaderBytes bytes of 'A' without \r\n\r\n → ReadHeaderAsync throws
+        // InvalidDataException, caught by TryReadNextMessageAsync; loop exits cleanly.
+        var oversizedHeader = new byte[LspServer.MaxHeaderBytes + 1];
+        Array.Fill(oversizedHeader, (byte)'A');
+        var input = new MemoryStream(oversizedHeader);
+        var output = new MemoryStream();
+
+        await LspServer.RunAsync(inputStream: input, outputStream: output);
+
+        // Connection closes without producing any response messages.
+        Assert.AreEqual(0, ParseOutput(output.ToArray()).Count,
+            "No responses expected after oversized header triggers connection close");
+    }
+
+    [TestMethod]
     public async Task RunAsync_OversizedBodyHeader_ClosesConnection()
     {
         // Content-Length > MaxBodyBytes → server breaks the loop immediately to avoid

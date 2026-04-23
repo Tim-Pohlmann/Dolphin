@@ -191,7 +191,15 @@ public static partial class LspServer
             while (!map.IsEmpty)
                 foreach (var key in map.Keys)
                     if (map.TryRemove(key, out var old))
-                        tasks.Add(old.CancelAsync());
+                        tasks.Add(TryCancelAsync(old));
+        }
+
+        static Task TryCancelAsync(CancellationTokenSource cts)
+        {
+            // The CTS may already be disposed by its owning validation task; treat that
+            // as "already cancelled" (best-effort drain).
+            try { return cts.CancelAsync(); }
+            catch (ObjectDisposedException) { return Task.CompletedTask; }
         }
     }
 
@@ -507,8 +515,9 @@ public static partial class LspServer
     /// </summary>
     private static void TryCacheDocumentText(string uri, string text)
     {
-        // UTF-8 byte count so the cap matches the memory the string will actually
-        // occupy on the wire / after encoding, not UTF-16 code units.
+        // Use UTF-8 byte count as a cap on encoded/serialized document size
+        // (for example, what would be sent on the wire), not as a measure of
+        // the managed string's in-memory UTF-16 footprint.
         var byteCount = Encoding.UTF8.GetByteCount(text);
         lock (_documentTextAdmissionLock)
         {
@@ -517,14 +526,12 @@ public static partial class LspServer
                 // Evict any prior entry so a subsequent pull hits the cache-miss branch
                 // instead of validating stale pre-edit content.
                 _documentText.TryRemove(uri, out _);
-                if (_uncacheableDocs.Count < MaxCachedDocuments)
-                    _uncacheableDocs[uri] = 0;
+                RecordUncacheable(uri);
                 return;
             }
             if (!_documentText.ContainsKey(uri) && _documentText.Count >= MaxCachedDocuments)
             {
-                if (_uncacheableDocs.Count < MaxCachedDocuments)
-                    _uncacheableDocs[uri] = 0;
+                RecordUncacheable(uri);
                 return;
             }
             _documentText[uri] = text;
@@ -532,6 +539,22 @@ public static partial class LspServer
         // Accepted after a previous refusal (e.g. smaller edit replaces an oversized one,
         // or a close freed a slot under the count cap).
         _uncacheableDocs.TryRemove(uri, out _);
+
+        // Must be called under _documentTextAdmissionLock. Always records the refusal
+        // so HandlePullDiagnosticsAsync never misclassifies a refused URI as a transient
+        // cache miss (which would cause ServerCancelled+retrigger and client retry loops).
+        static void RecordUncacheable(string u)
+        {
+            // Evict an arbitrary entry when full so the set stays bounded while still
+            // recording every refusal; no refused URI is left without a permanent marker.
+            if (!_uncacheableDocs.ContainsKey(u) && _uncacheableDocs.Count >= MaxCachedDocuments)
+            {
+                var evict = _uncacheableDocs.Keys.FirstOrDefault();
+                if (evict is not null)
+                    _uncacheableDocs.TryRemove(evict, out _);
+            }
+            _uncacheableDocs[u] = 0;
+        }
     }
 
     /// <summary>
@@ -540,8 +563,17 @@ public static partial class LspServer
     /// </summary>
     private static void CancelAndRemove(string uri)
     {
-        if (_validationCts.TryRemove(uri, out var push)) push.Cancel();
-        if (_pullValidationCts.TryRemove(uri, out var pull)) pull.Cancel();
+        if (_validationCts.TryRemove(uri, out var push))
+        {
+            // The CTS may already be disposed by its owning validation task.
+            try { push.Cancel(); }
+            catch (ObjectDisposedException) { /* owning task already disposed it */ }
+        }
+        if (_pullValidationCts.TryRemove(uri, out var pull))
+        {
+            try { pull.Cancel(); }
+            catch (ObjectDisposedException) { /* owning task already disposed it */ }
+        }
         // Disposal is owned by each associated validation task.
     }
 

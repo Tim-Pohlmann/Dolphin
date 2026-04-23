@@ -255,6 +255,60 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_OversizedText_ReturnsNonRetriggering()
+    {
+        // A didOpen whose text exceeds MaxCachedTextBytes marks the URI permanently
+        // uncacheable. A subsequent pull must return InternalError (-32603) with no
+        // retriggerRequest hint — not ServerCancelled — so conformant clients don't retry.
+        const string uri = "file:///project/.dolphin/rules.yaml";
+        var oversizedText = new string('a', LspServer.MaxCachedTextBytes + 1);
+        var openJson = $$$$"""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"{{{{uri}}}}","languageId":"yaml","version":1,"text":"{{{{oversizedText}}}}"}}}""";
+        var pullJson = $$$$"""{"jsonrpc":"2.0","id":8,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"{{{{uri}}}}"}}}""";
+
+        var responses = await RunServerAsync(
+            openJson,
+            pullJson,
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 8);
+        Assert.IsNotNull(pull, "Pull diagnostic must produce a response for a permanently uncacheable URI");
+        var error = pull["error"];
+        Assert.IsNotNull(error, "Response must be an error (InternalError)");
+        Assert.AreEqual(-32603, error["code"]?.GetValue<int>(), "Error code must be -32603 (InternalError)");
+        Assert.IsFalse(error["data"]?["retriggerRequest"]?.GetValue<bool>() ?? false,
+            "Must not set retriggerRequest=true for permanently uncacheable documents");
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_CacheFull_ReturnsNonRetriggering()
+    {
+        // Filling the document cache to MaxCachedDocuments then opening a new URI marks
+        // the extra URI as permanently uncacheable. Its pull diagnostic must return
+        // InternalError (-32603) without retriggerRequest so clients don't retry forever.
+        var fillMessages = Enumerable.Range(0, LspServer.MaxCachedDocuments)
+            .Select(i => $$$$"""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///p{{{{i}}}}/.dolphin/rules.yaml","languageId":"yaml","version":1,"text":"rules: []"}}}""")
+            .ToArray();
+        const string extraUri = "file:///extra/.dolphin/rules.yaml";
+        var extraOpen = $$$$"""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"{{{{extraUri}}}}","languageId":"yaml","version":1,"text":"rules: []"}}}""";
+        var pullJson = $$$$"""{"jsonrpc":"2.0","id":11,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"{{{{extraUri}}}}"}}}""";
+
+        var all = fillMessages
+            .Append(extraOpen)
+            .Append(pullJson)
+            .Append("""{"jsonrpc":"2.0","id":99,"method":"shutdown"}""")
+            .ToArray();
+        var responses = await RunServerAsync(all);
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 11);
+        Assert.IsNotNull(pull, "Pull diagnostic must produce a response when cache is full");
+        var error = pull["error"];
+        Assert.IsNotNull(error, "Response must be an error (InternalError)");
+        Assert.AreEqual(-32603, error["code"]?.GetValue<int>(), "Error code must be -32603 (InternalError)");
+        Assert.IsFalse(error["data"]?["retriggerRequest"]?.GetValue<bool>() ?? false,
+            "Must not set retriggerRequest=true for a cache-full refusal");
+    }
+
+    [TestMethod]
     public async Task HandleMessage_Initialize_StringId_EchoesId()
     {
         var responses = await RunServerAsync(

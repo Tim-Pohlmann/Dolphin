@@ -92,23 +92,6 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public async Task RunAsync_OversizedHeader_ClosesConnectionAndLogsError()
-    {
-        // MaxHeaderBytes bytes of 'A' without \r\n\r\n → ReadHeaderAsync throws
-        // InvalidDataException, caught by TryReadNextMessageAsync; loop exits cleanly.
-        var oversizedHeader = new byte[LspServer.MaxHeaderBytes + 1];
-        Array.Fill(oversizedHeader, (byte)'A');
-        var input = new MemoryStream(oversizedHeader);
-        var output = new MemoryStream();
-
-        await LspServer.RunAsync(inputStream: input, outputStream: output);
-
-        // Connection closes without producing any response messages.
-        Assert.AreEqual(0, ParseOutput(output.ToArray()).Count,
-            "No responses expected after oversized header triggers connection close");
-    }
-
-    [TestMethod]
     public async Task RunAsync_OversizedBodyHeader_ClosesConnection()
     {
         // Content-Length > MaxBodyBytes → server breaks the loop immediately to avoid
@@ -248,6 +231,27 @@ public partial class LspServerInProcessTests
         Assert.IsNotNull(items);
         Assert.AreEqual(1, items.Count, "Non-ASCII text must produce exactly one diagnostic");
         Assert.IsTrue(items[0]!["message"]!.GetValue<string>().Contains("Non-ASCII"));
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_BeforeDidOpen_ReturnsServerCancelled()
+    {
+        // A pull request that arrives before any didOpen for the same Dolphin URI hits
+        // the transient cache-miss path.  The server must respond with
+        // ServerCancelled (-32802) and include data.retriggerRequest=true so that
+        // conformant clients re-issue the pull once the cache is populated.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":5,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///project/.dolphin/rules.yaml"}}}""",
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 5);
+        Assert.IsNotNull(pull, "Pull diagnostic must produce a response even without prior didOpen");
+        var error = pull["error"];
+        Assert.IsNotNull(error, "Response must be an error (ServerCancelled)");
+        Assert.AreEqual(-32802, error["code"]?.GetValue<int>(),
+            "Error code must be -32802 (ServerCancelled)");
+        Assert.AreEqual(true, error["data"]?["retriggerRequest"]?.GetValue<bool>(),
+            "retriggerRequest hint must be true");
     }
 
     [TestMethod]

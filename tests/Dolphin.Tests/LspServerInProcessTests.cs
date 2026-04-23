@@ -181,6 +181,134 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
+    public async Task HandleMessage_Initialize_AdvertisesDiagnosticProvider()
+    {
+        // LSP 3.17 pull diagnostics: initialize must advertise diagnosticProvider so
+        // capability-aware clients issue textDocument/diagnostic requests.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
+
+        Assert.AreEqual(1, responses.Count, "initialize must produce exactly one response");
+        var provider = responses[0]["result"]?["capabilities"]?["diagnosticProvider"];
+        Assert.IsNotNull(provider, "diagnosticProvider must be present in capabilities");
+        Assert.IsFalse(provider["interFileDependencies"]?.GetValue<bool>());
+        Assert.IsFalse(provider["workspaceDiagnostics"]?.GetValue<bool>());
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_NonDolphinFile_ReturnsEmptyFullReport()
+    {
+        // Non-dolphin URIs never run validation: respond with an empty full report
+        // so the client doesn't stall waiting and doesn't conflate with our rules file.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":42,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///src/app.ts"}}}""",
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 42);
+        Assert.IsNotNull(pull, "Pull diagnostic request must produce a response");
+        Assert.AreEqual("full", pull["result"]?["kind"]?.GetValue<string>());
+        Assert.AreEqual(0, pull["result"]?["items"]?.AsArray().Count);
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_DolphinFile_NonAsciiText_ReturnsDiagnostic()
+    {
+        // Non-ASCII fast path runs synchronously (no opengrep needed) so we can assert
+        // on the returned diagnostic regardless of whether the scanner is installed.
+        const string uri = "file:///project/.dolphin/rules.yaml";
+        var openJson = $$$$"""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"{{{{uri}}}}","languageId":"yaml","version":1,"text":"rules: []\n# \u2708"}}}""";
+        var pullJson = $$$$"""{"jsonrpc":"2.0","id":7,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"{{{{uri}}}}"}}}""";
+
+        var responses = await RunServerAsync(
+            openJson,
+            pullJson,
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 7);
+        Assert.IsNotNull(pull, "Pull diagnostic response with id=7 expected");
+        Assert.AreEqual("full", pull["result"]?["kind"]?.GetValue<string>());
+        var items = pull["result"]?["items"]?.AsArray();
+        Assert.IsNotNull(items);
+        Assert.AreEqual(1, items.Count, "Non-ASCII text must produce exactly one diagnostic");
+        Assert.IsTrue(items[0]!["message"]!.GetValue<string>().Contains("Non-ASCII"));
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_BeforeDidOpen_ReturnsServerCancelled()
+    {
+        // A pull request that arrives before any didOpen for the same Dolphin URI hits
+        // the transient cache-miss path.  The server must respond with
+        // ServerCancelled (-32802) and include data.retriggerRequest=true so that
+        // conformant clients re-issue the pull once the cache is populated.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":5,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///project/.dolphin/rules.yaml"}}}""",
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 5);
+        Assert.IsNotNull(pull, "Pull diagnostic must produce a response even without prior didOpen");
+        var error = pull["error"];
+        Assert.IsNotNull(error, "Response must be an error (ServerCancelled)");
+        Assert.AreEqual(-32802, error["code"]?.GetValue<int>(),
+            "Error code must be -32802 (ServerCancelled)");
+        Assert.IsTrue(error["data"]?["retriggerRequest"]?.GetValue<bool>(),
+            "retriggerRequest hint must be true");
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_OversizedText_ReturnsNonRetriggering()
+    {
+        // A didOpen whose text exceeds MaxCachedTextBytes marks the URI permanently
+        // uncacheable. A subsequent pull must return InternalError (-32603) with no
+        // retriggerRequest hint — not ServerCancelled — so conformant clients don't retry.
+        const string uri = "file:///project/.dolphin/rules.yaml";
+        var oversizedText = new string('a', LspServer.MaxCachedTextBytes + 1);
+        var openJson = $$$$"""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"{{{{uri}}}}","languageId":"yaml","version":1,"text":"{{{{oversizedText}}}}"}}}""";
+        var pullJson = $$$$"""{"jsonrpc":"2.0","id":8,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"{{{{uri}}}}"}}}""";
+
+        var responses = await RunServerAsync(
+            openJson,
+            pullJson,
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 8);
+        Assert.IsNotNull(pull, "Pull diagnostic must produce a response for a permanently uncacheable URI");
+        var error = pull["error"];
+        Assert.IsNotNull(error, "Response must be an error (InternalError)");
+        Assert.AreEqual(-32603, error["code"]?.GetValue<int>(), "Error code must be -32603 (InternalError)");
+        Assert.IsFalse(error["data"]?["retriggerRequest"]?.GetValue<bool>() ?? false,
+            "Must not set retriggerRequest=true for permanently uncacheable documents");
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_CacheFull_ReturnsNonRetriggering()
+    {
+        // Filling the document cache to MaxCachedDocuments then opening a new URI marks
+        // the extra URI as permanently uncacheable. Its pull diagnostic must return
+        // InternalError (-32603) without retriggerRequest so clients don't retry forever.
+        var fillMessages = Enumerable.Range(0, LspServer.MaxCachedDocuments)
+            .Select(i => $$$$"""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///p{{{{i}}}}/.dolphin/rules.yaml","languageId":"yaml","version":1,"text":"rules: []"}}}""")
+            .ToArray();
+        const string extraUri = "file:///extra/.dolphin/rules.yaml";
+        var extraOpen = $$$$"""{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"{{{{extraUri}}}}","languageId":"yaml","version":1,"text":"rules: []"}}}""";
+        var pullJson = $$$$"""{"jsonrpc":"2.0","id":11,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"{{{{extraUri}}}}"}}}""";
+
+        var all = fillMessages
+            .Append(extraOpen)
+            .Append(pullJson)
+            .Append("""{"jsonrpc":"2.0","id":99,"method":"shutdown"}""")
+            .ToArray();
+        var responses = await RunServerAsync(all);
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 11);
+        Assert.IsNotNull(pull, "Pull diagnostic must produce a response when cache is full");
+        var error = pull["error"];
+        Assert.IsNotNull(error, "Response must be an error (InternalError)");
+        Assert.AreEqual(-32603, error["code"]?.GetValue<int>(), "Error code must be -32603 (InternalError)");
+        Assert.IsFalse(error["data"]?["retriggerRequest"]?.GetValue<bool>() ?? false,
+            "Must not set retriggerRequest=true for a cache-full refusal");
+    }
+
+    [TestMethod]
     public async Task HandleMessage_Initialize_StringId_EchoesId()
     {
         var responses = await RunServerAsync(

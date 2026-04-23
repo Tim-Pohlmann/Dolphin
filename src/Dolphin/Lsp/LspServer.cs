@@ -540,13 +540,13 @@ public static partial class LspServer
         // or a close freed a slot under the count cap).
         _uncacheableDocs.TryRemove(uri, out _);
 
-        // Must be called under _documentTextAdmissionLock. Always records the refusal
-        // so HandlePullDiagnosticsAsync never misclassifies a refused URI as a transient
-        // cache miss (which would cause ServerCancelled+retrigger and client retry loops).
+        // Must be called under _documentTextAdmissionLock. Records refusals in a
+        // bounded set so HandlePullDiagnosticsAsync can distinguish a recent refusal
+        // from a transient cache miss (avoiding ServerCancelled+retrigger retry loops).
         static void RecordUncacheable(string u)
         {
-            // Evict an arbitrary entry when full so the set stays bounded while still
-            // recording every refusal; no refused URI is left without a permanent marker.
+            // Evict an arbitrary older marker when full so the set stays bounded.
+            // Refusals are recorded best-effort and are not kept permanently.
             if (!_uncacheableDocs.ContainsKey(u) && _uncacheableDocs.Count >= MaxCachedDocuments)
             {
                 var evict = _uncacheableDocs.Keys.FirstOrDefault();
@@ -622,18 +622,24 @@ public static partial class LspServer
                 if (!_documentText.TryGetValue(uri, out var text))
                 {
                     // Two flavours of cache miss:
+                    //   - Permanent: TryCacheDocumentText refused the document (too big
+                    //     or cache full). retriggerRequest=true would make conformant
+                    //     clients spin forever, so reply with a plain InternalError —
+                    //     no retrigger hint, no empty full report (which would be
+                    //     mis-read as "0 findings"). A URI is treated as permanent when
+                    //     _uncacheableDocs contains it, OR when _documentText is at
+                    //     capacity (meaning didOpen would also be refused, so retrigger
+                    //     can never succeed). The latter covers URIs that were evicted
+                    //     from _uncacheableDocs when it filled up.
                     //   - Transient: pull arrived before didOpen or after didClose.
                     //     Reply with ServerCancelled+retriggerRequest so the client
                     //     re-asks once state catches up and preserves its last-known
                     //     diagnostics meanwhile.
-                    //   - Permanent: TryCacheDocumentText refused the document (too
-                    //     big or cache full). retriggerRequest=true would make
-                    //     conformant clients spin forever, so reply with a plain
-                    //     InternalError — no retrigger hint, no empty full report
-                    //     (which would be mis-read as "0 findings").
-                    if (_uncacheableDocs.ContainsKey(uri))
+                    var isPermanent = _uncacheableDocs.ContainsKey(uri)
+                        || _documentText.Count >= MaxCachedDocuments;
+                    if (isPermanent)
                     {
-                        try { await TrySendErrorAsync(stdout, id, "Pull diagnostics unavailable: document text exceeds cache limits"); }
+                        try { await TrySendErrorAsync(stdout, id, "Pull diagnostics unavailable: document text unavailable (too large or cache full)"); }
                         catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
                     }
                     else

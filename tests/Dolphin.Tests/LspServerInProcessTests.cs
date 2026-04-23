@@ -191,8 +191,8 @@ public partial class LspServerInProcessTests
         Assert.AreEqual(1, responses.Count, "initialize must produce exactly one response");
         var provider = responses[0]["result"]?["capabilities"]?["diagnosticProvider"];
         Assert.IsNotNull(provider, "diagnosticProvider must be present in capabilities");
-        Assert.AreEqual(false, provider["interFileDependencies"]?.GetValue<bool>());
-        Assert.AreEqual(false, provider["workspaceDiagnostics"]?.GetValue<bool>());
+        Assert.IsFalse(provider["interFileDependencies"]?.GetValue<bool>());
+        Assert.IsFalse(provider["workspaceDiagnostics"]?.GetValue<bool>());
     }
 
     [TestMethod]
@@ -250,7 +250,7 @@ public partial class LspServerInProcessTests
         Assert.IsNotNull(error, "Response must be an error (ServerCancelled)");
         Assert.AreEqual(-32802, error["code"]?.GetValue<int>(),
             "Error code must be -32802 (ServerCancelled)");
-        Assert.AreEqual(true, error["data"]?["retriggerRequest"]?.GetValue<bool>(),
+        Assert.IsTrue(error["data"]?["retriggerRequest"]?.GetValue<bool>(),
             "retriggerRequest hint must be true");
     }
 

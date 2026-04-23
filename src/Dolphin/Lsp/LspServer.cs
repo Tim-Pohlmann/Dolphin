@@ -68,9 +68,10 @@ public static partial class LspServer
     // retrigger on server cancellation.
     private const int LspServerCancelled     = -32802;
 
-    private const string JsonRpc        = "jsonrpc";
-    private const string ErrorProperty   = "error";
-    private const string MessageProperty = "message";
+    private const string JsonRpc             = "jsonrpc";
+    private const string ErrorProperty       = "error";
+    private const string MessageProperty     = "message";
+    private const string TextDocumentProperty = "textDocument";
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ContentLengthRegex();
@@ -308,118 +309,25 @@ public static partial class LspServer
             switch (method)
             {
                 case "initialize":
-                    await MaybeSendAsync(stdout, id, w =>
-                    {
-                        w.WriteStartObject();
-                        w.WriteString(JsonRpc, "2.0");
-                        WriteId(w, id);
-                        w.WritePropertyName("result");
-                        w.WriteStartObject();
-                        w.WritePropertyName("capabilities");
-                        w.WriteStartObject();
-                        w.WriteNumber("textDocumentSync", 1); // full sync
-                        w.WritePropertyName("diagnosticProvider");
-                        w.WriteStartObject();
-                        w.WriteBoolean("interFileDependencies", false);
-                        w.WriteBoolean("workspaceDiagnostics", false);
-                        w.WriteEndObject();
-                        w.WriteEndObject();
-                        w.WriteEndObject();
-                        w.WriteEndObject();
-                    });
+                    await HandleInitializeAsync(stdout, id);
                     break;
-
                 case "textDocument/didOpen":
-                {
-                    var td = p.GetProperty("textDocument");
-                    var uri = td.GetProperty("uri").GetString() ?? "";
-                    var text = td.GetProperty("text").GetString() ?? "";
-                    // Only cache text for files we can validate; otherwise a client
-                    // opening many large unrelated documents would grow memory without bound.
-                    if (IsDolphinRulesFile(uri))
-                    {
-                        TryCacheDocumentText(uri, text);
-                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
-                    }
+                    HandleDidOpen(stdout, p);
                     break;
-                }
-
                 case "textDocument/didChange":
-                {
-                    var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
-                    var changes = p.GetProperty("contentChanges");
-                    if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
-                    {
-                        var text = changes[0].GetProperty("text").GetString() ?? "";
-                        TryCacheDocumentText(uri, text);
-                        // Cancel any in-flight pull for this URI: its cached text is now stale,
-                        // and we want the superseded pull to resolve with ServerCancelled
-                        // rather than a stale full report computed from pre-edit content.
-                        if (_pullValidationCts.TryGetValue(uri, out var stalePull))
-                        {
-                            // The pull task owns CTS disposal via `using`, so it can race with us:
-                            // the handler may complete and dispose between TryGetValue and Cancel.
-                            // Treat ObjectDisposedException as "nothing left to cancel".
-                            try { stalePull.Cancel(); }
-                            catch (ObjectDisposedException) { /* pull already finished */ }
-                        }
-                        _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
-                    }
+                    await HandleDidChangeAsync(stdout, p);
                     break;
-                }
-
                 case "textDocument/didClose":
-                {
-                    var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
-                    _documentText.TryRemove(uri, out _);
-                    _uncacheableDocs.TryRemove(uri, out _);
-                    CancelAndRemove(uri);
-                    // Only clear diagnostics we published; don't stomp on other servers.
-                    if (IsDolphinRulesFile(uri))
-                        await PublishDiagnosticsAsync(stdout, uri, []);
+                    await HandleDidCloseAsync(stdout, p);
                     break;
-                }
-
                 case "textDocument/diagnostic":
-                {
-                    var uri = p.GetProperty("textDocument").GetProperty("uri").GetString() ?? "";
-                    if (!IsDolphinRulesFile(uri))
-                    {
-                        await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, []));
-                    }
-                    else if (id.ValueKind != JsonValueKind.Undefined)
-                    {
-                        // Fire-and-forget. The handler MAY run partly or entirely inline
-                        // on this thread: the non-ASCII fast path has no process spawn,
-                        // and SemaphoreSlim.WaitAsync returns a completed Task when the
-                        // lock is free, so every await can complete synchronously. That
-                        // is acceptable because the bounded work (short-text regex scan
-                        // plus small JSON write) blocks the message loop for microseconds
-                        // only. Intentionally NOT Task.Run'd: we rely on the handler
-                        // registering its CTS in _pullValidationCts synchronously on this
-                        // thread so DrainValidationsAsync sees it on shutdown — moving to
-                        // Task.Run races the handler against shutdown and drops responses.
-                        // Clone the id so it outlives the JsonDocument owned by HandleBodyAsync.
-                        var idClone = id.Clone();
-                        _ = HandlePullDiagnosticsAsync(stdout, uri, idClone);
-                    }
+                    await HandleDiagnosticPullAsync(stdout, p, id);
                     break;
-                }
-
                 case "shutdown":
-                    await MaybeSendAsync(stdout, id, w =>
-                    {
-                        w.WriteStartObject();
-                        w.WriteString(JsonRpc, "2.0");
-                        WriteId(w, id);
-                        w.WriteNull("result");
-                        w.WriteEndObject();
-                    });
+                    await HandleShutdownAsync(stdout, id);
                     return MessageAction.ShutdownReceived;
-
                 case "exit":
                     return MessageAction.ExitRequested;
-
                 default:
                     // Notifications (no id) are silently ignored per JSON-RPC 2.0.
                     // Requests (id present) must receive a response or the client hangs.
@@ -463,6 +371,110 @@ public static partial class LspServer
         }
         return MessageAction.Continue;
     }
+
+    private static Task HandleInitializeAsync(Stream stdout, JsonElement id) =>
+        MaybeSendAsync(stdout, id, w =>
+        {
+            w.WriteStartObject();
+            w.WriteString(JsonRpc, "2.0");
+            WriteId(w, id);
+            w.WritePropertyName("result");
+            w.WriteStartObject();
+            w.WritePropertyName("capabilities");
+            w.WriteStartObject();
+            w.WriteNumber("textDocumentSync", 1); // full sync
+            w.WritePropertyName("diagnosticProvider");
+            w.WriteStartObject();
+            w.WriteBoolean("interFileDependencies", false);
+            w.WriteBoolean("workspaceDiagnostics", false);
+            w.WriteEndObject();
+            w.WriteEndObject();
+            w.WriteEndObject();
+            w.WriteEndObject();
+        });
+
+    private static void HandleDidOpen(Stream stdout, JsonElement p)
+    {
+        var td = p.GetProperty(TextDocumentProperty);
+        var uri = td.GetProperty("uri").GetString() ?? "";
+        var text = td.GetProperty("text").GetString() ?? "";
+        // Only cache text for files we can validate; otherwise a client
+        // opening many large unrelated documents would grow memory without bound.
+        if (IsDolphinRulesFile(uri))
+        {
+            TryCacheDocumentText(uri, text);
+            _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
+        }
+    }
+
+    private static async Task HandleDidChangeAsync(Stream stdout, JsonElement p)
+    {
+        var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
+        var changes = p.GetProperty("contentChanges");
+        if (changes.GetArrayLength() > 0 && IsDolphinRulesFile(uri))
+        {
+            var text = changes[0].GetProperty("text").GetString() ?? "";
+            TryCacheDocumentText(uri, text);
+            // Cancel any in-flight pull for this URI: its cached text is now stale,
+            // and we want the superseded pull to resolve with ServerCancelled
+            // rather than a stale full report computed from pre-edit content.
+            if (_pullValidationCts.TryGetValue(uri, out var stalePull))
+            {
+                // The pull task owns CTS disposal via `using`, so it can race with us:
+                // the handler may complete and dispose between TryGetValue and CancelAsync.
+                // Treat ObjectDisposedException as "nothing left to cancel".
+                try { await stalePull.CancelAsync(); }
+                catch (ObjectDisposedException) { /* pull already finished */ }
+            }
+            _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
+        }
+    }
+
+    private static async Task HandleDidCloseAsync(Stream stdout, JsonElement p)
+    {
+        var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
+        _documentText.TryRemove(uri, out _);
+        _uncacheableDocs.TryRemove(uri, out _);
+        CancelAndRemove(uri);
+        // Only clear diagnostics we published; don't stomp on other servers.
+        if (IsDolphinRulesFile(uri))
+            await PublishDiagnosticsAsync(stdout, uri, []);
+    }
+
+    private static async Task HandleDiagnosticPullAsync(Stream stdout, JsonElement p, JsonElement id)
+    {
+        var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
+        if (!IsDolphinRulesFile(uri))
+        {
+            await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, []));
+        }
+        else if (id.ValueKind != JsonValueKind.Undefined)
+        {
+            // Fire-and-forget. The handler MAY run partly or entirely inline
+            // on this thread: the non-ASCII fast path has no process spawn,
+            // and SemaphoreSlim.WaitAsync returns a completed Task when the
+            // lock is free, so every await can complete synchronously. That
+            // is acceptable because the bounded work (short-text regex scan
+            // plus small JSON write) blocks the message loop for microseconds
+            // only. Intentionally NOT Task.Run'd: we rely on the handler
+            // registering its CTS in _pullValidationCts synchronously on this
+            // thread so DrainValidationsAsync sees it on shutdown — moving to
+            // Task.Run races the handler against shutdown and drops responses.
+            // Clone the id so it outlives the JsonDocument owned by HandleBodyAsync.
+            var idClone = id.Clone();
+            _ = HandlePullDiagnosticsAsync(stdout, uri, idClone);
+        }
+    }
+
+    private static Task HandleShutdownAsync(Stream stdout, JsonElement id) =>
+        MaybeSendAsync(stdout, id, w =>
+        {
+            w.WriteStartObject();
+            w.WriteString(JsonRpc, "2.0");
+            WriteId(w, id);
+            w.WriteNull("result");
+            w.WriteEndObject();
+        });
 
     private enum MessageAction { Continue, ShutdownReceived, ExitRequested }
 
@@ -621,31 +633,7 @@ public static partial class LspServer
             {
                 if (!_documentText.TryGetValue(uri, out var text))
                 {
-                    // Two flavours of cache miss:
-                    //   - Permanent: TryCacheDocumentText refused the document (too big
-                    //     or cache full). retriggerRequest=true would make conformant
-                    //     clients spin forever, so reply with a plain InternalError —
-                    //     no retrigger hint, no empty full report (which would be
-                    //     mis-read as "0 findings"). A URI is treated as permanent when
-                    //     _uncacheableDocs contains it, OR when _documentText is at
-                    //     capacity (meaning didOpen would also be refused, so retrigger
-                    //     can never succeed). The latter covers URIs that were evicted
-                    //     from _uncacheableDocs when it filled up.
-                    //   - Transient: pull arrived before didOpen or after didClose.
-                    //     Reply with ServerCancelled+retriggerRequest so the client
-                    //     re-asks once state catches up and preserves its last-known
-                    //     diagnostics meanwhile.
-                    var isPermanent = _uncacheableDocs.ContainsKey(uri)
-                        || _documentText.Count >= MaxCachedDocuments;
-                    if (isPermanent)
-                    {
-                        try { await TrySendErrorAsync(stdout, id, "Pull diagnostics unavailable: document text unavailable (too large or cache full)"); }
-                        catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
-                    }
-                    else
-                    {
-                        await SendServerCancelledAsync(stdout, id, CancellationToken.None);
-                    }
+                    await HandlePullCacheMissAsync(stdout, id, uri);
                     return;
                 }
                 ct.ThrowIfCancellationRequested();
@@ -677,6 +665,34 @@ public static partial class LspServer
             {
                 _pullValidationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
             }
+        }
+    }
+
+    /// <summary>
+    /// Handles a pull-diagnostic request when the document text is not in the cache.
+    /// Distinguishes permanent refusals (too large or cache full → InternalError, no retrigger)
+    /// from transient misses (pull before didOpen / after didClose → ServerCancelled + retrigger).
+    /// </summary>
+    private static async Task HandlePullCacheMissAsync(Stream stdout, JsonElement id, string uri)
+    {
+        // Two flavours of cache miss:
+        //   - Permanent: TryCacheDocumentText refused the document (too big or cache full).
+        //     retriggerRequest=true would make conformant clients spin forever, so reply with
+        //     a plain InternalError. A URI is treated as permanent when _uncacheableDocs contains
+        //     it, OR when _documentText is at capacity (meaning didOpen would also be refused,
+        //     so retrigger can never succeed). The latter covers URIs evicted from _uncacheableDocs.
+        //   - Transient: pull arrived before didOpen or after didClose. Reply with
+        //     ServerCancelled+retriggerRequest so the client re-asks once state catches up.
+        var isPermanent = _uncacheableDocs.ContainsKey(uri)
+            || _documentText.Count >= MaxCachedDocuments;
+        if (isPermanent)
+        {
+            try { await TrySendErrorAsync(stdout, id, "Pull diagnostics unavailable: document text unavailable (too large or cache full)"); }
+            catch (Exception e) when (e is IOException or ObjectDisposedException) { /* disconnected */ }
+        }
+        else
+        {
+            await SendServerCancelledAsync(stdout, id, CancellationToken.None);
         }
     }
 

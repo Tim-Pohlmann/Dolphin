@@ -79,6 +79,20 @@ jobs:
           if gh release view "$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "Release $version already exists; skipping creation."
           else
+            max_attempts=6
+            attempt=1
+            while true; do
+              if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$version" > /dev/null 2>&1; then
+                break
+              fi
+              if [[ "$attempt" -ge "$max_attempts" ]]; then
+                echo "Error: tag $version is not yet visible via the GitHub API after $max_attempts attempts."
+                exit 1
+              fi
+              echo "Tag $version not yet visible via GitHub API; retrying in 5 seconds (attempt $attempt/$max_attempts)."
+              sleep 5
+              attempt=$((attempt + 1))
+            done
             gh release create "$version" --title "Dolphin $version" --generate-notes --verify-tag --repo "$GITHUB_REPOSITORY"
           fi
         env:

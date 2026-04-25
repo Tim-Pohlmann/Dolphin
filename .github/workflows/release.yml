@@ -7,6 +7,10 @@ on:
         description: 'Version to release (e.g. v1.2.3)'
         required: true
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.version }}
+  cancel-in-progress: false
+
 jobs:
   create-tag:
     name: Create Tag
@@ -140,6 +144,13 @@ jobs:
         run: cd bin && zip -r ../dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.zip .
 
       - name: Upload asset
-        run: gh release upload "${{ github.event.inputs.version }}" "dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.${{ matrix.archive_ext }}" --clobber --repo "$GITHUB_REPOSITORY"
+        run: |
+          version="${{ github.event.inputs.version }}"
+          asset="dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.${{ matrix.archive_ext }}"
+          if gh release view "$version" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$asset"; then
+            echo "Asset $asset already exists on release $version; skipping upload."
+          else
+            gh release upload "$version" "$asset" --repo "$GITHUB_REPOSITORY"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

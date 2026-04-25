@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  create-tag:
-    name: Create Tag
+  create-release:
+    name: Create Release
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -30,22 +30,13 @@ jobs:
             exit 1
           fi
 
-      - name: Create and push tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ github.event.inputs.version }}" -m "Release ${{ github.event.inputs.version }}"
-          git push origin "refs/tags/${{ github.event.inputs.version }}"
-
-  create-release:
-    name: Create Release
-    needs: create-tag
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
       - name: Create GitHub Release
-        run: gh release create "${{ github.event.inputs.version }}" --title "Dolphin ${{ github.event.inputs.version }}" --generate-notes --verify-tag --repo "$GITHUB_REPOSITORY"
+        run: |
+          gh release create "${{ github.event.inputs.version }}" \
+            --title "Dolphin ${{ github.event.inputs.version }}" \
+            --target "$(git rev-parse HEAD)" \
+            --generate-notes \
+            --repo "$GITHUB_REPOSITORY"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.event.repository.default_branch }}
 
       - name: Validate version format
         run: |
@@ -50,7 +50,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$version"
+          git tag -a "$version" -m "Release $version"
           git push origin "refs/tags/$version"
 
   create-release:
@@ -94,8 +94,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.version }}
+
+      - name: Fetch and checkout release tag
+        run: |
+          version="${{ github.event.inputs.version }}"
+          for attempt in 1 2 3 4 5; do
+            if git fetch --force origin "refs/tags/$version:refs/tags/$version" && git checkout "refs/tags/$version"; then
+              exit 0
+            fi
+            echo "Tag $version not available yet (attempt $attempt/5); retrying in 5 seconds..."
+            sleep 5
+          done
+          echo "Failed to fetch and checkout tag $version after 5 attempts."
+          exit 1
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4

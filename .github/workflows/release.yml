@@ -28,10 +28,30 @@ jobs:
 
       - name: Create and push tag
         run: |
+          version="${{ github.event.inputs.version }}"
+          head_commit="$(git rev-parse HEAD)"
+          remote_tag_commit="$(git ls-remote --refs origin "refs/tags/$version" | awk '{print $1}')"
+          remote_peeled_commit="$(git ls-remote origin "refs/tags/$version^{}" | awk '{print $1}')"
+
+          if [[ -n "$remote_peeled_commit" ]]; then
+            remote_commit="$remote_peeled_commit"
+          else
+            remote_commit="$remote_tag_commit"
+          fi
+
+          if [[ -n "$remote_commit" ]]; then
+            if [[ "$remote_commit" == "$head_commit" ]]; then
+              echo "Tag $version already exists on origin and points to $head_commit; nothing to do."
+              exit 0
+            fi
+            echo "Error: tag $version already exists on origin but points to $remote_commit (expected $head_commit)."
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ github.event.inputs.version }}"
-          git push origin "refs/tags/${{ github.event.inputs.version }}"
+          git tag "$version"
+          git push origin "refs/tags/$version"
 
   create-release:
     name: Create Release
@@ -41,7 +61,13 @@ jobs:
       contents: write
     steps:
       - name: Create GitHub Release
-        run: gh release create "${{ github.event.inputs.version }}" --title "Dolphin ${{ github.event.inputs.version }}" --generate-notes --repo "$GITHUB_REPOSITORY"
+        run: |
+          version="${{ github.event.inputs.version }}"
+          if gh release view "$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $version already exists; skipping creation."
+          else
+            gh release create "$version" --title "Dolphin $version" --generate-notes --repo "$GITHUB_REPOSITORY"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -8,7 +8,7 @@ on:
         required: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.inputs.version }}
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
 jobs:
@@ -18,15 +18,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Validate dispatch ref
-        run: |
-          dispatch_ref="${{ github.ref_name }}"
-          default_branch="${{ github.event.repository.default_branch }}"
-          if [[ "$dispatch_ref" != "$default_branch" ]]; then
-            echo "Error: this workflow must be run from the default branch '$default_branch' (got: '$dispatch_ref')."
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -41,30 +32,10 @@ jobs:
 
       - name: Create and push tag
         run: |
-          version="${{ github.event.inputs.version }}"
-          head_commit="$(git rev-parse HEAD)"
-          remote_tag_commit="$(git ls-remote --refs origin "refs/tags/$version" | awk '{print $1}')"
-          remote_peeled_commit="$(git ls-remote origin "refs/tags/$version^{}" | awk '{print $1}')"
-
-          if [[ -n "$remote_peeled_commit" ]]; then
-            remote_commit="$remote_peeled_commit"
-          else
-            remote_commit="$remote_tag_commit"
-          fi
-
-          if [[ -n "$remote_commit" ]]; then
-            if [[ "$remote_commit" == "$head_commit" ]]; then
-              echo "Tag $version already exists on origin and points to $head_commit; nothing to do."
-              exit 0
-            fi
-            echo "Error: tag $version already exists on origin but points to $remote_commit (expected $head_commit)."
-            exit 1
-          fi
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "$version" -m "Release $version"
-          git push origin "refs/tags/$version"
+          git tag -a "${{ github.event.inputs.version }}" -m "Release ${{ github.event.inputs.version }}"
+          git push origin "refs/tags/${{ github.event.inputs.version }}"
 
   create-release:
     name: Create Release
@@ -74,27 +45,7 @@ jobs:
       contents: write
     steps:
       - name: Create GitHub Release
-        run: |
-          version="${{ github.event.inputs.version }}"
-          if gh release view "$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "Release $version already exists; skipping creation."
-          else
-            max_attempts=6
-            attempt=1
-            while true; do
-              if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$version" > /dev/null 2>&1; then
-                break
-              fi
-              if [[ "$attempt" -ge "$max_attempts" ]]; then
-                echo "Error: tag $version is not yet visible via the GitHub API after $max_attempts attempts."
-                exit 1
-              fi
-              echo "Tag $version not yet visible via GitHub API; retrying in 5 seconds (attempt $attempt/$max_attempts)."
-              sleep 5
-              attempt=$((attempt + 1))
-            done
-            gh release create "$version" --title "Dolphin $version" --generate-notes --verify-tag --repo "$GITHUB_REPOSITORY"
-          fi
+        run: gh release create "${{ github.event.inputs.version }}" --title "Dolphin ${{ github.event.inputs.version }}" --generate-notes --verify-tag --repo "$GITHUB_REPOSITORY"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -121,19 +72,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Fetch and checkout release tag
-        run: |
-          version="${{ github.event.inputs.version }}"
-          for attempt in 1 2 3 4 5; do
-            if git fetch --force origin "refs/tags/$version:refs/tags/$version" && git checkout "refs/tags/$version"; then
-              exit 0
-            fi
-            echo "Tag $version not available yet (attempt $attempt/5); retrying in 5 seconds..."
-            sleep 5
-          done
-          echo "Failed to fetch and checkout tag $version after 5 attempts."
-          exit 1
+        with:
+          ref: ${{ github.event.inputs.version }}
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -151,9 +91,9 @@ jobs:
 
       - name: Set version
         id: ver
-        run: |
-          version="${{ github.event.inputs.version }}"
-          echo "value=${version#v}" >> "$GITHUB_OUTPUT"
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: echo "value=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
       - name: Publish
         run: dotnet publish src/Dolphin/Dolphin.csproj -r ${{ matrix.rid }} -c Release -o bin/
@@ -167,13 +107,38 @@ jobs:
         run: cd bin && zip -r ../dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.zip .
 
       - name: Upload asset
-        run: |
-          version="${{ github.event.inputs.version }}"
-          asset="dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.${{ matrix.archive_ext }}"
-          if gh release view "$version" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$asset"; then
-            echo "Asset $asset already exists on release $version; skipping upload."
-          else
-            gh release upload "$version" "$asset" --repo "$GITHUB_REPOSITORY"
-          fi
+        run: gh release upload "${{ github.event.inputs.version }}" "dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.${{ matrix.archive_ext }}" --repo "$GITHUB_REPOSITORY"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bump-version:
+    name: Bump Version
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Bump patch version in plugin.json
+        run: |
+          semver="${{ github.event.inputs.version }}"
+          semver="${semver#v}"
+          major="${semver%%.*}"
+          rest="${semver#*.}"
+          minor="${rest%%.*}"
+          patch="${rest#*.}"
+          next_version="$major.$minor.$((patch + 1))"
+          jq ".version = \"$next_version\"" .claude-plugin/plugin.json > /tmp/plugin.json
+          mv /tmp/plugin.json .claude-plugin/plugin.json
+
+      - name: Commit and push version bump
+        run: |
+          next_version="$(jq -r '.version' .claude-plugin/plugin.json)"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .claude-plugin/plugin.json
+          git commit -m "Bump version to $next_version"
+          git push origin "${{ github.event.repository.default_branch }}"

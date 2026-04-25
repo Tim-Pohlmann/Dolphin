@@ -129,6 +129,6 @@ jobs:
         run: cd bin && zip -r ../dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.zip .
 
       - name: Upload asset
-        run: gh release upload "${{ github.event.inputs.version }}" "dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.${{ matrix.archive_ext }}" --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "${{ github.event.inputs.version }}" "dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.${{ matrix.archive_ext }}" --clobber --repo "$GITHUB_REPOSITORY"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

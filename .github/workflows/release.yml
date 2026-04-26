@@ -22,23 +22,23 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Validate version format
+      - name: Set version
         run: |
-          version="${{ github.event.inputs.version }}"
-          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Error: version must match v<major>.<minor>.<patch> (got: $version)"
+          semver="${{ github.event.inputs.version }}"
+          semver="${semver#v}"
+          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$semver\"/" .claude-plugin/plugin.json
+          sed -i "s|<Version>[^<]*</Version>|<Version>$semver</Version>|" src/Dolphin/Dolphin.csproj
+          csproj_version="$(grep -oPm1 '(?<=<Version>)[^<]+' src/Dolphin/Dolphin.csproj || true)"
+          if [ "$csproj_version" != "$semver" ]; then
+            echo "Error: failed to update src/Dolphin/Dolphin.csproj version to $semver (found: ${csproj_version:-<missing>})"
             exit 1
           fi
-
-      - name: Validate version matches repo
-        run: |
-          repo_version="$(jq -r '.version' .claude-plugin/plugin.json)"
-          input_version="${{ github.event.inputs.version }}"
-          input_version="${input_version#v}"
-          if [[ "$repo_version" != "$input_version" ]]; then
-            echo "Error: input version '$input_version' does not match plugin.json version '$repo_version'"
-            exit 1
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .claude-plugin/plugin.json src/Dolphin/Dolphin.csproj
+          git diff --cached --quiet && { echo "Version already set to $semver"; exit 0; }
+          git commit -m "Release v$semver"
+          git push origin "${{ github.event.repository.default_branch }}"
 
       - name: Create GitHub Release
         run: |

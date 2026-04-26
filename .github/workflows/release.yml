@@ -22,6 +22,14 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
+      - name: Validate version format
+        run: |
+          version="${{ github.event.inputs.version }}"
+          if [[ ! "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Error: version must match v<major>.<minor>.<patch> with no leading zeros (got: $version)"
+            exit 1
+          fi
+
       - name: Set version
         run: |
           semver="${{ github.event.inputs.version }}"

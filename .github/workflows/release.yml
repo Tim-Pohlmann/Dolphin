@@ -34,18 +34,7 @@ jobs:
         run: |
           semver="${{ github.event.inputs.version }}"
           semver="${semver#v}"
-          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$semver\"/" .claude-plugin/plugin.json
-          plugin_version="$(jq -r '.version' .claude-plugin/plugin.json 2>/dev/null || true)"
-          if [ "$plugin_version" != "$semver" ]; then
-            echo "Error: failed to update .claude-plugin/plugin.json version to $semver (found: ${plugin_version:-<missing>})"
-            exit 1
-          fi
-          sed -i "s|<Version>[^<]*</Version>|<Version>$semver</Version>|" src/Dolphin/Dolphin.csproj
-          csproj_version="$(grep -oPm1 '(?<=<Version>)[^<]+' src/Dolphin/Dolphin.csproj || true)"
-          if [ "$csproj_version" != "$semver" ]; then
-            echo "Error: failed to update src/Dolphin/Dolphin.csproj version to $semver (found: ${csproj_version:-<missing>})"
-            exit 1
-          fi
+          bash .github/scripts/set-version.sh "$semver"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .claude-plugin/plugin.json src/Dolphin/Dolphin.csproj
@@ -144,18 +133,7 @@ jobs:
           minor="${semver#*.}"
           minor="${minor%%.*}"
           next_version="$major.$((minor + 1)).0"
-          sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$next_version\"/" .claude-plugin/plugin.json
-          plugin_version="$(jq -r '.version' .claude-plugin/plugin.json 2>/dev/null || true)"
-          if [ "$plugin_version" != "$next_version" ]; then
-            echo "Error: failed to update .claude-plugin/plugin.json version to $next_version (found: ${plugin_version:-<missing>})"
-            exit 1
-          fi
-          sed -i "s|<Version>[^<]*</Version>|<Version>$next_version</Version>|" src/Dolphin/Dolphin.csproj
-          csproj_version="$(grep -oPm1 '(?<=<Version>)[^<]+' src/Dolphin/Dolphin.csproj || true)"
-          if [ "$csproj_version" != "$next_version" ]; then
-            echo "Error: failed to update src/Dolphin/Dolphin.csproj version to $next_version (found: ${csproj_version:-<missing>})"
-            exit 1
-          fi
+          bash .github/scripts/set-version.sh "$next_version"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .claude-plugin/plugin.json src/Dolphin/Dolphin.csproj

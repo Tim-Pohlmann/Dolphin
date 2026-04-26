@@ -113,7 +113,7 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Bump minor version in plugin.json
+      - name: Bump minor version and commit
         run: |
           semver="${{ github.event.inputs.version }}"
           semver="${semver#v}"
@@ -123,10 +123,6 @@ jobs:
           next_version="$major.$((minor + 1)).0"
           jq ".version = \"$next_version\"" .claude-plugin/plugin.json > /tmp/plugin.json
           mv /tmp/plugin.json .claude-plugin/plugin.json
-
-      - name: Commit and push version bump
-        run: |
-          next_version="$(jq -r '.version' .claude-plugin/plugin.json)"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .claude-plugin/plugin.json

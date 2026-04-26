@@ -133,6 +133,11 @@ jobs:
           next_version="$major.$((minor + 1)).0"
           sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$next_version\"/" .claude-plugin/plugin.json
           sed -i "s|<Version>[^<]*</Version>|<Version>$next_version</Version>|" src/Dolphin/Dolphin.csproj
+          csproj_version="$(grep -oPm1 '(?<=<Version>)[^<]+' src/Dolphin/Dolphin.csproj || true)"
+          if [ "$csproj_version" != "$next_version" ]; then
+            echo "Error: failed to update src/Dolphin/Dolphin.csproj version to $next_version (found: ${csproj_version:-<missing>})"
+            exit 1
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .claude-plugin/plugin.json src/Dolphin/Dolphin.csproj

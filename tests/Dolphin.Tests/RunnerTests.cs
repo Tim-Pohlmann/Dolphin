@@ -280,6 +280,25 @@ public class RunnerTests
     }
 
     [TestMethod]
+    public async Task RunAsync_ExitCode7_FallsBackToMessage_WhenLongMsgIsEmpty()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var jsonStdout = """{"results":[],"errors":[{"long_msg":"","message":"Invalid YAML syntax"}]}""";
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 7, stdout: jsonStdout);
+        try
+        {
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+            StringAssert.Contains(ex.Message, "Invalid YAML syntax");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task RunAsync_ExitCodeAbove2_Throws()
     {
         if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");

@@ -90,12 +90,8 @@ public static class Runner
                 {
                     if (e.ValueKind != JsonValueKind.Object) return null;
                     // Prefer long_msg (used by InvalidRuleSchemaError) over message (used by SemgrepError)
-                    foreach (var key in new[] { "long_msg", "message" })
-                    {
-                        if (e.TryGetProperty(key, out var m) && m.ValueKind == JsonValueKind.String)
-                            return m.GetString();
-                    }
-                    return null;
+                    return (e.TryGetProperty("long_msg", out var longMsg) && longMsg.ValueKind == JsonValueKind.String ? longMsg.GetString() : null)
+                        ?? (e.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String ? message.GetString() : null);
                 })
                 .Where(m => !string.IsNullOrWhiteSpace(m))
                 .ToList();

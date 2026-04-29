@@ -261,6 +261,25 @@ public class RunnerTests
     }
 
     [TestMethod]
+    public async Task RunAsync_ExitCode7_ThrowsWithLongMsgWhenNoMessage()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var jsonStdout = """{"results":[],"errors":[{"long_msg":"Additional properties are not allowed ('metavariable-pattern' was unexpected)","short_msg":"Invalid rule schema"}]}""";
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 7, stdout: jsonStdout);
+        try
+        {
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+            StringAssert.Contains(ex.Message, "metavariable-pattern");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task RunAsync_ExitCodeAbove2_Throws()
     {
         if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");

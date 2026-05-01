@@ -349,6 +349,22 @@ public class RunnerTests
     }
 
     [TestMethod]
+    public async Task RunAsync_ExitCode7_FallsBackToSemgrepError_WhenOnlySummaryPresent()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var jsonStdout = """{"results":[],"errors":[{"message":"invalid configuration file found (1 configs were invalid)","type":"SemgrepError"}]}""";
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 7, stdout: jsonStdout);
+        try
+        {
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+            StringAssert.Contains(ex.Message, "invalid configuration file found");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
+    [TestMethod]
     public async Task RunAsync_ExitCode7_AppendsSpanLineNumber()
     {
         if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");

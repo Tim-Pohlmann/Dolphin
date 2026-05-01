@@ -85,10 +85,18 @@ public static class Runner
             if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
             if (!doc.RootElement.TryGetProperty("errors", out var errors)) return null;
             if (errors.ValueKind != JsonValueKind.Array) return null;
-            var messages = errors.EnumerateArray()
+            var allErrors = errors.EnumerateArray().ToList();
+            // SemgrepError is a redundant summary of detail errors; prefer detail errors
+            var messages = allErrors
                 .Select(FormatErrorEntry)
                 .Where(m => !string.IsNullOrWhiteSpace(m))
                 .ToList();
+            // Fall back to SemgrepError summary if no detail errors were present
+            if (messages.Count == 0)
+                messages = allErrors
+                    .Select(FormatSemgrepEntry)
+                    .Where(m => !string.IsNullOrWhiteSpace(m))
+                    .ToList();
             return messages.Count > 0 ? string.Join("\n", messages) : null;
         }
         catch (JsonException)
@@ -100,7 +108,6 @@ public static class Runner
     private static string? FormatErrorEntry(JsonElement e)
     {
         if (e.ValueKind != JsonValueKind.Object) return null;
-        // SemgrepError is a redundant summary entry; skip it
         if (e.TryGetProperty("type", out var t) &&
             t.ValueKind == JsonValueKind.String &&
             t.GetString() == "SemgrepError") return null;
@@ -108,8 +115,20 @@ public static class Runner
         if (text == null) return null;
         var lines = GetSpanLineNumbers(e);
         if (lines.Count > 0)
-            text += $"\n  at line {string.Join(", ", lines)}";
+        {
+            var lineLabel = lines.Count == 1 ? "line" : "lines";
+            text += $"\n  at {lineLabel} {string.Join(", ", lines)}";
+        }
         return text;
+    }
+
+    private static string? FormatSemgrepEntry(JsonElement e)
+    {
+        if (e.ValueKind != JsonValueKind.Object) return null;
+        if (!e.TryGetProperty("type", out var t) ||
+            t.ValueKind != JsonValueKind.String ||
+            t.GetString() != "SemgrepError") return null;
+        return GetErrorMessage(e);
     }
 
     private static string? GetErrorMessage(JsonElement e)

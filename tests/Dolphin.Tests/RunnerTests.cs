@@ -221,6 +221,46 @@ public class RunnerTests
     }
 
     [TestMethod]
+    public async Task RunAsync_WithTargetPath_ScansOnlyThatFile()
+    {
+        string scanner;
+        try { scanner = await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("No scanner found in this environment"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var tmpSrcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(tmpDolphinDir);
+        Directory.CreateDirectory(tmpSrcDir);
+
+        File.Copy(Path.Combine(FixturesDir, "rules.yaml"), Path.Combine(tmpDolphinDir, "rules.yaml"));
+        var badFilePath = Path.Combine(tmpSrcDir, "bad-file.ts");
+        var cleanFilePath = Path.Combine(tmpSrcDir, "clean-file.ts");
+        File.Copy(Path.Combine(FixturesDir, "sample-src", "bad-file.ts"), badFilePath);
+        File.Copy(Path.Combine(FixturesDir, "sample-src", "clean-file.ts"), cleanFilePath);
+
+        try
+        {
+            // Scan only the clean file — must return no findings even though bad-file.ts exists.
+            var result = await Runner.RunAsync(scanner, tmpDir, ruleId: null, targetPath: cleanFilePath);
+            Assert.AreEqual(0, result.Findings.Count, "Scanning clean-file.ts with targetPath must return no findings");
+
+            // Scan only the bad file — must return findings.
+            result = await Runner.RunAsync(scanner, tmpDir, ruleId: null, targetPath: badFilePath);
+            Assert.IsTrue(result.Findings.Count > 0, "Scanning bad-file.ts with targetPath must return findings");
+            // All findings must belong to the targeted file.
+            foreach (var f in result.Findings)
+                Assert.IsTrue(
+                    f.FilePath.Contains("bad-file.ts", StringComparison.OrdinalIgnoreCase),
+                    $"Finding path '{f.FilePath}' should point to bad-file.ts");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
     public async Task RunAsync_ExitCode2_ReturnsScannerWarning()
     {
         if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");

@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Dolphin.Scanner;
 
 namespace Dolphin.Lsp;
 
@@ -57,6 +58,25 @@ public static partial class LspServer
     // composable, so without this lock two concurrent didOpens could both pass the
     // guard and blow past MaxCachedDocuments.
     private static readonly object _documentTextAdmissionLock = new();
+
+    // Caches the last Opengrep scan result per source file URI so pull requests can be
+    // served immediately without re-running the scanner. Populated by ScanAndPublishAsync;
+    // evicted on didClose. Scan results are small (a handful of diagnostics), so no cap.
+    private static readonly ConcurrentDictionary<string, LspDiagnostic[]> _sourceFileDiagnostics = new();
+
+    // Lazily resolved scanner binary path; null means not found.
+    private static readonly Lazy<Task<string?>> _scannerBinary =
+        new(() => TryGetScannerBinaryAsync());
+
+    private static async Task<string?> TryGetScannerBinaryAsync()
+    {
+        try { return await Installer.EnsureInstalledAsync(); }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner unavailable: {ex.Message}");
+            return null;
+        }
+    }
     private const int JsonRpcParseError      = -32700;
     private const int JsonRpcInvalidRequest  = -32600;
     private const int JsonRpcMethodNotFound  = -32601;
@@ -73,6 +93,11 @@ public static partial class LspServer
     private const string MessageProperty     = "message";
     private const string TextDocumentProperty = "textDocument";
 
+    // Test helper: seeds _sourceFileDiagnostics so tests can assert close/pull behaviour
+    // without running the actual scanner.
+    internal static void SetSourceFileDiagnosticsForTest(string uri, LspDiagnostic[] diagnostics) =>
+        _sourceFileDiagnostics[uri] = diagnostics;
+
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ContentLengthRegex();
 
@@ -85,6 +110,9 @@ public static partial class LspServer
     {
         // Clear any state left over from a previous in-process session (tests run the
         // server multiple times in one process; production hosts may too).
+        // _sourceFileDiagnostics is intentionally NOT cleared here: tests may pre-seed it
+        // via SetSourceFileDiagnosticsForTest before calling RunAsync. It is cleared at
+        // session end (below) to ensure isolation between subsequent sessions.
         await DrainValidationsAsync();
         _documentText.Clear();
         _uncacheableDocs.Clear();
@@ -106,6 +134,7 @@ public static partial class LspServer
         await DrainValidationsAsync(); // cancel any validations still in flight on disconnect
         _documentText.Clear();
         _uncacheableDocs.Clear();
+        _sourceFileDiagnostics.Clear();
         // Per LSP spec, exit without a prior shutdown is an error (code 1).
         return shutdownReceived ? 0 : 1;
     }
@@ -320,6 +349,9 @@ public static partial class LspServer
                 case "textDocument/didClose":
                     await HandleDidCloseAsync(stdout, p);
                     break;
+                case "textDocument/didSave":
+                    HandleDidSave(stdout, p);
+                    break;
                 case "textDocument/diagnostic":
                     await HandleDiagnosticPullAsync(stdout, p, id);
                     break;
@@ -405,6 +437,15 @@ public static partial class LspServer
             TryCacheDocumentText(uri, text);
             _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
         }
+        else if (IsSourceFile(uri))
+        {
+            var path = TryGetLocalPath(uri);
+            // Synchronous FindProjectRoot guard: skip the scan entirely if no .dolphin/rules.yaml
+            // ancestor exists. This avoids publishing empty diagnostics for unrelated projects
+            // and keeps tests that open arbitrary file:// URIs green.
+            if (path != null && FindProjectRoot(path) != null)
+                _ = ScanAndPublishAsync(stdout, uri, CancelPrevious(_validationCts, uri));
+        }
     }
 
     private static async Task HandleDidChangeAsync(Stream stdout, JsonElement p)
@@ -435,34 +476,47 @@ public static partial class LspServer
         var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
         _documentText.TryRemove(uri, out _);
         _uncacheableDocs.TryRemove(uri, out _);
+        // For source files, only clear diagnostics if we previously published some (i.e. a scan
+        // result is cached). If no scan ran, we never published, so nothing to clear.
+        var hadSourceDiagnostics = _sourceFileDiagnostics.TryRemove(uri, out _);
         CancelAndRemove(uri);
-        // Only clear diagnostics we published; don't stomp on other servers.
-        if (IsDolphinRulesFile(uri))
+        if (IsDolphinRulesFile(uri) || hadSourceDiagnostics)
             await PublishDiagnosticsAsync(stdout, uri, []);
     }
 
     private static async Task HandleDiagnosticPullAsync(Stream stdout, JsonElement p, JsonElement id)
     {
         var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
-        if (!IsDolphinRulesFile(uri))
+        if (IsDolphinRulesFile(uri))
+        {
+            if (id.ValueKind != JsonValueKind.Undefined)
+            {
+                // Fire-and-forget. The handler MAY run partly or entirely inline
+                // on this thread: the non-ASCII fast path has no process spawn,
+                // and SemaphoreSlim.WaitAsync returns a completed Task when the
+                // lock is free, so every await can complete synchronously. That
+                // is acceptable because the bounded work (short-text regex scan
+                // plus small JSON write) blocks the message loop for microseconds
+                // only. Intentionally NOT Task.Run'd: we rely on the handler
+                // registering its CTS in _pullValidationCts synchronously on this
+                // thread so DrainValidationsAsync sees it on shutdown — moving to
+                // Task.Run races the handler against shutdown and drops responses.
+                // Clone the id so it outlives the JsonDocument owned by HandleBodyAsync.
+                var idClone = id.Clone();
+                _ = HandlePullDiagnosticsAsync(stdout, uri, idClone);
+            }
+        }
+        else if (IsSourceFile(uri))
+        {
+            if (id.ValueKind != JsonValueKind.Undefined)
+            {
+                var idClone = id.Clone();
+                _ = HandlePullSourceDiagnosticsAsync(stdout, uri, idClone);
+            }
+        }
+        else
         {
             await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, []));
-        }
-        else if (id.ValueKind != JsonValueKind.Undefined)
-        {
-            // Fire-and-forget. The handler MAY run partly or entirely inline
-            // on this thread: the non-ASCII fast path has no process spawn,
-            // and SemaphoreSlim.WaitAsync returns a completed Task when the
-            // lock is free, so every await can complete synchronously. That
-            // is acceptable because the bounded work (short-text regex scan
-            // plus small JSON write) blocks the message loop for microseconds
-            // only. Intentionally NOT Task.Run'd: we rely on the handler
-            // registering its CTS in _pullValidationCts synchronously on this
-            // thread so DrainValidationsAsync sees it on shutdown — moving to
-            // Task.Run races the handler against shutdown and drops responses.
-            // Clone the id so it outlives the JsonDocument owned by HandleBodyAsync.
-            var idClone = id.Clone();
-            _ = HandlePullDiagnosticsAsync(stdout, uri, idClone);
         }
     }
 
@@ -498,6 +552,34 @@ public static partial class LspServer
         uri.EndsWith("/.dolphin/rules.yml",   StringComparison.OrdinalIgnoreCase) ||
         uri.EndsWith("\\.dolphin\\rules.yaml", StringComparison.OrdinalIgnoreCase) ||
         uri.EndsWith("\\.dolphin\\rules.yml",  StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsSourceFile(string uri) =>
+        !IsDolphinRulesFile(uri) && uri.StartsWith("file://", StringComparison.OrdinalIgnoreCase);
+
+    private static string? TryGetLocalPath(string uri)
+    {
+        if (Uri.TryCreate(uri, UriKind.Absolute, out var u) && u.Scheme == "file")
+            return u.LocalPath;
+        return null;
+    }
+
+    /// <summary>
+    /// Walks up from <paramref name="filePath"/> looking for the first ancestor directory
+    /// that contains a .dolphin/rules.yaml (or .yml) file. Returns null if not found.
+    /// </summary>
+    internal static string? FindProjectRoot(string filePath)
+    {
+        var dir = Path.GetDirectoryName(filePath);
+        while (dir is not null)
+        {
+            if (File.Exists(Path.Combine(dir, ".dolphin", "rules.yaml"))) return dir;
+            if (File.Exists(Path.Combine(dir, ".dolphin", "rules.yml")))  return dir;
+            var parent = Path.GetDirectoryName(dir);
+            if (parent == dir) break; // filesystem root
+            dir = parent;
+        }
+        return null;
+    }
 
     /// <summary>
     /// Cancels any in-flight validation for <paramref name="uri"/> and returns a fresh
@@ -607,6 +689,152 @@ public static partial class LspServer
                 // Remove from the map before disposal; if CancelPrevious already replaced
                 // this CTS with a newer one the TryRemove is a no-op and the new CTS is safe.
                 _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
+            }
+        }
+    }
+
+    private static void HandleDidSave(Stream stdout, JsonElement p)
+    {
+        var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
+        if (!IsSourceFile(uri)) return;
+        var path = TryGetLocalPath(uri);
+        if (path != null && FindProjectRoot(path) != null)
+            _ = ScanAndPublishAsync(stdout, uri, CancelPrevious(_validationCts, uri));
+    }
+
+    private static async Task ScanAndPublishAsync(Stream stdout, string uri, CancellationTokenSource cts)
+    {
+        using (cts)
+        {
+            var ct = cts.Token;
+            try
+            {
+                var diagnostics = await RunScanAsync(uri, ct);
+                // Cache before publishing so a concurrent pull request sees the result immediately.
+                _sourceFileDiagnostics[uri] = diagnostics;
+                await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
+            }
+            catch (OperationCanceledException) { /* superseded by a newer open/save */ }
+            catch (Exception ex) { await Console.Error.WriteLineAsync($"[dolphin-lsp] scan error for {uri}: {ex.Message}"); }
+            finally
+            {
+                _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
+            }
+        }
+    }
+
+    private static async Task<LspDiagnostic[]> RunScanAsync(string uri, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var filePath = TryGetLocalPath(uri);
+        if (filePath is null || !File.Exists(filePath)) return [];
+
+        var projectRoot = FindProjectRoot(filePath);
+        if (projectRoot is null) return [];
+
+        var scannerBinary = await _scannerBinary.Value;
+        if (scannerBinary is null) return [];
+
+        ct.ThrowIfCancellationRequested();
+
+        RunResult result;
+        try { result = await Runner.RunAsync(scannerBinary, projectRoot, ruleId: null, targetPath: filePath); }
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner failed for {uri}: {ex.Message}");
+            return [];
+        }
+
+        ct.ThrowIfCancellationRequested();
+        return ConvertFindingsToDiagnostics(result.Findings, filePath, projectRoot);
+    }
+
+    private static LspDiagnostic[] ConvertFindingsToDiagnostics(
+        List<Finding> findings, string absoluteFilePath, string projectRoot)
+    {
+        var result = new List<LspDiagnostic>();
+        foreach (var f in findings)
+        {
+            var abs = Path.GetFullPath(Path.Combine(projectRoot, f.FilePath));
+            if (!string.Equals(abs, absoluteFilePath, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Opengrep line/col are 1-based; LSP positions are 0-based.
+            var line = Math.Max(0, f.Line - 1);
+            var col  = Math.Max(0, f.Column - 1);
+            var pos  = new LspPosition(line, col);
+            var sev  = f.Severity switch
+            {
+                Severity.Error   => 1,
+                Severity.Warning => 2,
+                Severity.Info    => 3,
+                _                => 2
+            };
+            result.Add(new LspDiagnostic(
+                Range:    new LspRange(pos, pos),
+                Severity: sev,
+                Source:   "dolphin",
+                Message:  $"{f.Message} [{f.RuleId}]",
+                Pending:  false));
+        }
+        return [.. result];
+    }
+
+    /// <summary>
+    /// Serves pull diagnostics for a source file.
+    /// <list type="bullet">
+    /// <item>Cached result (from a prior didOpen/didSave push) → immediate full report.</item>
+    /// <item>No project root found → empty full report (no rules configured for this file).</item>
+    /// <item>Project root exists but scan not done yet → trigger a background scan and respond
+    ///   with ServerCancelled+retriggerRequest so the client retries after the push lands.</item>
+    /// </list>
+    /// </summary>
+    private static async Task HandlePullSourceDiagnosticsAsync(Stream stdout, string uri, JsonElement id)
+    {
+        var cts = CancelPrevious(_pullValidationCts, uri);
+        using (cts)
+        {
+            var ct = cts.Token;
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+
+                if (_sourceFileDiagnostics.TryGetValue(uri, out var cached))
+                {
+                    await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, cached), ct);
+                    return;
+                }
+
+                // No cached result: check whether a project root exists before deciding
+                // whether to trigger a scan or just return empty diagnostics.
+                var path = TryGetLocalPath(uri);
+                var projectRoot = path != null ? FindProjectRoot(path) : null;
+                if (projectRoot == null)
+                {
+                    // No .dolphin/rules.yaml ancestor → no diagnostics will ever arrive.
+                    await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, []), ct);
+                    return;
+                }
+
+                // Kick off a scan in the background, then tell the client to retry after it
+                // receives the publishDiagnostics notification from the push.
+                _ = ScanAndPublishAsync(stdout, uri, CancelPrevious(_validationCts, uri));
+                await SendServerCancelledAsync(stdout, id, CancellationToken.None);
+            }
+            catch (OperationCanceledException)
+            {
+                await SendServerCancelledAsync(stdout, id, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                await Console.Error.WriteLineAsync($"[dolphin-lsp] pull source diagnostic error for {uri}: {ex.Message}");
+                try { await TrySendErrorAsync(stdout, id); }
+                catch (Exception e) when (e is IOException or ObjectDisposedException) { }
+            }
+            finally
+            {
+                _pullValidationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
             }
         }
     }

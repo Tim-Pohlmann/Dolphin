@@ -707,6 +707,142 @@ public partial class LspServerInProcessTests
         Assert.AreEqual(1, diags[0].Range.Start.Line, "Non-ASCII char is on line 1 (0-based) after one CR");
     }
 
+    // ── FindProjectRoot ───────────────────────────────────────────────────────
+
+    [TestMethod]
+    public void FindProjectRoot_ReturnsNull_WhenNoRulesFileExists()
+    {
+        // A path with no .dolphin/rules.yaml anywhere up the tree returns null.
+        // Use a path that can't possibly have a .dolphin ancestor (filesystem root area).
+        var result = LspServer.FindProjectRoot("/no-such-dir-xyz/src/app.ts");
+        Assert.IsNull(result, "Expected null when no .dolphin/rules.yaml exists in any ancestor");
+    }
+
+    [TestMethod]
+    public void FindProjectRoot_FindsRulesYaml_InParentDirectory()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-prtest-{Guid.NewGuid()}");
+        var dolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var srcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(dolphinDir);
+        Directory.CreateDirectory(srcDir);
+        File.WriteAllText(Path.Combine(dolphinDir, "rules.yaml"), "rules: []");
+        var filePath = Path.Combine(srcDir, "app.ts");
+        File.WriteAllText(filePath, "");
+        try
+        {
+            var result = LspServer.FindProjectRoot(filePath);
+            Assert.AreEqual(tmpDir, result, "FindProjectRoot must return the directory containing .dolphin/rules.yaml");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    // ── Source file diagnostics (didOpen / didSave / pull) ────────────────────
+
+    [TestMethod]
+    public async Task HandleMessage_DidOpen_SourceFile_NoProjectRoot_NoPublishDiagnostics()
+    {
+        // A source file with no .dolphin/rules.yaml ancestor must not trigger a scan
+        // or publish any diagnostics — the server must stay silent.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///src/app.ts","languageId":"typescript","version":1,"text":"console.log('hi')"}}}""",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+        Assert.IsNull(publish, "No publishDiagnostics expected for a source file with no .dolphin/rules.yaml ancestor");
+        Assert.AreEqual(1, responses.Count, "Only shutdown response expected");
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_DidSave_NonSourceFile_NoScan()
+    {
+        // didSave on a non-source URI (e.g. a dolphin rules file) is silently ignored
+        // by HandleDidSave since IsDolphinRulesFile(uri) is true, not IsSourceFile.
+        const string uri = "file:///project/.dolphin/rules.yaml";
+        var responses = await RunServerAsync(
+            $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didSave\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        // No publishDiagnostics from the save; only shutdown response.
+        Assert.AreEqual(1, responses.Count, "didSave on a dolphin rules file must not trigger a source scan");
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_DidSave_SourceFile_NoProjectRoot_NoScan()
+    {
+        // didSave on a source file with no .dolphin ancestor is a no-op.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":"file:///src/app.ts"}}}""",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        Assert.AreEqual(1, responses.Count, "Only shutdown response expected");
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_DidClose_SourceFile_WithCachedDiagnostics_PublishesEmpty()
+    {
+        // didClose on a source file that has a cached scan result must clear the diagnostics.
+        // We inject a cached entry directly to simulate a prior scan.
+        const string uri = "file:///project/src/app.ts";
+
+        // Seed the cache as if a scan had previously run and found diagnostics.
+        var pos = new LspPosition(0, 0);
+        var fakeDiag = new LspDiagnostic(new LspRange(pos, pos), 2, "dolphin", "test finding [rule]", false);
+        LspServer.SetSourceFileDiagnosticsForTest(uri, [fakeDiag]);
+
+        var responses = await RunServerAsync(
+            $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+        Assert.IsNotNull(publish, "didClose must publish empty diagnostics to clear previously-published findings");
+        Assert.AreEqual(uri, publish["params"]?["uri"]?.GetValue<string>());
+        Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_SourceFile_NoProjectRoot_ReturnsEmptyFullReport()
+    {
+        // A pull for a source file with no .dolphin ancestor returns an empty full report
+        // immediately — same behaviour as before this feature, just routed differently.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":42,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///src/app.ts"}}}""",
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 42);
+        Assert.IsNotNull(pull, "Pull diagnostic must produce a response");
+        Assert.AreEqual("full", pull["result"]?["kind"]?.GetValue<string>());
+        Assert.AreEqual(0, pull["result"]?["items"]?.AsArray().Count);
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_SourceFile_WithCachedResult_ReturnsImmediately()
+    {
+        // When a scan result is cached (from a prior didOpen/didSave push), the pull must
+        // return it immediately as a full report without triggering ServerCancelled.
+        const string uri = "file:///project/src/app.ts";
+
+        var pos = new LspPosition(2, 4);
+        var fakeDiag = new LspDiagnostic(new LspRange(pos, pos), 1, "dolphin", "bad [rule-id]", false);
+        LspServer.SetSourceFileDiagnosticsForTest(uri, [fakeDiag]);
+
+        var responses = await RunServerAsync(
+            $"{{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/diagnostic\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 5);
+        Assert.IsNotNull(pull, "Pull must produce a response");
+        Assert.IsNull(pull["error"], "Must not be an error response when cache is populated");
+        Assert.AreEqual("full", pull["result"]?["kind"]?.GetValue<string>());
+        var items = pull["result"]?["items"]?.AsArray();
+        Assert.IsNotNull(items);
+        Assert.AreEqual(1, items.Count, "Cached finding must appear in pull response");
+        Assert.IsTrue(items[0]!["message"]!.GetValue<string>().Contains("bad [rule-id]"));
+    }
+
     // ── StripAnsi ─────────────────────────────────────────────────────────────
 
     [TestMethod]

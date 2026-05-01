@@ -8,11 +8,15 @@ public static class Runner
     /// <summary>
     /// Runs the scanner against <paramref name="cwd"/> using .dolphin/rules.yaml.
     /// Optionally filters to a single rule ID.
+    /// When <paramref name="targetPath"/> is set, scans only that file instead of the whole
+    /// directory; <paramref name="cwd"/> is still used as the working directory so that
+    /// relative paths in findings resolve correctly.
     /// </summary>
     public static async Task<RunResult> RunAsync(
         string scannerBinary,
         string cwd,
-        string? ruleId = null)
+        string? ruleId = null,
+        string? targetPath = null)
     {
         var rulesPath = Path.Combine(cwd, ".dolphin", "rules.yaml");
         if (!File.Exists(rulesPath))
@@ -25,7 +29,7 @@ public static class Runner
             "--json",
             "--no-git-ignore",
             "--no-rewrite-rule-ids",
-            cwd
+            targetPath ?? cwd
         };
 
         var psi = new ProcessStartInfo(scannerBinary)

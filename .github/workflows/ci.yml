@@ -134,7 +134,7 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-
 
       - name: Restore
-        run: dotnet restore Dolphin.slnx
+        run: dotnet restore src/Dolphin/Dolphin.csproj -r linux-x64
 
       - name: Cache opengrep (publish bundle)
         uses: actions/cache@v4

@@ -94,10 +94,10 @@ public static class Runner
                         t.ValueKind == JsonValueKind.String &&
                         t.GetString() == "SemgrepError") return null;
                     // Opengrep uses "long_msg" for schema errors, "message" for others
-                    var key = e.TryGetProperty("long_msg", out var lm) && lm.ValueKind == JsonValueKind.String
+                    var msgElement = e.TryGetProperty("long_msg", out var lm) && lm.ValueKind == JsonValueKind.String
                         ? lm : e.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String
                         ? m : (JsonElement?)null;
-                    var text = key?.GetString();
+                    var text = msgElement?.GetString();
                     if (text == null) return null;
                     if (e.TryGetProperty("spans", out var spans) && spans.ValueKind == JsonValueKind.Array)
                     {

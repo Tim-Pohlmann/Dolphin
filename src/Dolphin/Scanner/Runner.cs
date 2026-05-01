@@ -110,6 +110,9 @@ public static class Runner
                                 return ln.TryGetInt32(out var lineNumber) ? lineNumber : (int?)null;
                             })
                             .Where(l => l != null)
+                            .Select(l => l!.Value)
+                            .Distinct()
+                            .OrderBy(l => l)
                             .ToList();
                         if (lines.Count > 0)
                             text += $"\n  at line {string.Join(", ", lines)}";

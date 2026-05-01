@@ -314,6 +314,57 @@ public class RunnerTests
         }
     }
 
+    [TestMethod]
+    public async Task RunAsync_ExitCode7_PrefersLongMsgOverMessage()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var jsonStdout = """{"results":[],"errors":[{"long_msg":"Schema detail here","message":"short fallback"}]}""";
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 7, stdout: jsonStdout);
+        try
+        {
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+            StringAssert.Contains(ex.Message, "Schema detail here");
+            Assert.IsFalse(ex.Message.Contains("short fallback", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
+    [TestMethod]
+    public async Task RunAsync_ExitCode7_SkipsSemgrepErrorSummaryEntry()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var jsonStdout = """{"results":[],"errors":[{"long_msg":"Real schema error","type":"InvalidRuleSchemaError"},{"message":"invalid configuration file found (1 configs were invalid)","type":"SemgrepError"}]}""";
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 7, stdout: jsonStdout);
+        try
+        {
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+            StringAssert.Contains(ex.Message, "Real schema error");
+            Assert.IsFalse(ex.Message.Contains("invalid configuration file found", StringComparison.Ordinal));
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
+    [TestMethod]
+    public async Task RunAsync_ExitCode7_AppendsSpanLineNumber()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var jsonStdout = """{"results":[],"errors":[{"long_msg":"Additional properties are not allowed","type":"InvalidRuleSchemaError","spans":[{"file":"/some/rules.yaml","start":{"line":45,"col":9,"offset":-1},"end":{"line":48,"col":5,"offset":-1}}]}]}""";
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 7, stdout: jsonStdout);
+        try
+        {
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+            StringAssert.Contains(ex.Message, "Additional properties are not allowed");
+            StringAssert.Contains(ex.Message, "at line 45");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
     /// <summary>
     /// Creates a temp directory with a minimal .dolphin/rules.yaml and a fake scanner script
     /// that writes the provided stdout content (or empty JSON results by default) and exits

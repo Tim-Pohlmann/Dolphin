@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Dolphin;
 using Dolphin.Lsp;
+using Dolphin.Scanner;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Dolphin.Tests;
@@ -841,6 +842,124 @@ public partial class LspServerInProcessTests
         Assert.IsNotNull(items);
         Assert.AreEqual(1, items.Count, "Cached finding must appear in pull response");
         Assert.IsTrue(items[0]!["message"]!.GetValue<string>().Contains("bad [rule-id]"));
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_PullDiagnostic_SourceFile_WithProjectRoot_NoCached_ReturnsServerCancelled()
+    {
+        // A pull for a source file whose .dolphin/rules.yaml ancestor EXISTS but has no
+        // cached result yet must trigger a background scan and return ServerCancelled +
+        // retriggerRequest so the client retries after the push lands.
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-lsptest-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+        var srcFile = Path.Combine(tmpDir, "app.ts");
+        File.WriteAllText(srcFile, "");
+        var uri = new Uri(srcFile).AbsoluteUri;
+        try
+        {
+            var responses = await RunServerAsync(
+                $"{{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/diagnostic\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+                """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+            var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 5);
+            Assert.IsNotNull(pull, "Pull must produce a response");
+            var error = pull["error"];
+            Assert.IsNotNull(error, "Must be an error response (ServerCancelled) when project root exists but no cache");
+            Assert.AreEqual(-32802, error["code"]?.GetValue<int>(), "Error code must be -32802 (ServerCancelled)");
+            Assert.IsTrue(error["data"]?["retriggerRequest"]?.GetValue<bool>(), "retriggerRequest must be true");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    // ── ConvertFindingsToDiagnostics ──────────────────────────────────────────
+
+    [TestMethod]
+    public void ConvertFindingsToDiagnostics_EmptyList_ReturnsEmpty()
+    {
+        var result = LspServer.ConvertFindingsToDiagnostics([], "/project/src/app.ts", "/project");
+        Assert.AreEqual(0, result.Length);
+    }
+
+    [TestMethod]
+    public void ConvertFindingsToDiagnostics_FiltersOutFindingsForOtherFiles()
+    {
+        var findings = new List<Finding>
+        {
+            new("rule-a", Severity.Warning, "src/other.ts", 1, 1, "msg", ""),
+        };
+        var result = LspServer.ConvertFindingsToDiagnostics(findings, "/project/src/app.ts", "/project");
+        Assert.AreEqual(0, result.Length, "Findings for other files must be filtered out");
+    }
+
+    [TestMethod]
+    public void ConvertFindingsToDiagnostics_MapsServerityCorrectly()
+    {
+        var projectRoot = "/project";
+        var filePath = "/project/src/app.ts";
+        var findings = new List<Finding>
+        {
+            new("rule-err",  Severity.Error,   "src/app.ts", 1, 1, "error msg",   ""),
+            new("rule-warn", Severity.Warning,  "src/app.ts", 2, 1, "warning msg", ""),
+            new("rule-info", Severity.Info,     "src/app.ts", 3, 1, "info msg",    ""),
+        };
+        var result = LspServer.ConvertFindingsToDiagnostics(findings, filePath, projectRoot);
+
+        Assert.AreEqual(3, result.Length);
+        Assert.AreEqual(1, result[0].Severity, "Error → LSP severity 1");
+        Assert.AreEqual(2, result[1].Severity, "Warning → LSP severity 2");
+        Assert.AreEqual(3, result[2].Severity, "Info → LSP severity 3");
+    }
+
+    [TestMethod]
+    public void ConvertFindingsToDiagnostics_ConvertsOneBasedToZeroBased()
+    {
+        var projectRoot = "/project";
+        var filePath = "/project/src/app.ts";
+        var findings = new List<Finding>
+        {
+            new("rule-x", Severity.Warning, "src/app.ts", 5, 3, "msg", ""),
+        };
+        var result = LspServer.ConvertFindingsToDiagnostics(findings, filePath, projectRoot);
+
+        Assert.AreEqual(1, result.Length);
+        // Opengrep 1-based → LSP 0-based: line 5 → 4, col 3 → 2
+        Assert.AreEqual(4, result[0].Range.Start.Line);
+        Assert.AreEqual(2, result[0].Range.Start.Character);
+    }
+
+    [TestMethod]
+    public void ConvertFindingsToDiagnostics_FormatsMessageWithRuleId()
+    {
+        var projectRoot = "/project";
+        var filePath = "/project/src/app.ts";
+        var findings = new List<Finding>
+        {
+            new("my-rule", Severity.Warning, "src/app.ts", 1, 1, "do not do this", ""),
+        };
+        var result = LspServer.ConvertFindingsToDiagnostics(findings, filePath, projectRoot);
+
+        Assert.AreEqual(1, result.Length);
+        Assert.AreEqual("do not do this [my-rule]", result[0].Message);
+        Assert.AreEqual("dolphin", result[0].Source);
+    }
+
+    [TestMethod]
+    public void ConvertFindingsToDiagnostics_ClampsBelowZeroToZero()
+    {
+        // Line/col of 0 in a finding (malformed) must not produce negative LSP positions.
+        var findings = new List<Finding>
+        {
+            new("rule-x", Severity.Warning, "src/app.ts", 0, 0, "msg", ""),
+        };
+        var result = LspServer.ConvertFindingsToDiagnostics(findings, "/project/src/app.ts", "/project");
+
+        Assert.AreEqual(1, result.Length);
+        Assert.AreEqual(0, result[0].Range.Start.Line);
+        Assert.AreEqual(0, result[0].Range.Start.Character);
     }
 
     // ── StripAnsi ─────────────────────────────────────────────────────────────

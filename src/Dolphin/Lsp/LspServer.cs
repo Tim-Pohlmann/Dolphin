@@ -60,7 +60,7 @@ public static partial class LspServer
     private static readonly object _documentTextAdmissionLock = new();
 
     // Caches the last Opengrep scan result per source file URI so pull requests can be
-    // served immediately without re-running the scanner. Populated by ScanAndPublishAsync;
+    // served immediately without re-running the scanner. Populated by ScanAndPublishAsync,
     // evicted on didClose. Scan results are small (a handful of diagnostics), so no cap.
     private static readonly ConcurrentDictionary<string, LspDiagnostic[]> _sourceFileDiagnostics = new();
 
@@ -750,7 +750,7 @@ public static partial class LspServer
         return ConvertFindingsToDiagnostics(result.Findings, filePath, projectRoot);
     }
 
-    private static LspDiagnostic[] ConvertFindingsToDiagnostics(
+    internal static LspDiagnostic[] ConvertFindingsToDiagnostics(
         List<Finding> findings, string absoluteFilePath, string projectRoot)
     {
         var result = new List<LspDiagnostic>();
@@ -830,7 +830,7 @@ public static partial class LspServer
             {
                 await Console.Error.WriteLineAsync($"[dolphin-lsp] pull source diagnostic error for {uri}: {ex.Message}");
                 try { await TrySendErrorAsync(stdout, id); }
-                catch (Exception e) when (e is IOException or ObjectDisposedException) { }
+                catch (Exception e) when (e is IOException or ObjectDisposedException) { _ = e; /* disconnected */ }
             }
             finally
             {

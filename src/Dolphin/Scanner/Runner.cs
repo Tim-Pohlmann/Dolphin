@@ -89,25 +89,8 @@ public static class Runner
                 .Select(e =>
                 {
                     if (e.ValueKind != JsonValueKind.Object) return null;
-                    // SemgrepError is a redundant summary entry; skip it
-                    if (e.TryGetProperty("type", out var t) && t.GetString() == "SemgrepError") return null;
-                    // Opengrep uses "long_msg" for schema errors, "message" for others
-                    var key = e.TryGetProperty("long_msg", out var lm) && lm.ValueKind == JsonValueKind.String
-                        ? lm : e.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String
-                        ? m : (JsonElement?)null;
-                    var text = key?.GetString();
-                    if (text == null) return null;
-                    if (e.TryGetProperty("spans", out var spans) && spans.ValueKind == JsonValueKind.Array)
-                    {
-                        var lines = spans.EnumerateArray()
-                            .Select(s => s.TryGetProperty("start", out var st) && st.TryGetProperty("line", out var ln)
-                                ? ln.GetInt32() : (int?)null)
-                            .Where(l => l != null)
-                            .ToList();
-                        if (lines.Count > 0)
-                            text += $"\n  at line {string.Join(", ", lines)}";
-                    }
-                    return text;
+                    if (!e.TryGetProperty("message", out var m)) return null;
+                    return m.ValueKind == JsonValueKind.String ? m.GetString() : null;
                 })
                 .Where(m => !string.IsNullOrWhiteSpace(m))
                 .ToList();

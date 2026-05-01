@@ -44,6 +44,8 @@ rules:
     pattern-either:
       - pattern: $S.EndsWith($ARG)
       - pattern: $S.StartsWith($ARG)
+      - pattern: $S.EndsWith($ARG, $IGNORE_CASE, $CULTURE)
+      - pattern: $S.StartsWith($ARG, $IGNORE_CASE, $CULTURE)
 
   - id: mcp-lsp-no-stdout-write
     message: "MCP and LSP server code must not call Console.Write/WriteLine; stdout is the JSON-RPC wire - use Console.Error instead."
@@ -58,6 +60,8 @@ rules:
       - pattern: Console.WriteLine(...)
       - pattern: Console.WriteAsync(...)
       - pattern: Console.WriteLineAsync(...)
+      - pattern: Console.Out.Write(...)
+      - pattern: Console.Out.WriteLine(...)
 
   - id: env-exit-outside-cli
     message: "Environment.Exit() must only be called from Cli/CheckCommand.cs; throw exceptions in all other code so MCP/LSP callers can handle failures."
@@ -75,7 +79,7 @@ rules:
     paths:
       include:
         - "src/Dolphin/Lsp/**"
-    pattern-regex: 'WriteLineAsync\(["]((?!\[dolphin-lsp\]))[^"]*"'
+    pattern-regex: 'WriteLineAsync\(\s*(?:\$@|@\$|\$|@)?"(?!\[dolphin-lsp\])'
 
   - id: launcher-stderr-must-use-prefix
     message: "process.stderr.write() calls in launcher.js must begin with the [dolphin] prefix for traceability."
@@ -84,4 +88,8 @@ rules:
     paths:
       include:
         - "launcher/**"
-    pattern-regex: 'process\.stderr\.write\(`(?!\[dolphin\])'
+    patterns:
+      - pattern: process.stderr.write($MSG)
+      - metavariable-regex:
+          metavariable: $MSG
+          regex: '^(?:`(?!\[dolphin\])|''(?!\[dolphin\])|"(?!\[dolphin\]))'

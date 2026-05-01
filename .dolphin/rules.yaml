@@ -37,8 +37,8 @@ rules:
     severity: INFO
     pattern-regex: '(//|#)\s*TODO(?!\s*\[[\w]+-\d+\])'
 
-  - id: string-ordinal-comparison-required
-    message: "Specify StringComparison.Ordinal or OrdinalIgnoreCase; omitting it produces culture-sensitive behavior that can differ by locale."
+  - id: string-explicit-comparison-required
+    message: "Pass an explicit StringComparison argument (prefer Ordinal or OrdinalIgnoreCase); omitting it produces culture-sensitive behavior that can differ by locale."
     languages: [csharp]
     severity: WARNING
     pattern-either:
@@ -56,6 +56,8 @@ rules:
     pattern-either:
       - pattern: Console.Write(...)
       - pattern: Console.WriteLine(...)
+      - pattern: Console.WriteAsync(...)
+      - pattern: Console.WriteLineAsync(...)
 
   - id: env-exit-outside-cli
     message: "Environment.Exit() must only be called from Cli/CheckCommand.cs; throw exceptions in all other code so MCP/LSP callers can handle failures."
@@ -63,7 +65,7 @@ rules:
     severity: ERROR
     paths:
       exclude:
-        - "src/Dolphin/Cli/**"
+        - "src/Dolphin/Cli/CheckCommand.cs"
     pattern: Environment.Exit($CODE)
 
   - id: lsp-log-must-use-prefix

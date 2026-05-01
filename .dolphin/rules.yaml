@@ -5,11 +5,14 @@
 
 rules:
   - id: no-console-log
-    message: "Remove console.log before committing. Use a structured logger instead."
+    message: "Remove console.log/warn/error/info before committing. Use a structured logger instead. In launcher.js, use process.stderr.write() to avoid corrupting the MCP stdio channel."
     languages: [typescript, javascript]
     severity: WARNING
-    patterns:
+    pattern-either:
       - pattern: console.log(...)
+      - pattern: console.warn(...)
+      - pattern: console.error(...)
+      - pattern: console.info(...)
 
   - id: no-hardcoded-secret
     message: "Possible hardcoded secret detected. Move to an environment variable."
@@ -33,3 +36,62 @@ rules:
     languages: [typescript, javascript, python, go]
     severity: INFO
     pattern-regex: '(//|#)\s*TODO(?!\s*\[[\w]+-\d+\])'
+
+  - id: string-explicit-comparison-required
+    message: "Pass an explicit StringComparison argument (prefer Ordinal or OrdinalIgnoreCase); omitting it produces culture-sensitive behavior that can differ by locale."
+    languages: [csharp]
+    severity: WARNING
+    pattern-either:
+      - pattern: $S.EndsWith($ARG)
+      - pattern: $S.StartsWith($ARG)
+      - pattern: $S.EndsWith($ARG, $IGNORE_CASE, $CULTURE)
+      - pattern: $S.StartsWith($ARG, $IGNORE_CASE, $CULTURE)
+
+  - id: mcp-lsp-no-stdout-write
+    message: "MCP and LSP server code must not call Console.Write/WriteLine; stdout is the JSON-RPC wire - use Console.Error instead."
+    languages: [csharp]
+    severity: ERROR
+    paths:
+      include:
+        - "src/Dolphin/Mcp/**"
+        - "src/Dolphin/Lsp/**"
+    pattern-either:
+      - pattern: Console.Write(...)
+      - pattern: Console.WriteLine(...)
+      - pattern: Console.WriteAsync(...)
+      - pattern: Console.WriteLineAsync(...)
+      - pattern: Console.Out.Write(...)
+      - pattern: Console.Out.WriteLine(...)
+      - pattern: Console.Out.WriteAsync(...)
+      - pattern: Console.Out.WriteLineAsync(...)
+
+  - id: env-exit-outside-cli
+    message: "Environment.Exit() must only be called from Cli/CheckCommand.cs; throw exceptions in all other code so MCP/LSP callers can handle failures."
+    languages: [csharp]
+    severity: ERROR
+    paths:
+      exclude:
+        - "src/Dolphin/Cli/CheckCommand.cs"
+    pattern: Environment.Exit($CODE)
+
+  - id: lsp-log-must-use-prefix
+    message: "LSP log messages must begin with the [dolphin-lsp] prefix so they are identifiable in mixed stderr output."
+    languages: [csharp]
+    severity: WARNING
+    paths:
+      include:
+        - "src/Dolphin/Lsp/**"
+    pattern-regex: 'Console\.Error\.WriteLineAsync\(\s*(?:\$@|@\$|\$|@)?"(?!\[dolphin-lsp\])'
+
+  - id: launcher-stderr-must-use-prefix
+    message: "process.stderr.write() string literal calls in launcher.js must begin with the [dolphin] prefix for traceability."
+    languages: [javascript]
+    severity: WARNING
+    paths:
+      include:
+        - "launcher/**"
+    patterns:
+      - pattern: process.stderr.write($MSG)
+      - metavariable-regex:
+          metavariable: $MSG
+          regex: '^(?:`(?!\[dolphin\])|''(?!\[dolphin\])|"(?!\[dolphin\]))'

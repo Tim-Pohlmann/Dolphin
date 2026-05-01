@@ -139,7 +139,7 @@ jobs:
       - name: Cache opengrep (publish bundle)
         uses: actions/cache@v4
         with:
-          path: src/Dolphin/obj/Release/net10.0/linux-x64/opengrep-linux-x64
+          path: src/Dolphin/obj/**/opengrep-linux-x64
           key: opengrep-bundle-linux-x64-${{ steps.opengrep-version.outputs.version }}
 
       - name: Publish

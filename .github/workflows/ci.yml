@@ -143,7 +143,7 @@ jobs:
           key: opengrep-bundle-linux-x64-${{ steps.opengrep-version.outputs.version }}
 
       - name: Publish
-        run: dotnet publish src/Dolphin -r linux-x64 -c Release -o bin/lint/
+        run: dotnet publish src/Dolphin -r linux-x64 -c Release -o bin/lint/ --no-restore
 
       - name: Dolphin check
         run: ./bin/lint/dolphin check --cwd .

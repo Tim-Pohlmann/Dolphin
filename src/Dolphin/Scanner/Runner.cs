@@ -67,7 +67,7 @@ public static class Runner
         // but may be path-prefixed by the scanner (e.g. ".dolphin.my-rule"). Match on suffix.
         if (ruleId != null)
             findings = findings
-                .Where(f => f.RuleId == ruleId || f.RuleId.EndsWith("." + ruleId))
+                .Where(f => f.RuleId == ruleId || f.RuleId.EndsWith("." + ruleId, StringComparison.Ordinal))
                 .ToList();
         return new RunResult(findings, proc.ExitCode == 1, scannerWarning);
     }

@@ -106,6 +106,48 @@ jobs:
       - name: Test (.NET)
         run: dotnet test Dolphin.slnx --no-build -c Release --verbosity normal
 
+  lint:
+    name: Dolphin Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Get opengrep version
+        id: opengrep-version
+        shell: bash
+        run: |
+          VERSION=$(dotnet msbuild src/Dolphin/Dolphin.csproj -getProperty:OpengrepVersion | tr -d '\r')
+          test -n "$VERSION" || { echo "Failed to read OpengrepVersion from Dolphin.csproj" >&2; exit 1; }
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore Dolphin.slnx
+
+      - name: Cache opengrep (publish bundle)
+        uses: actions/cache@v4
+        with:
+          path: src/Dolphin/obj/Release/net10.0/linux-x64/opengrep-linux-x64
+          key: opengrep-bundle-linux-x64-${{ steps.opengrep-version.outputs.version }}
+
+      - name: Publish
+        run: dotnet publish src/Dolphin -r linux-x64 -c Release -o bin/lint/
+
+      - name: Dolphin check
+        run: ./bin/lint/dolphin check --cwd .
+
   analyze:
     name: Analyze
     runs-on: ubuntu-latest

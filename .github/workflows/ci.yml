@@ -106,6 +106,47 @@ jobs:
       - name: Test (.NET)
         run: dotnet test Dolphin.slnx --no-build -c Release --verbosity normal
 
+  lint:
+    name: Dolphin Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get latest dolphin release tag
+        id: dolphin-release
+        run: |
+          TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          test -n "$TAG" || { echo "Failed to determine latest dolphin release tag" >&2; exit 1; }
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Cache dolphin binary
+        id: cache-dolphin
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/dolphin
+          key: dolphin-linux-x64-${{ steps.dolphin-release.outputs.tag }}
+
+      - name: Download dolphin
+        if: steps.cache-dolphin.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.cache/dolphin /tmp/dolphin-dl
+          gh release download "${{ steps.dolphin-release.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "*linux-x64.tar.gz" \
+            -D /tmp/dolphin-dl/
+          tar -xzf /tmp/dolphin-dl/*linux-x64.tar.gz -C ~/.cache/dolphin/
+          chmod +x ~/.cache/dolphin/dolphin
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Dolphin check
+        run: ~/.cache/dolphin/dolphin check --cwd .
+
   analyze:
     name: Analyze
     runs-on: ubuntu-latest

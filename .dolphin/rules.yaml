@@ -37,13 +37,15 @@ rules:
     severity: INFO
     pattern-regex: '(//|#)\s*TODO(?!\s*\[[\w]+-\d+\])'
 
-  - id: string-ordinal-comparison-required
-    message: "Specify StringComparison.Ordinal or OrdinalIgnoreCase; omitting it produces culture-sensitive behavior that can differ by locale."
+  - id: string-explicit-comparison-required
+    message: "Pass an explicit StringComparison argument (prefer Ordinal or OrdinalIgnoreCase); omitting it produces culture-sensitive behavior that can differ by locale."
     languages: [csharp]
     severity: WARNING
     pattern-either:
       - pattern: $S.EndsWith($ARG)
       - pattern: $S.StartsWith($ARG)
+      - pattern: $S.EndsWith($ARG, $IGNORE_CASE, $CULTURE)
+      - pattern: $S.StartsWith($ARG, $IGNORE_CASE, $CULTURE)
 
   - id: mcp-lsp-no-stdout-write
     message: "MCP and LSP server code must not call Console.Write/WriteLine; stdout is the JSON-RPC wire - use Console.Error instead."
@@ -56,6 +58,12 @@ rules:
     pattern-either:
       - pattern: Console.Write(...)
       - pattern: Console.WriteLine(...)
+      - pattern: Console.WriteAsync(...)
+      - pattern: Console.WriteLineAsync(...)
+      - pattern: Console.Out.Write(...)
+      - pattern: Console.Out.WriteLine(...)
+      - pattern: Console.Out.WriteAsync(...)
+      - pattern: Console.Out.WriteLineAsync(...)
 
   - id: env-exit-outside-cli
     message: "Environment.Exit() must only be called from Cli/CheckCommand.cs; throw exceptions in all other code so MCP/LSP callers can handle failures."
@@ -63,7 +71,7 @@ rules:
     severity: ERROR
     paths:
       exclude:
-        - "src/Dolphin/Cli/**"
+        - "src/Dolphin/Cli/CheckCommand.cs"
     pattern: Environment.Exit($CODE)
 
   - id: lsp-log-must-use-prefix
@@ -73,13 +81,17 @@ rules:
     paths:
       include:
         - "src/Dolphin/Lsp/**"
-    pattern-regex: 'WriteLineAsync\(["]((?!\[dolphin-lsp\]))[^"]*"'
+    pattern-regex: 'Console\.Error\.WriteLineAsync\(\s*(?:\$@|@\$|\$|@)?"(?!\[dolphin-lsp\])'
 
   - id: launcher-stderr-must-use-prefix
-    message: "process.stderr.write() calls in launcher.js must begin with the [dolphin] prefix for traceability."
+    message: "process.stderr.write() string literal calls in launcher.js must begin with the [dolphin] prefix for traceability."
     languages: [javascript]
     severity: WARNING
     paths:
       include:
         - "launcher/**"
-    pattern-regex: 'process\.stderr\.write\(`(?!\[dolphin\])'
+    patterns:
+      - pattern: process.stderr.write($MSG)
+      - metavariable-regex:
+          metavariable: $MSG
+          regex: '^(?:`(?!\[dolphin\])|''(?!\[dolphin\])|"(?!\[dolphin\]))'

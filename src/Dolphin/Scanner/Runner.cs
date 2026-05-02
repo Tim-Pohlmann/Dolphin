@@ -85,21 +85,81 @@ public static class Runner
             if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
             if (!doc.RootElement.TryGetProperty("errors", out var errors)) return null;
             if (errors.ValueKind != JsonValueKind.Array) return null;
-            var messages = errors.EnumerateArray()
-                .Select(e =>
-                {
-                    if (e.ValueKind != JsonValueKind.Object) return null;
-                    if (!e.TryGetProperty("message", out var m)) return null;
-                    return m.ValueKind == JsonValueKind.String ? m.GetString() : null;
-                })
+            var allErrors = errors.EnumerateArray().ToList();
+            // SemgrepError is a redundant summary of detail errors; prefer detail errors
+            var messages = allErrors
+                .Select(FormatErrorEntry)
                 .Where(m => !string.IsNullOrWhiteSpace(m))
                 .ToList();
+            // Fall back to SemgrepError summary if no detail errors were present
+            if (messages.Count == 0)
+                messages = allErrors
+                    .Select(FormatSemgrepEntry)
+                    .Where(m => !string.IsNullOrWhiteSpace(m))
+                    .ToList();
             return messages.Count > 0 ? string.Join("\n", messages) : null;
         }
         catch (JsonException)
         {
             return null;
         }
+    }
+
+    private static string? FormatErrorEntry(JsonElement e)
+    {
+        if (e.ValueKind != JsonValueKind.Object) return null;
+        if (e.TryGetProperty("type", out var t) &&
+            t.ValueKind == JsonValueKind.String &&
+            t.GetString() == "SemgrepError") return null;
+        var text = GetErrorMessage(e);
+        if (text == null) return null;
+        var lines = GetSpanLineNumbers(e);
+        if (lines.Count > 0)
+        {
+            var lineLabel = lines.Count == 1 ? "line" : "lines";
+            text += $"\n  at {lineLabel} {string.Join(", ", lines)}";
+        }
+        return text;
+    }
+
+    private static string? FormatSemgrepEntry(JsonElement e)
+    {
+        if (e.ValueKind != JsonValueKind.Object) return null;
+        if (!e.TryGetProperty("type", out var t) ||
+            t.ValueKind != JsonValueKind.String ||
+            t.GetString() != "SemgrepError") return null;
+        return GetErrorMessage(e);
+    }
+
+    private static string? GetErrorMessage(JsonElement e)
+    {
+        // Opengrep uses "long_msg" for schema errors, "message" for others
+        if (e.TryGetProperty("long_msg", out var lm) && lm.ValueKind == JsonValueKind.String)
+            return lm.GetString();
+        if (e.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
+            return m.GetString();
+        return null;
+    }
+
+    private static List<int> GetSpanLineNumbers(JsonElement e)
+    {
+        if (!e.TryGetProperty("spans", out var spans) || spans.ValueKind != JsonValueKind.Array)
+            return [];
+        return spans.EnumerateArray()
+            .Select(GetSpanStartLine)
+            .Where(l => l != null)
+            .Select(l => l!.Value)
+            .Distinct()
+            .OrderBy(l => l)
+            .ToList();
+    }
+
+    private static int? GetSpanStartLine(JsonElement s)
+    {
+        if (s.ValueKind != JsonValueKind.Object) return null;
+        if (!s.TryGetProperty("start", out var st) || st.ValueKind != JsonValueKind.Object) return null;
+        if (!st.TryGetProperty("line", out var ln) || ln.ValueKind != JsonValueKind.Number) return null;
+        return ln.TryGetInt32(out var lineNumber) ? lineNumber : null;
     }
 
     private static List<Finding> ParseFindings(string json, string cwd)

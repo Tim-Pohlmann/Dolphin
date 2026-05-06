@@ -967,13 +967,14 @@ public partial class LspServerInProcessTests
     [TestMethod]
     public void ConvertFindingsToDiagnostics_MapsServerityCorrectly()
     {
-        var projectRoot = "/project";
-        var filePath = "/project/src/app.ts";
+        var projectRoot = Path.GetTempPath();
+        var filePath = Path.GetFullPath(Path.Combine(projectRoot, "src", "app.ts"));
+        var relFile = Path.GetRelativePath(projectRoot, filePath);
         var findings = new List<Finding>
         {
-            new("rule-err",  Severity.Error,   "src/app.ts", 1, 1, "error msg",   ""),
-            new("rule-warn", Severity.Warning,  "src/app.ts", 2, 1, "warning msg", ""),
-            new("rule-info", Severity.Info,     "src/app.ts", 3, 1, "info msg",    ""),
+            new("rule-err",  Severity.Error,   relFile, 1, 1, "error msg",   ""),
+            new("rule-warn", Severity.Warning,  relFile, 2, 1, "warning msg", ""),
+            new("rule-info", Severity.Info,     relFile, 3, 1, "info msg",    ""),
         };
         var result = LspServer.ConvertFindingsToDiagnostics(findings, filePath, projectRoot);
 
@@ -986,11 +987,12 @@ public partial class LspServerInProcessTests
     [TestMethod]
     public void ConvertFindingsToDiagnostics_ConvertsOneBasedToZeroBased()
     {
-        var projectRoot = "/project";
-        var filePath = "/project/src/app.ts";
+        var projectRoot = Path.GetTempPath();
+        var filePath = Path.GetFullPath(Path.Combine(projectRoot, "src", "app.ts"));
+        var relFile = Path.GetRelativePath(projectRoot, filePath);
         var findings = new List<Finding>
         {
-            new("rule-x", Severity.Warning, "src/app.ts", 5, 3, "msg", ""),
+            new("rule-x", Severity.Warning, relFile, 5, 3, "msg", ""),
         };
         var result = LspServer.ConvertFindingsToDiagnostics(findings, filePath, projectRoot);
 
@@ -1003,11 +1005,12 @@ public partial class LspServerInProcessTests
     [TestMethod]
     public void ConvertFindingsToDiagnostics_FormatsMessageWithRuleId()
     {
-        var projectRoot = "/project";
-        var filePath = "/project/src/app.ts";
+        var projectRoot = Path.GetTempPath();
+        var filePath = Path.GetFullPath(Path.Combine(projectRoot, "src", "app.ts"));
+        var relFile = Path.GetRelativePath(projectRoot, filePath);
         var findings = new List<Finding>
         {
-            new("my-rule", Severity.Warning, "src/app.ts", 1, 1, "do not do this", ""),
+            new("my-rule", Severity.Warning, relFile, 1, 1, "do not do this", ""),
         };
         var result = LspServer.ConvertFindingsToDiagnostics(findings, filePath, projectRoot);
 
@@ -1020,11 +1023,14 @@ public partial class LspServerInProcessTests
     public void ConvertFindingsToDiagnostics_ClampsBelowZeroToZero()
     {
         // Line/col of 0 in a finding (malformed) must not produce negative LSP positions.
+        var projectRoot = Path.GetTempPath();
+        var filePath = Path.GetFullPath(Path.Combine(projectRoot, "src", "app.ts"));
+        var relFile = Path.GetRelativePath(projectRoot, filePath);
         var findings = new List<Finding>
         {
-            new("rule-x", Severity.Warning, "src/app.ts", 0, 0, "msg", ""),
+            new("rule-x", Severity.Warning, relFile, 0, 0, "msg", ""),
         };
-        var result = LspServer.ConvertFindingsToDiagnostics(findings, "/project/src/app.ts", "/project");
+        var result = LspServer.ConvertFindingsToDiagnostics(findings, filePath, projectRoot);
 
         Assert.AreEqual(1, result.Length);
         Assert.AreEqual(0, result[0].Range.Start.Line);

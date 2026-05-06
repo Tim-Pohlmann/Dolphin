@@ -884,13 +884,17 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public async Task HandleMessage_DidOpen_SourceFile_WithProjectRoot_StartsBackgroundScan()
+    public async Task HandleMessage_DidOpen_SourceFile_WithProjectRoot_PublishesEmptyDiagnostics()
     {
+        // When a project root exists but the source file does not yet exist on disk,
+        // RunScanAsync returns [] synchronously (File.Exists = false). This covers the
+        // ScanAndPublishAsync cache-and-publish path without needing a real scanner binary.
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-lsptest-{Guid.NewGuid()}");
         Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
         File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+        // Intentionally do NOT create the source file — File.Exists check in RunScanAsync
+        // returns false → immediate [] result → synchronous publish path is exercised.
         var srcFile = Path.Combine(tmpDir, "app.ts");
-        File.WriteAllText(srcFile, "");
         var uri = new Uri(srcFile).AbsoluteUri;
         try
         {
@@ -898,7 +902,12 @@ public partial class LspServerInProcessTests
                 $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\",\"languageId\":\"typescript\",\"version\":1,\"text\":\"\"}}}}}}",
                 """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-            Assert.IsTrue(responses.Any(r => r["id"]?.GetValue<int>() == 1), "Shutdown response expected");
+            // The scan completes synchronously (file missing → empty result) so
+            // publishDiagnostics fires before shutdown is processed.
+            var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+            Assert.IsNotNull(publish, "publishDiagnostics must be sent after scan with empty result");
+            Assert.AreEqual(uri, publish["params"]?["uri"]?.GetValue<string>());
+            Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
         }
         finally
         {
@@ -907,13 +916,13 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public async Task HandleMessage_DidSave_SourceFile_WithProjectRoot_StartsBackgroundScan()
+    public async Task HandleMessage_DidSave_SourceFile_WithProjectRoot_PublishesEmptyDiagnostics()
     {
+        // Same synchronous-scan pattern as the didOpen test above.
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-lsptest-{Guid.NewGuid()}");
         Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
         File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
         var srcFile = Path.Combine(tmpDir, "app.ts");
-        File.WriteAllText(srcFile, "");
         var uri = new Uri(srcFile).AbsoluteUri;
         try
         {
@@ -921,7 +930,10 @@ public partial class LspServerInProcessTests
                 $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didSave\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
                 """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-            Assert.IsTrue(responses.Any(r => r["id"]?.GetValue<int>() == 1), "Shutdown response expected");
+            var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+            Assert.IsNotNull(publish, "publishDiagnostics must be sent after scan with empty result");
+            Assert.AreEqual(uri, publish["params"]?["uri"]?.GetValue<string>());
+            Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
         }
         finally
         {

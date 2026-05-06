@@ -61,7 +61,8 @@ public static partial class LspServer
 
     // Caches the last Opengrep scan result per source file URI so pull requests can be
     // served immediately without re-running the scanner. Populated by ScanAndPublishAsync,
-    // evicted on didClose. Scan results are small (a handful of diagnostics), so no cap.
+    // evicted on didClose. Capped at MaxCachedDocuments with best-effort LRU-ish eviction
+    // to prevent OOM from clients that open many files without closing them.
     private static readonly ConcurrentDictionary<string, LspDiagnostic[]> _sourceFileDiagnostics = new();
 
     // Lazily resolved scanner binary path; null means not found.
@@ -553,8 +554,19 @@ public static partial class LspServer
         uri.EndsWith("\\.dolphin\\rules.yaml", StringComparison.OrdinalIgnoreCase) ||
         uri.EndsWith("\\.dolphin\\rules.yml",  StringComparison.OrdinalIgnoreCase);
 
+    // Extensions that activate Dolphin's LSP (mirrors extensionToLanguage in plugin.json).
+    private static readonly HashSet<string> _sourceExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".yaml", ".yml",
+        ".ts", ".tsx", ".js", ".jsx",
+        ".py", ".go", ".java", ".cs", ".rb", ".php", ".rs",
+        ".cpp", ".c", ".h", ".swift", ".kt", ".sh"
+    };
+
     private static bool IsSourceFile(string uri) =>
-        !IsDolphinRulesFile(uri) && uri.StartsWith("file://", StringComparison.OrdinalIgnoreCase);
+        !IsDolphinRulesFile(uri) &&
+        uri.StartsWith("file://", StringComparison.OrdinalIgnoreCase) &&
+        _sourceExtensions.Contains(Path.GetExtension(uri));
 
     private static string? TryGetLocalPath(string uri)
     {
@@ -711,6 +723,12 @@ public static partial class LspServer
             {
                 var diagnostics = await RunScanAsync(uri, ct);
                 // Cache before publishing so a concurrent pull request sees the result immediately.
+                // Evict an arbitrary entry when full so the map stays bounded (best-effort; no lock needed).
+                if (!_sourceFileDiagnostics.ContainsKey(uri) && _sourceFileDiagnostics.Count >= MaxCachedDocuments)
+                {
+                    var evict = _sourceFileDiagnostics.Keys.FirstOrDefault();
+                    if (evict is not null) _sourceFileDiagnostics.TryRemove(evict, out _);
+                }
                 _sourceFileDiagnostics[uri] = diagnostics;
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
             }

@@ -713,10 +713,18 @@ public partial class LspServerInProcessTests
     [TestMethod]
     public void FindProjectRoot_ReturnsNull_WhenNoRulesFileExists()
     {
-        // A path with no .dolphin/rules.yaml anywhere up the tree returns null.
-        // Use a path that can't possibly have a .dolphin ancestor (filesystem root area).
-        var result = LspServer.FindProjectRoot("/no-such-dir-xyz/src/app.ts");
-        Assert.IsNull(result, "Expected null when no .dolphin/rules.yaml exists in any ancestor");
+        // Use a fresh temp directory with no .dolphin folder — cross-platform safe.
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-nrtest-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            var result = LspServer.FindProjectRoot(Path.Combine(tmpDir, "src", "app.ts"));
+            Assert.IsNull(result, "Expected null when no .dolphin/rules.yaml exists in any ancestor");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
     }
 
     [TestMethod]
@@ -873,6 +881,67 @@ public partial class LspServerInProcessTests
         {
             Directory.Delete(tmpDir, recursive: true);
         }
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_DidOpen_SourceFile_WithProjectRoot_StartsBackgroundScan()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-lsptest-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+        var srcFile = Path.Combine(tmpDir, "app.ts");
+        File.WriteAllText(srcFile, "");
+        var uri = new Uri(srcFile).AbsoluteUri;
+        try
+        {
+            var responses = await RunServerAsync(
+                $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\",\"languageId\":\"typescript\",\"version\":1,\"text\":\"\"}}}}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+            Assert.IsTrue(responses.Any(r => r["id"]?.GetValue<int>() == 1), "Shutdown response expected");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_DidSave_SourceFile_WithProjectRoot_StartsBackgroundScan()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-lsptest-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+        var srcFile = Path.Combine(tmpDir, "app.ts");
+        File.WriteAllText(srcFile, "");
+        var uri = new Uri(srcFile).AbsoluteUri;
+        try
+        {
+            var responses = await RunServerAsync(
+                $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didSave\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+            Assert.IsTrue(responses.Any(r => r["id"]?.GetValue<int>() == 1), "Shutdown response expected");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task HandleDiagnosticPull_NonRules_NonSource_ReturnsEmptyFullReport()
+    {
+        // A pull for a URI that is neither a dolphin rules file nor a source file
+        // (non-file scheme) must return an empty full report immediately.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","id":7,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"untitled://newfile"}}}""",
+            """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+        var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 7);
+        Assert.IsNotNull(pull, "Pull must produce a response");
+        Assert.AreEqual("full", pull["result"]?["kind"]?.GetValue<string>());
+        Assert.AreEqual(0, pull["result"]?["items"]?.AsArray().Count);
     }
 
     // ── ConvertFindingsToDiagnostics ──────────────────────────────────────────

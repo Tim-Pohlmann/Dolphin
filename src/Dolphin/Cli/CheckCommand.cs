@@ -21,7 +21,7 @@ public static class CheckCommand
 
         var formatOption = new Option<string>(
             "--format",
-            description: "Output format: text or json",
+            description: "Output format: text, json, or github",
             getDefaultValue: () => "text"
         );
 

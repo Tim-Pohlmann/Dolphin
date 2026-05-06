@@ -1,0 +1,33 @@
+name: Dolphin
+description: Run Dolphin static analysis and emit GitHub Actions annotations
+author: Tim Pohlmann
+
+branding:
+  icon: search
+  color: blue
+
+inputs:
+  working-directory:
+    description: Directory to scan (defaults to the repository root)
+    required: false
+    default: ${{ github.workspace }}
+  rule:
+    description: Run only the rule with this ID (optional)
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Run Dolphin
+      shell: bash
+      env:
+        DOLPHIN_CWD: ${{ inputs.working-directory }}
+        DOLPHIN_RULE: ${{ inputs.rule }}
+        CLAUDE_PLUGIN_ROOT: ${{ github.action_path }}
+      run: |
+        args=(check --cwd "$DOLPHIN_CWD" --format github)
+        if [ -n "$DOLPHIN_RULE" ]; then
+          args+=(--rule "$DOLPHIN_RULE")
+        fi
+        node "$GITHUB_ACTION_PATH/launcher/launcher.js" "${args[@]}"

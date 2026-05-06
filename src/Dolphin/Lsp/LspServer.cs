@@ -65,9 +65,19 @@ public static partial class LspServer
     // to prevent OOM from clients that open many files without closing them.
     private static readonly ConcurrentDictionary<string, LspDiagnostic[]> _sourceFileDiagnostics = new();
 
-    // Lazily resolved scanner binary path; null means not found.
-    private static readonly Lazy<Task<string?>> _scannerBinary =
-        new(() => TryGetScannerBinaryAsync());
+    // Cached scanner binary path. Only set on successful resolution so that a scanner
+    // installed while the LSP is running is discovered on the next scan attempt rather
+    // than being permanently shadowed by a memoised null from an earlier failed lookup.
+    private static volatile string? _scannerBinary;
+
+    private static async Task<string?> GetScannerBinaryAsync()
+    {
+        var cached = _scannerBinary;
+        if (cached != null) return cached;
+        var path = await TryGetScannerBinaryAsync();
+        if (path != null) _scannerBinary = path;
+        return path;
+    }
 
     private static async Task<string?> TryGetScannerBinaryAsync()
     {
@@ -751,7 +761,7 @@ public static partial class LspServer
         var projectRoot = FindProjectRoot(filePath);
         if (projectRoot is null) return [];
 
-        var scannerBinary = await _scannerBinary.Value;
+        var scannerBinary = await GetScannerBinaryAsync();
         if (scannerBinary is null) return [];
 
         ct.ThrowIfCancellationRequested();

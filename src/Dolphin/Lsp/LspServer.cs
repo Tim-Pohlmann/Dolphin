@@ -73,6 +73,12 @@ public static partial class LspServer
     // guard and exceed MaxCachedDocuments.
     private static readonly object _sourceFileDiagnosticsAdmissionLock = new();
 
+    // Tracks URIs for which source diagnostics have actually been published to the client.
+    // Kept separate from _sourceFileDiagnostics because cache eviction can remove an entry
+    // while the client still shows the published diagnostics; didClose must clear them
+    // regardless of whether the cached result is still present.
+    private static readonly ConcurrentDictionary<string, bool> _publishedSourceDiagnosticsUris = new();
+
     // Cached scanner binary path. Only set on successful resolution so that a scanner
     // installed while the LSP is running is discovered on the next scan attempt rather
     // than being permanently shadowed by a memoised null from an earlier failed lookup.
@@ -97,6 +103,16 @@ public static partial class LspServer
         else
             Interlocked.Exchange(ref _scannerBinaryFailedAt, Stopwatch.GetTimestamp());
         return path;
+    }
+
+    // Returns true only when the negative cache confirms the scanner is currently unavailable.
+    // Returns false when the binary is known-good or has not yet been attempted (optimistic).
+    // Used for synchronous checks in the pull handler to avoid retrigger loops.
+    private static bool IsScannerKnownUnavailable()
+    {
+        if (_scannerBinary != null) return false;
+        var failedAt = Interlocked.Read(ref _scannerBinaryFailedAt);
+        return failedAt != 0 && Stopwatch.GetTimestamp() - failedAt < Stopwatch.Frequency * 30;
     }
 
     private static async Task<string?> TryGetScannerBinaryAsync()
@@ -124,10 +140,13 @@ public static partial class LspServer
     private const string MessageProperty     = "message";
     private const string TextDocumentProperty = "textDocument";
 
-    // Test helper: seeds _sourceFileDiagnostics so tests can assert close/pull behaviour
-    // without running the actual scanner.
-    internal static void SetSourceFileDiagnosticsForTest(string uri, LspDiagnostic[] diagnostics) =>
+    // Test helper: seeds _sourceFileDiagnostics and marks the URI as published so tests
+    // can assert close/pull behaviour without running the actual scanner.
+    internal static void SetSourceFileDiagnosticsForTest(string uri, LspDiagnostic[] diagnostics)
+    {
         _sourceFileDiagnostics[uri] = diagnostics;
+        _publishedSourceDiagnosticsUris[uri] = true;
+    }
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ContentLengthRegex();
@@ -147,6 +166,9 @@ public static partial class LspServer
         await DrainValidationsAsync();
         _documentText.Clear();
         _uncacheableDocs.Clear();
+        // Reset the scanner negative-cache so a new session retries the installer promptly
+        // rather than inheriting a stale failure timestamp from a previous session/test.
+        Interlocked.Exchange(ref _scannerBinaryFailedAt, 0);
 
         var reader = new LspReader(inputStream ?? Console.OpenStandardInput());
         var stdout = outputStream ?? Console.OpenStandardOutput();
@@ -166,6 +188,7 @@ public static partial class LspServer
         _documentText.Clear();
         _uncacheableDocs.Clear();
         _sourceFileDiagnostics.Clear();
+        _publishedSourceDiagnosticsUris.Clear();
         // Per LSP spec, exit without a prior shutdown is an error (code 1).
         return shutdownReceived ? 0 : 1;
     }
@@ -506,11 +529,13 @@ public static partial class LspServer
         var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
         _documentText.TryRemove(uri, out _);
         _uncacheableDocs.TryRemove(uri, out _);
-        // For source files, only clear diagnostics if we previously published some (i.e. a scan
-        // result is cached). If no scan ran, we never published, so nothing to clear.
-        var hadSourceDiagnostics = _sourceFileDiagnostics.TryRemove(uri, out _);
+        _sourceFileDiagnostics.TryRemove(uri, out _);
+        // Track via _publishedSourceDiagnosticsUris rather than _sourceFileDiagnostics:
+        // the cache entry may have been evicted (to make room for other files) while the
+        // client still shows the published diagnostics, so we must clear regardless.
+        var hadPublished = _publishedSourceDiagnosticsUris.TryRemove(uri, out _);
         CancelAndRemove(uri);
-        if (IsDolphinRulesFile(uri) || hadSourceDiagnostics)
+        if (IsDolphinRulesFile(uri) || hadPublished)
             await PublishDiagnosticsAsync(stdout, uri, []);
     }
 
@@ -770,6 +795,9 @@ public static partial class LspServer
                     _sourceFileDiagnostics[uri] = diagnostics;
                 }
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
+                // Track this URI as having had diagnostics published so didClose can clear
+                // them even if the cache entry was later evicted (to make room for others).
+                _publishedSourceDiagnosticsUris[uri] = true;
             }
             catch (OperationCanceledException) { /* superseded by a newer open/save */ }
             catch (Exception ex) { await Console.Error.WriteLineAsync($"[dolphin-lsp] scan error for {uri}: {ex.Message}"); }
@@ -883,8 +911,14 @@ public static partial class LspServer
                     return;
                 }
 
-                // Kick off a scan in the background, then tell the client to retry after it
-                // receives the publishDiagnostics notification from the push.
+                // Only retrigger if the scanner is potentially available. When the negative
+                // cache confirms it is unavailable, no push will ever arrive, so return an
+                // empty report to avoid an infinite retrigger loop on the client.
+                if (IsScannerKnownUnavailable())
+                {
+                    await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, []), ct);
+                    return;
+                }
                 _ = ScanAndPublishAsync(stdout, uri, CancelPrevious(_validationCts, uri));
                 await SendServerCancelledAsync(stdout, id, CancellationToken.None);
             }

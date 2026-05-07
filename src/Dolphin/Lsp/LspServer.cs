@@ -1,8 +1,10 @@
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using Dolphin.Scanner;
 
 namespace Dolphin.Lsp;
@@ -76,12 +78,24 @@ public static partial class LspServer
     // than being permanently shadowed by a memoised null from an earlier failed lookup.
     private static volatile string? _scannerBinary;
 
+    // Stopwatch timestamp of the last failed resolution; 0 = never failed (or succeeded
+    // since then). Negative-caches failures for 30 s to avoid spamming stderr and the
+    // installer on every open/save when the scanner is not installed.
+    private static long _scannerBinaryFailedAt;
+
     private static async Task<string?> GetScannerBinaryAsync()
     {
         var cached = _scannerBinary;
         if (cached != null) return cached;
+        // Skip the installer if the last attempt failed less than 30 s ago.
+        var failedAt = Interlocked.Read(ref _scannerBinaryFailedAt);
+        if (failedAt != 0 && Stopwatch.GetTimestamp() - failedAt < Stopwatch.Frequency * 30)
+            return null;
         var path = await TryGetScannerBinaryAsync();
-        if (path != null) _scannerBinary = path;
+        if (path != null)
+            _scannerBinary = path;
+        else
+            Interlocked.Exchange(ref _scannerBinaryFailedAt, Stopwatch.GetTimestamp());
         return path;
     }
 
@@ -785,7 +799,8 @@ public static partial class LspServer
         ct.ThrowIfCancellationRequested();
 
         RunResult result;
-        try { result = await Runner.RunAsync(scannerBinary, projectRoot, ruleId: null, targetPath: filePath); }
+        try { result = await Runner.RunAsync(scannerBinary, projectRoot, ruleId: null, targetPath: filePath, cancellationToken: ct); }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner failed for {uri}: {ex.Message}");
@@ -800,11 +815,15 @@ public static partial class LspServer
         List<Finding> findings, string absoluteFilePath, string projectRoot)
     {
         var normalizedFilePath = Path.GetFullPath(absoluteFilePath);
+        // Case-sensitive on Linux (case-sensitive FS); case-insensitive on Windows and macOS.
+        var pathComparison = OperatingSystem.IsLinux()
+            ? StringComparison.Ordinal
+            : StringComparison.OrdinalIgnoreCase;
         var result = new List<LspDiagnostic>();
         foreach (var f in findings)
         {
             var abs = Path.GetFullPath(Path.Combine(projectRoot, f.FilePath));
-            if (!string.Equals(abs, normalizedFilePath, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(abs, normalizedFilePath, pathComparison))
                 continue;
 
             // Opengrep line/col are 1-based; LSP positions are 0-based.

@@ -16,7 +16,8 @@ public static class Runner
         string scannerBinary,
         string cwd,
         string? ruleId = null,
-        string? targetPath = null)
+        string? targetPath = null,
+        CancellationToken cancellationToken = default)
     {
         var rulesPath = Path.Combine(cwd, ".dolphin", "rules.yaml");
         if (!File.Exists(rulesPath))
@@ -44,12 +45,20 @@ public static class Runner
         using var proc = Process.Start(psi)!;
         // Read stdout and stderr concurrently to avoid deadlock when
         // the child fills one pipe while we're blocked reading the other.
-        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
-        var stderrTask = proc.StandardError.ReadToEndAsync();
-        await Task.WhenAll(stdoutTask, stderrTask);
-        await proc.WaitForExitAsync();
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
+        try
+        {
+            await Task.WhenAll(stdoutTask, stderrTask);
+            await proc.WaitForExitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+            throw;
+        }
+        var stdout = stdoutTask.Result;
+        var stderr = stderrTask.Result;
 
         // Exit 0 = clean, 1 = findings present, 2 = non-fatal scanner warning, 3+ = error
         if (proc.ExitCode > 2)

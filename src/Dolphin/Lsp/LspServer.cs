@@ -61,9 +61,15 @@ public static partial class LspServer
 
     // Caches the last Opengrep scan result per source file URI so pull requests can be
     // served immediately without re-running the scanner. Populated by ScanAndPublishAsync,
-    // evicted on didClose. Capped at MaxCachedDocuments with best-effort LRU-ish eviction
-    // to prevent OOM from clients that open many files without closing them.
+    // evicted on didClose. Capped at MaxCachedDocuments with eviction under
+    // _sourceFileDiagnosticsAdmissionLock to atomically enforce the size limit.
     private static readonly ConcurrentDictionary<string, LspDiagnostic[]> _sourceFileDiagnostics = new();
+
+    // Serialises admission into _sourceFileDiagnostics so the size cap is enforced atomically:
+    // ContainsKey + Count on ConcurrentDictionary are individually atomic but not
+    // composable, so without this lock two concurrent scans could both pass the
+    // guard and exceed MaxCachedDocuments.
+    private static readonly object _sourceFileDiagnosticsAdmissionLock = new();
 
     // Cached scanner binary path. Only set on successful resolution so that a scanner
     // installed while the LSP is running is discovered on the next scan attempt rather
@@ -575,8 +581,8 @@ public static partial class LspServer
 
     private static bool IsSourceFile(string uri) =>
         !IsDolphinRulesFile(uri) &&
-        uri.StartsWith("file://", StringComparison.OrdinalIgnoreCase) &&
-        _sourceExtensions.Contains(Path.GetExtension(uri));
+        TryGetLocalPath(uri) is { } localPath &&
+        _sourceExtensions.Contains(Path.GetExtension(localPath));
 
     private static string? TryGetLocalPath(string uri)
     {
@@ -732,14 +738,20 @@ public static partial class LspServer
             try
             {
                 var diagnostics = await RunScanAsync(uri, ct);
+                // null means the scanner could not run (binary missing or threw); keep any
+                // previously cached result rather than publishing a misleading empty list.
+                if (diagnostics is null) return;
                 // Cache before publishing so a concurrent pull request sees the result immediately.
-                // Evict an arbitrary entry when full so the map stays bounded (best-effort; no lock needed).
-                if (!_sourceFileDiagnostics.ContainsKey(uri) && _sourceFileDiagnostics.Count >= MaxCachedDocuments)
+                // Hold the admission lock so the size cap is enforced atomically.
+                lock (_sourceFileDiagnosticsAdmissionLock)
                 {
-                    var evict = _sourceFileDiagnostics.Keys.FirstOrDefault();
-                    if (evict is not null) _sourceFileDiagnostics.TryRemove(evict, out _);
+                    if (!_sourceFileDiagnostics.ContainsKey(uri) && _sourceFileDiagnostics.Count >= MaxCachedDocuments)
+                    {
+                        var evict = _sourceFileDiagnostics.Keys.FirstOrDefault();
+                        if (evict is not null) _sourceFileDiagnostics.TryRemove(evict, out _);
+                    }
+                    _sourceFileDiagnostics[uri] = diagnostics;
                 }
-                _sourceFileDiagnostics[uri] = diagnostics;
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
             }
             catch (OperationCanceledException) { /* superseded by a newer open/save */ }
@@ -751,7 +763,10 @@ public static partial class LspServer
         }
     }
 
-    private static async Task<LspDiagnostic[]> RunScanAsync(string uri, CancellationToken ct)
+    // Returns null when the scan could not run (scanner missing or threw an exception),
+    // so callers can preserve existing cached diagnostics rather than publishing an
+    // empty list that would look like a clean scan.
+    private static async Task<LspDiagnostic[]?> RunScanAsync(string uri, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
@@ -762,7 +777,7 @@ public static partial class LspServer
         if (projectRoot is null) return [];
 
         var scannerBinary = await GetScannerBinaryAsync();
-        if (scannerBinary is null) return [];
+        if (scannerBinary is null) return null;
 
         ct.ThrowIfCancellationRequested();
 
@@ -771,7 +786,7 @@ public static partial class LspServer
         catch (Exception ex)
         {
             await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner failed for {uri}: {ex.Message}");
-            return [];
+            return null;
         }
 
         ct.ThrowIfCancellationRequested();

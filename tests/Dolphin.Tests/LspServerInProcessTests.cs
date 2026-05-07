@@ -977,7 +977,7 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public void ConvertFindingsToDiagnostics_MapsServerityCorrectly()
+    public void ConvertFindingsToDiagnostics_MapsSeverityCorrectly()
     {
         var projectRoot = Path.GetTempPath();
         var filePath = Path.GetFullPath(Path.Combine(projectRoot, "src", "app.ts"));

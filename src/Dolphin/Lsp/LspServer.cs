@@ -570,10 +570,11 @@ public static partial class LspServer
         uri.EndsWith("\\.dolphin\\rules.yaml", StringComparison.OrdinalIgnoreCase) ||
         uri.EndsWith("\\.dolphin\\rules.yml",  StringComparison.OrdinalIgnoreCase);
 
-    // Extensions that activate Dolphin's LSP (mirrors extensionToLanguage in plugin.json).
+    // Extensions eligible for source-file scanning. Deliberately excludes .yaml/.yml:
+    // those files are handled exclusively via the IsDolphinRulesFile validation path
+    // and should not trigger opengrep source scans on every open/save.
     private static readonly HashSet<string> _sourceExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".yaml", ".yml",
         ".ts", ".tsx", ".js", ".jsx",
         ".py", ".go", ".java", ".cs", ".rb", ".php", ".rs",
         ".cpp", ".c", ".h", ".swift", ".kt", ".sh"

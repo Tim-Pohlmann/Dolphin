@@ -799,11 +799,12 @@ public static partial class LspServer
     internal static LspDiagnostic[] ConvertFindingsToDiagnostics(
         List<Finding> findings, string absoluteFilePath, string projectRoot)
     {
+        var normalizedFilePath = Path.GetFullPath(absoluteFilePath);
         var result = new List<LspDiagnostic>();
         foreach (var f in findings)
         {
             var abs = Path.GetFullPath(Path.Combine(projectRoot, f.FilePath));
-            if (!string.Equals(abs, absoluteFilePath, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(abs, normalizedFilePath, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             // Opengrep line/col are 1-based; LSP positions are 0-based.

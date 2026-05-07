@@ -742,9 +742,12 @@ public static partial class LspServer
                 // previously cached result rather than publishing a misleading empty list.
                 if (diagnostics is null) return;
                 // Cache before publishing so a concurrent pull request sees the result immediately.
-                // Hold the admission lock so the size cap is enforced atomically.
+                // Hold the admission lock so the size cap is enforced atomically, and double-check
+                // the CT inside the lock to avoid repopulating the cache after a concurrent didClose
+                // already cleared it (and published empty diagnostics to the client).
                 lock (_sourceFileDiagnosticsAdmissionLock)
                 {
+                    if (ct.IsCancellationRequested) return;
                     if (!_sourceFileDiagnostics.ContainsKey(uri) && _sourceFileDiagnostics.Count >= MaxCachedDocuments)
                     {
                         var evict = _sourceFileDiagnostics.Keys.FirstOrDefault();

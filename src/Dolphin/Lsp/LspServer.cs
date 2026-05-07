@@ -789,7 +789,7 @@ public static partial class LspServer
                 // only needs to check _sourceFileDiagnostics — if a file was evicted it was
                 // already cleared here, so no separate "published URIs" set is needed.
                 if (evicted is not null)
-                    _ = PublishDiagnosticsAsync(stdout, evicted, []);
+                    _ = TryClearEvictedDiagnosticsAsync(stdout, evicted);
             }
             catch (OperationCanceledException) { /* superseded by a newer open/save */ }
             catch (Exception ex) { await Console.Error.WriteLineAsync($"[dolphin-lsp] scan error for {uri}: {ex.Message}"); }
@@ -798,6 +798,14 @@ public static partial class LspServer
                 _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
             }
         }
+    }
+
+    // Fire-and-forget wrapper for clearing evicted diagnostics; swallows IO/pipe exceptions
+    // that occur when the client disconnects before the notification can be delivered.
+    private static async Task TryClearEvictedDiagnosticsAsync(Stream stdout, string uri)
+    {
+        try { await PublishDiagnosticsAsync(stdout, uri, []); }
+        catch (Exception e) when (e is IOException or ObjectDisposedException) { _ = e; /* disconnected */ }
     }
 
     // Returns null when the scan could not run (scanner missing or threw an exception),

@@ -756,13 +756,22 @@ public partial class LspServerInProcessTests
     {
         // A source file with no .dolphin/rules.yaml ancestor must not trigger a scan
         // or publish any diagnostics — the server must stay silent.
-        var responses = await RunServerAsync(
-            """{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///src/app.ts","languageId":"typescript","version":1,"text":"console.log('hi')"}}}""",
-            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+        // Use a unique temp directory (without .dolphin/) to guarantee no ancestor rules file exists.
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-noproot-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            var srcFile = Path.Combine(tmpDir, "app.ts");
+            var uri = new Uri(srcFile).AbsoluteUri;
+            var responses = await RunServerAsync(
+                $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\",\"languageId\":\"typescript\",\"version\":1,\"text\":\"console.log('hi')\"}}}}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
-        Assert.IsNull(publish, "No publishDiagnostics expected for a source file with no .dolphin/rules.yaml ancestor");
-        Assert.AreEqual(1, responses.Count, "Only shutdown response expected");
+            var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+            Assert.IsNull(publish, "No publishDiagnostics expected for a source file with no .dolphin/rules.yaml ancestor");
+            Assert.AreEqual(1, responses.Count, "Only shutdown response expected");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
     }
 
     [TestMethod]
@@ -783,11 +792,20 @@ public partial class LspServerInProcessTests
     public async Task HandleMessage_DidSave_SourceFile_NoProjectRoot_NoScan()
     {
         // didSave on a source file with no .dolphin ancestor is a no-op.
-        var responses = await RunServerAsync(
-            """{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":"file:///src/app.ts"}}}""",
-            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+        // Use a unique temp directory (without .dolphin/) to guarantee no ancestor rules file exists.
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-noproot-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            var srcFile = Path.Combine(tmpDir, "app.ts");
+            var uri = new Uri(srcFile).AbsoluteUri;
+            var responses = await RunServerAsync(
+                $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didSave\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-        Assert.AreEqual(1, responses.Count, "Only shutdown response expected");
+            Assert.AreEqual(1, responses.Count, "Only shutdown response expected");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
     }
 
     [TestMethod]

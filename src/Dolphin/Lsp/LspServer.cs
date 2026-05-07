@@ -783,10 +783,14 @@ public static partial class LspServer
                     }
                     return;
                 }
-                // Cache before publishing so a concurrent pull request sees the result immediately.
-                // Hold the admission lock so the size cap is enforced atomically, and double-check
-                // the CT inside the lock to avoid repopulating the cache after a concurrent didClose
-                // already cleared it (and published empty diagnostics to the client).
+                // Publish first so the cache is only written when diagnostics have actually
+                // been delivered. Writing the cache before publish could leave stale entries
+                // if the token is cancelled in the window between the lock release and the
+                // first await in PublishDiagnosticsAsync.
+                await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
+                // After a successful publish, write to cache under the admission lock.
+                // Re-check CT here: if a didClose or newer scan cancelled us after publish,
+                // skip the cache write so the entry isn't visible to pull requests.
                 string? evicted = null;
                 lock (_sourceFileDiagnosticsAdmissionLock)
                 {
@@ -798,7 +802,6 @@ public static partial class LspServer
                     }
                     _sourceFileDiagnostics[uri] = diagnostics;
                 }
-                await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
                 // Eagerly clear any file that was evicted from the cache so its diagnostics
                 // don't remain visible after it leaves our tracking. This ensures didClose
                 // only needs to check _sourceFileDiagnostics — if a file was evicted it was

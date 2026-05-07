@@ -139,6 +139,10 @@ public static partial class LspServer
     internal static void SetSourceFileDiagnosticsForTest(string uri, LspDiagnostic[] diagnostics) =>
         _sourceFileDiagnostics[uri] = diagnostics;
 
+    // Test helper: overrides the cached scanner binary path. Pass null to simulate
+    // an unresolved binary; pass an invalid path to exercise the failure/clear path.
+    internal static void SetScannerBinaryForTest(string? path) => _scannerBinary = path;
+
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ContentLengthRegex();
 
@@ -606,6 +610,10 @@ public static partial class LspServer
         ".cpp", ".c", ".h", ".swift", ".kt", ".sh"
     };
 
+    // Exposed for the extension-consistency test that verifies _sourceExtensions matches
+    // the extensionToLanguage map in .claude-plugin/plugin.json.
+    internal static IReadOnlyCollection<string> SourceExtensionsForTest => _sourceExtensions;
+
     private static bool IsSourceFile(string uri) =>
         !IsDolphinRulesFile(uri) &&
         TryGetLocalPath(uri) is { } localPath &&
@@ -788,13 +796,14 @@ public static partial class LspServer
                 // if the token is cancelled in the window between the lock release and the
                 // first await in PublishDiagnosticsAsync.
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
-                // After a successful publish, write to cache under the admission lock.
-                // Re-check CT here: if a didClose or newer scan cancelled us after publish,
-                // skip the cache write so the entry isn't visible to pull requests.
+                // After a successful publish, always write to cache under the admission lock,
+                // even if the CT was cancelled between publish and here. Skipping the write
+                // would leave the cache entry absent after diagnostics were shown, so a
+                // subsequent didClose would not see the entry and would skip the empty-clear
+                // publish, leaving stale diagnostics visible in the editor.
                 string? evicted = null;
                 lock (_sourceFileDiagnosticsAdmissionLock)
                 {
-                    if (ct.IsCancellationRequested) return;
                     if (!_sourceFileDiagnostics.ContainsKey(uri) && _sourceFileDiagnostics.Count >= MaxCachedDocuments)
                     {
                         evicted = _sourceFileDiagnostics.Keys.FirstOrDefault();
@@ -847,6 +856,15 @@ public static partial class LspServer
         RunResult result;
         try { result = await Runner.RunAsync(scannerBinary, projectRoot, ruleId: null, targetPath: filePath, cancellationToken: ct); }
         catch (OperationCanceledException) { throw; }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // Binary can no longer be executed (moved or deleted): clear the cached path
+            // and record a failure so the next scan retries resolution via EnsureInstalledAsync.
+            _scannerBinary = null;
+            Interlocked.Exchange(ref _scannerBinaryFailedAt, Stopwatch.GetTimestamp());
+            await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner binary unavailable for {uri}");
+            return null;
+        }
         catch (Exception ex)
         {
             await Console.Error.WriteLineAsync($"[dolphin-lsp] scanner failed for {uri}: {ex.Message}");

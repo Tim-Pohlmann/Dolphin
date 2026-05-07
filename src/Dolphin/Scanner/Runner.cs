@@ -54,7 +54,7 @@ public static class Runner
         }
         catch (OperationCanceledException)
         {
-            try { proc.Kill(entireProcessTree: true); } catch { }
+            TryKillProcess(proc);
             throw;
         }
         var stdout = stdoutTask.Result;
@@ -83,6 +83,15 @@ public static class Runner
                 .Where(f => f.RuleId == ruleId || f.RuleId.EndsWith("." + ruleId))
                 .ToList();
         return new RunResult(findings, proc.ExitCode == 1, scannerWarning);
+    }
+
+    private static void TryKillProcess(Process proc)
+    {
+        try { proc.Kill(entireProcessTree: true); }
+        catch (Exception)
+        {
+            // Process may have already exited; safe to ignore.
+        }
     }
 
     /// <summary>

@@ -1126,4 +1126,132 @@ public partial class LspServerInProcessTests
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase)]
     private static partial Regex ContentLengthRegex();
+
+    // ── Scanner binary failure paths ──────────────────────────────────────────
+
+    [TestMethod]
+    public async Task HandleMessage_DidOpen_SourceFile_InvalidScannerBinary_WritesSentinel()
+    {
+        // When the scanner binary cannot be executed (Win32Exception), RunScanAsync returns
+        // null and ScanAndPublishAsync writes an empty sentinel to the cache. A subsequent
+        // pull should return an empty full report (not ServerCancelled) because the sentinel
+        // is present and prevents a retrigger loop.
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-lsptest-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+        var srcFile = Path.Combine(tmpDir, "app.ts");
+        File.WriteAllText(srcFile, "const x = 1;");
+        var uri = new Uri(srcFile).AbsoluteUri;
+        try
+        {
+            // Point the scanner at a nonexistent path to force a process-start failure.
+            LspServer.SetScannerBinaryForTest("/nonexistent/scanner-binary-xyz");
+
+            var responses = await RunServerAsync(
+                $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\",\"languageId\":\"typescript\",\"version\":1,\"text\":\"\"}}}}}}",
+                $"{{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"textDocument/diagnostic\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+                """{"jsonrpc":"2.0","id":99,"method":"shutdown"}""");
+
+            var pull = responses.FirstOrDefault(r => r["id"]?.GetValue<int>() == 5);
+            Assert.IsNotNull(pull, "Pull diagnostic must produce a response");
+            // Sentinel was written → pull returns empty full report (not ServerCancelled).
+            Assert.IsNull(pull["error"], "Must not be ServerCancelled when sentinel is present");
+            Assert.AreEqual("full", pull["result"]?["kind"]?.GetValue<string>());
+            Assert.AreEqual(0, pull["result"]?["items"]?.AsArray().Count);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_DidClose_SourceFile_AfterScanPublished_ClearsIfCached()
+    {
+        // A source file whose scan completed and published diagnostics must have those
+        // diagnostics cleared by didClose, even if the CTS was cancelled between publish
+        // and cache write (race window). We verify the normal case (scan + cache write
+        // both complete before close) by seeding the cache directly.
+        const string uri = "file:///project/src/app.ts";
+        var pos = new LspPosition(0, 0);
+        var fakeDiag = new LspDiagnostic(new LspRange(pos, pos), 1, "dolphin", "msg [r]", false);
+        LspServer.SetSourceFileDiagnosticsForTest(uri, [fakeDiag]);
+
+        var responses = await RunServerAsync(
+            $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+        Assert.IsNotNull(publish, "didClose must publish an empty-clear for cached source-file diagnostics");
+        Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
+    }
+
+    // ── ConvertFindingsToDiagnostics — unknown severity ───────────────────────
+
+    [TestMethod]
+    public void ConvertFindingsToDiagnostics_UnknownSeverity_FallsBackToWarning()
+    {
+        var projectRoot = Path.GetTempPath();
+        var filePath = Path.GetFullPath(Path.Combine(projectRoot, "src", "app.ts"));
+        var relFile = Path.GetRelativePath(projectRoot, filePath);
+        // Cast an out-of-range int to Severity to hit the default (warning) branch.
+        var findings = new List<Finding>
+        {
+            new("rule-x", (Severity)99, relFile, 1, 1, "msg", ""),
+        };
+        var result = LspServer.ConvertFindingsToDiagnostics(findings, filePath, projectRoot);
+
+        Assert.AreEqual(1, result.Length);
+        Assert.AreEqual(2, result[0].Severity, "Unknown severity must fall back to LSP warning (2)");
+    }
+
+    // ── Extension list consistency ────────────────────────────────────────────
+
+    [TestMethod]
+    public void SourceExtensions_MatchesPluginJsonExtensionToLanguage()
+    {
+        // The extensions in .claude-plugin/plugin.json (extensionToLanguage) and the
+        // _sourceExtensions set in LspServer must stay in sync: if they drift the plugin
+        // starts the LSP for files the server won't scan (or vice versa).
+        // Walk up from the test binary until we find .claude-plugin/plugin.json.
+        string? pluginJsonPath = null;
+        var dir = AppContext.BaseDirectory;
+        while (dir != null)
+        {
+            var candidate = Path.Combine(dir, ".claude-plugin", "plugin.json");
+            if (File.Exists(candidate)) { pluginJsonPath = candidate; break; }
+            dir = Path.GetDirectoryName(dir);
+        }
+
+        if (pluginJsonPath == null)
+        {
+            Assert.Inconclusive("plugin.json not found in any ancestor directory; skipping extension consistency check.");
+            return;
+        }
+
+        var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pluginJsonPath));
+        var extToLang = json.RootElement
+            .GetProperty("lspServers")
+            .GetProperty("opengrep-rules")
+            .GetProperty("extensionToLanguage");
+
+        var pluginExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var prop in extToLang.EnumerateObject())
+            pluginExtensions.Add(prop.Name);
+
+        // Dolphin rules files (.yaml/.yml) appear in plugin.json for LSP activation but
+        // are intentionally NOT in _sourceExtensions (they use the rules-validation path).
+        pluginExtensions.Remove(".yaml");
+        pluginExtensions.Remove(".yml");
+
+        var serverExtensions = LspServer.SourceExtensionsForTest;
+
+        var onlyInPlugin = pluginExtensions.Except(serverExtensions, StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
+        var onlyInServer = serverExtensions.Except(pluginExtensions, StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
+
+        Assert.AreEqual(0, onlyInPlugin.Count,
+            $"Extensions in plugin.json but missing from LspServer._sourceExtensions: {string.Join(", ", onlyInPlugin)}");
+        Assert.AreEqual(0, onlyInServer.Count,
+            $"Extensions in LspServer._sourceExtensions but missing from plugin.json: {string.Join(", ", onlyInServer)}");
+    }
 }

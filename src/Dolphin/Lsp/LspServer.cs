@@ -446,11 +446,10 @@ public static partial class LspServer
     {
         var td = p.GetProperty(TextDocumentProperty);
         var uri = td.GetProperty("uri").GetString() ?? "";
-        var text = td.GetProperty("text").GetString() ?? "";
-        // Only cache text for files we can validate; otherwise a client
-        // opening many large unrelated documents would grow memory without bound.
         if (IsDolphinRulesFile(uri))
         {
+            // Only materialise text for rules files; source files are scanned from disk.
+            var text = td.GetProperty("text").GetString() ?? "";
             TryCacheDocumentText(uri, text);
             _ = ValidateAndPublishAsync(stdout, uri, text, CancelPrevious(_validationCts, uri));
         }

@@ -765,9 +765,24 @@ public static partial class LspServer
             try
             {
                 var diagnostics = await RunScanAsync(uri, ct);
-                // null means the scanner could not run (binary missing or threw); keep any
-                // previously cached result rather than publishing a misleading empty list.
-                if (diagnostics is null) return;
+                if (diagnostics is null)
+                {
+                    // Scan could not run (scanner binary missing or threw). Preserve any
+                    // previously cached result so the editor keeps showing real findings.
+                    // If nothing is cached yet, store an empty sentinel (under the admission
+                    // lock, no eviction) so a pending pull request returns a stable empty
+                    // full report instead of retriggering indefinitely.
+                    lock (_sourceFileDiagnosticsAdmissionLock)
+                    {
+                        if (!ct.IsCancellationRequested
+                            && !_sourceFileDiagnostics.ContainsKey(uri)
+                            && _sourceFileDiagnostics.Count < MaxCachedDocuments)
+                        {
+                            _sourceFileDiagnostics[uri] = [];
+                        }
+                    }
+                    return;
+                }
                 // Cache before publishing so a concurrent pull request sees the result immediately.
                 // Hold the admission lock so the size cap is enforced atomically, and double-check
                 // the CT inside the lock to avoid repopulating the cache after a concurrent didClose

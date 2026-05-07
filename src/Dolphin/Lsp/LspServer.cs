@@ -73,12 +73,6 @@ public static partial class LspServer
     // guard and exceed MaxCachedDocuments.
     private static readonly object _sourceFileDiagnosticsAdmissionLock = new();
 
-    // Tracks URIs for which source diagnostics have actually been published to the client.
-    // Kept separate from _sourceFileDiagnostics because cache eviction can remove an entry
-    // while the client still shows the published diagnostics; didClose must clear them
-    // regardless of whether the cached result is still present.
-    private static readonly ConcurrentDictionary<string, bool> _publishedSourceDiagnosticsUris = new();
-
     // Cached scanner binary path. Only set on successful resolution so that a scanner
     // installed while the LSP is running is discovered on the next scan attempt rather
     // than being permanently shadowed by a memoised null from an earlier failed lookup.
@@ -140,13 +134,10 @@ public static partial class LspServer
     private const string MessageProperty     = "message";
     private const string TextDocumentProperty = "textDocument";
 
-    // Test helper: seeds _sourceFileDiagnostics and marks the URI as published so tests
-    // can assert close/pull behaviour without running the actual scanner.
-    internal static void SetSourceFileDiagnosticsForTest(string uri, LspDiagnostic[] diagnostics)
-    {
+    // Test helper: seeds _sourceFileDiagnostics so tests can assert close/pull behaviour
+    // without running the actual scanner.
+    internal static void SetSourceFileDiagnosticsForTest(string uri, LspDiagnostic[] diagnostics) =>
         _sourceFileDiagnostics[uri] = diagnostics;
-        _publishedSourceDiagnosticsUris[uri] = true;
-    }
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ContentLengthRegex();
@@ -188,7 +179,6 @@ public static partial class LspServer
         _documentText.Clear();
         _uncacheableDocs.Clear();
         _sourceFileDiagnostics.Clear();
-        _publishedSourceDiagnosticsUris.Clear();
         // Per LSP spec, exit without a prior shutdown is an error (code 1).
         return shutdownReceived ? 0 : 1;
     }
@@ -529,13 +519,11 @@ public static partial class LspServer
         var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
         _documentText.TryRemove(uri, out _);
         _uncacheableDocs.TryRemove(uri, out _);
-        _sourceFileDiagnostics.TryRemove(uri, out _);
-        // Track via _publishedSourceDiagnosticsUris rather than _sourceFileDiagnostics:
-        // the cache entry may have been evicted (to make room for other files) while the
-        // client still shows the published diagnostics, so we must clear regardless.
-        var hadPublished = _publishedSourceDiagnosticsUris.TryRemove(uri, out _);
+        // If a cache entry exists, we published diagnostics for this URI. If it was evicted
+        // earlier, ScanAndPublishAsync already sent an empty clear at eviction time.
+        var hadSourceDiagnostics = _sourceFileDiagnostics.TryRemove(uri, out _);
         CancelAndRemove(uri);
-        if (IsDolphinRulesFile(uri) || hadPublished)
+        if (IsDolphinRulesFile(uri) || hadSourceDiagnostics)
             await PublishDiagnosticsAsync(stdout, uri, []);
     }
 
@@ -784,20 +772,24 @@ public static partial class LspServer
                 // Hold the admission lock so the size cap is enforced atomically, and double-check
                 // the CT inside the lock to avoid repopulating the cache after a concurrent didClose
                 // already cleared it (and published empty diagnostics to the client).
+                string? evicted = null;
                 lock (_sourceFileDiagnosticsAdmissionLock)
                 {
                     if (ct.IsCancellationRequested) return;
                     if (!_sourceFileDiagnostics.ContainsKey(uri) && _sourceFileDiagnostics.Count >= MaxCachedDocuments)
                     {
-                        var evict = _sourceFileDiagnostics.Keys.FirstOrDefault();
-                        if (evict is not null) _sourceFileDiagnostics.TryRemove(evict, out _);
+                        evicted = _sourceFileDiagnostics.Keys.FirstOrDefault();
+                        if (evicted is not null) _sourceFileDiagnostics.TryRemove(evicted, out _);
                     }
                     _sourceFileDiagnostics[uri] = diagnostics;
                 }
                 await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
-                // Track this URI as having had diagnostics published so didClose can clear
-                // them even if the cache entry was later evicted (to make room for others).
-                _publishedSourceDiagnosticsUris[uri] = true;
+                // Eagerly clear any file that was evicted from the cache so its diagnostics
+                // don't remain visible after it leaves our tracking. This ensures didClose
+                // only needs to check _sourceFileDiagnostics — if a file was evicted it was
+                // already cleared here, so no separate "published URIs" set is needed.
+                if (evicted is not null)
+                    _ = PublishDiagnosticsAsync(stdout, evicted, []);
             }
             catch (OperationCanceledException) { /* superseded by a newer open/save */ }
             catch (Exception ex) { await Console.Error.WriteLineAsync($"[dolphin-lsp] scan error for {uri}: {ex.Message}"); }
@@ -843,10 +835,11 @@ public static partial class LspServer
         List<Finding> findings, string absoluteFilePath, string projectRoot)
     {
         var normalizedFilePath = Path.GetFullPath(absoluteFilePath);
-        // Case-sensitive on Linux (case-sensitive FS); case-insensitive on Windows and macOS.
-        var pathComparison = OperatingSystem.IsLinux()
-            ? StringComparison.Ordinal
-            : StringComparison.OrdinalIgnoreCase;
+        // Only Windows guarantees a case-insensitive filesystem; Linux and macOS default to
+        // case-sensitive, so use OrdinalIgnoreCase only on Windows.
+        var pathComparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
         var result = new List<LspDiagnostic>();
         foreach (var f in findings)
         {

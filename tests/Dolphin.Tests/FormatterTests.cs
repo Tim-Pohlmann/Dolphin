@@ -82,6 +82,32 @@ public class FormatterTests
         StringAssert.Contains(output, "line1%0Aline2");
     }
 
+    // ── Property value escaping ────────────────────────────────────────────────
+
+    [TestMethod]
+    public void Print_Github_CommaInFilePath_IsEscaped()
+    {
+        var findings = new List<Finding> { new("rule", Severity.Error, "src/a,b.cs", 1, 1, "msg", "") };
+        var output = CaptureGitHub(findings);
+        StringAssert.Contains(output, "file=src/a%2Cb.cs");
+    }
+
+    [TestMethod]
+    public void Print_Github_ColonInFilePath_IsEscaped()
+    {
+        var findings = new List<Finding> { new("rule", Severity.Error, "C:/src/foo.cs", 1, 1, "msg", "") };
+        var output = CaptureGitHub(findings);
+        StringAssert.Contains(output, "file=C%3A/src/foo.cs");
+    }
+
+    [TestMethod]
+    public void Print_Github_CommaInRuleId_IsEscaped()
+    {
+        var findings = new List<Finding> { new("rule,id", Severity.Warning, "f.cs", 1, 1, "msg", "") };
+        var output = CaptureGitHub(findings);
+        StringAssert.Contains(output, "title=rule%2Cid");
+    }
+
     // ── Empty / multiple ───────────────────────────────────────────────────────
 
     [TestMethod]

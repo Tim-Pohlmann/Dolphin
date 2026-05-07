@@ -24,6 +24,7 @@ public static class CheckCommand
             description: "Output format: text, json, or github",
             getDefaultValue: () => "text"
         );
+        formatOption.FromAmong("text", "json", "github");
 
         var cmd = new Command("check", "Run static analysis rules against the codebase")
         {

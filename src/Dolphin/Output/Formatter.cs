@@ -130,12 +130,18 @@ public static class Formatter
                 Severity.Warning => "warning",
                 _                => "notice"
             };
+            var file    = EscapeProperty(f.FilePath);
+            var title   = EscapeProperty(f.RuleId);
             var message = f.Message
                 .Replace("%",  "%25")
                 .Replace("\r", "%0D")
                 .Replace("\n", "%0A");
             Console.WriteLine(
-                $"::{level} file={f.FilePath},line={f.Line},col={f.Column},title={f.RuleId}::{message}");
+                $"::{level} file={file},line={f.Line},col={f.Column},title={title}::{message}");
         }
     }
+
+    private static string EscapeProperty(string value) =>
+        value.Replace("%", "%25").Replace("\r", "%0D").Replace("\n", "%0A")
+             .Replace(":", "%3A").Replace(",", "%2C");
 }

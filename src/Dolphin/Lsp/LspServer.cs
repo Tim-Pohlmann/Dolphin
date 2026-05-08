@@ -902,8 +902,9 @@ public static partial class LspServer
         List<Finding> findings, string absoluteFilePath, string projectRoot)
     {
         var normalizedFilePath = Path.GetFullPath(absoluteFilePath);
-        // Only Windows guarantees a case-insensitive filesystem; Linux and macOS default to
-        // case-sensitive, so use OrdinalIgnoreCase only on Windows.
+        // Only Windows guarantees a case-insensitive filesystem; macOS volumes can be either
+        // (case-insensitive by default, but case-sensitive volumes exist), so treat non-Windows
+        // as case-sensitive to be safe.
         var pathComparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
@@ -979,7 +980,9 @@ public static partial class LspServer
                     await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, []), ct);
                     return;
                 }
-                _ = ScanAndPublishAsync(stdout, uri, CancelPrevious(_validationCts, uri));
+                // Use a standalone CTS so this pull-triggered scan does not cancel any
+                // in-flight push scan started by didOpen/didSave on _validationCts.
+                _ = ScanAndPublishAsync(stdout, uri, new CancellationTokenSource());
                 await SendServerCancelledAsync(stdout, id, CancellationToken.None);
             }
             catch (OperationCanceledException)

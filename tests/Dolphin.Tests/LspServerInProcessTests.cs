@@ -1249,7 +1249,7 @@ public partial class LspServerInProcessTests
             return;
         }
 
-        var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pluginJsonPath));
+        using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(pluginJsonPath));
         var extToLang = json.RootElement
             .GetProperty("lspServers")
             .GetProperty("opengrep-rules")

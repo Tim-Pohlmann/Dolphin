@@ -55,6 +55,11 @@ public static class Runner
         catch (OperationCanceledException)
         {
             TryKillProcess(proc);
+            // Best-effort: wait up to 5 s for the killed process to exit so its handles
+            // are released before we return. Swallow all exceptions (already cancelled or
+            // the process may have exited before Kill ran).
+            using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await proc.WaitForExitAsync(exitCts.Token); } catch (Exception) { }
             throw;
         }
         var stdout = stdoutTask.Result;

@@ -467,7 +467,14 @@ public static partial class LspServer
             w.WriteStartObject();
             w.WritePropertyName("capabilities");
             w.WriteStartObject();
-            w.WriteNumber("textDocumentSync", 1); // full sync
+            // Use options object instead of a bare kind so clients honour
+            // the save notification and send textDocument/didSave on file save.
+            w.WritePropertyName("textDocumentSync");
+            w.WriteStartObject();
+            w.WriteNumber("change", 1); // full sync
+            w.WriteBoolean("openClose", true);
+            w.WriteBoolean("save", true);
+            w.WriteEndObject();
             w.WritePropertyName("diagnosticProvider");
             w.WriteStartObject();
             w.WriteBoolean("interFileDependencies", false);

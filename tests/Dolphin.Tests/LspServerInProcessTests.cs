@@ -1181,6 +1181,7 @@ public partial class LspServerInProcessTests
         }
         finally
         {
+            LspServer.SetScannerBinaryForTest(null); // restore to unresolved so later tests aren't affected
             Directory.Delete(tmpDir, recursive: true);
         }
     }

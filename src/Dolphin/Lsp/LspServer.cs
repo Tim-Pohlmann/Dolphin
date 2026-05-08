@@ -627,7 +627,7 @@ public static partial class LspServer
 
     // Exposed for the extension-consistency test that verifies _sourceExtensions matches
     // the extensionToLanguage map in .claude-plugin/plugin.json.
-    internal static IReadOnlyCollection<string> SourceExtensionsForTest => _sourceExtensions;
+    internal static IReadOnlyCollection<string> SourceExtensionsForTest => [.. _sourceExtensions];
 
     private static bool IsSourceFile(string uri) =>
         !IsDolphinRulesFile(uri) &&

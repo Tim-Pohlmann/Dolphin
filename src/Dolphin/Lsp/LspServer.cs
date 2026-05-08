@@ -31,6 +31,12 @@ public static partial class LspServer
     // A newer pull for the same URI supersedes the older one.
     private static readonly ConcurrentDictionary<string, CancellationTokenSource> _pullValidationCts = new();
 
+    // Per-URI cancellation for background scans triggered by pull requests when no cached
+    // result exists. Kept separate from _validationCts so pull-triggered scans don't cancel
+    // in-flight push scans from didOpen/didSave. Cancelled by didClose via CancelAndRemove
+    // so a scan cannot publish diagnostics after the document is closed.
+    private static readonly ConcurrentDictionary<string, CancellationTokenSource> _pullScanCts = new();
+
     // Stores document text for pull diagnostics (textDocument/diagnostic).
     private static readonly ConcurrentDictionary<string, string> _documentText = new();
 
@@ -267,6 +273,7 @@ public static partial class LspServer
         var tasks = new List<Task>();
         DrainOne(_validationCts, tasks);
         DrainOne(_pullValidationCts, tasks);
+        DrainOne(_pullScanCts, tasks);
         return tasks.Count == 0 ? Task.CompletedTask : Task.WhenAll(tasks);
 
         static void DrainOne(ConcurrentDictionary<string, CancellationTokenSource> map, List<Task> tasks)
@@ -746,6 +753,11 @@ public static partial class LspServer
             try { pull.Cancel(); }
             catch (ObjectDisposedException) { /* owning task already disposed it */ }
         }
+        if (_pullScanCts.TryRemove(uri, out var pullScan))
+        {
+            try { pullScan.Cancel(); }
+            catch (ObjectDisposedException) { /* owning task already disposed it */ }
+        }
         // Disposal is owned by each associated validation task.
     }
 
@@ -845,7 +857,10 @@ public static partial class LspServer
             catch (Exception ex) { await Console.Error.WriteLineAsync($"[dolphin-lsp] scan error for {uri}: {ex.Message}"); }
             finally
             {
+                // Remove from whichever cancellation map this scan was registered in.
+                // Exactly one TryRemove will succeed; the other is a no-op.
                 _validationCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
+                _pullScanCts.TryRemove(new KeyValuePair<string, CancellationTokenSource>(uri, cts));
             }
         }
     }
@@ -980,9 +995,10 @@ public static partial class LspServer
                     await MaybeSendAsync(stdout, id, w => WritePullFullReport(w, id, []), ct);
                     return;
                 }
-                // Use a standalone CTS so this pull-triggered scan does not cancel any
-                // in-flight push scan started by didOpen/didSave on _validationCts.
-                _ = ScanAndPublishAsync(stdout, uri, new CancellationTokenSource());
+                // Use _pullScanCts (not _validationCts) so this pull-triggered scan does
+                // not cancel an in-flight push scan from didOpen/didSave, while still being
+                // cancelled by didClose (via CancelAndRemove) to prevent stale publishes.
+                _ = ScanAndPublishAsync(stdout, uri, CancelPrevious(_pullScanCts, uri));
                 await SendServerCancelledAsync(stdout, id, CancellationToken.None);
             }
             catch (OperationCanceledException)

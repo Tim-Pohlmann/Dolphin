@@ -34,7 +34,9 @@ public static partial class LspServer
     // Per-URI cancellation for background scans triggered by pull requests when no cached
     // result exists. Kept separate from _validationCts so pull-triggered scans don't cancel
     // in-flight push scans from didOpen/didSave. Cancelled by didClose via CancelAndRemove
-    // so a scan cannot publish diagnostics after the document is closed.
+    // to reduce the window in which a scan that completed just after cancellation can still
+    // publish (SendAsync uses CancellationToken.None inside the stdout lock, so cancellation
+    // is best-effort rather than a hard guarantee against late publishes).
     private static readonly ConcurrentDictionary<string, CancellationTokenSource> _pullScanCts = new();
 
     // Stores document text for pull diagnostics (textDocument/diagnostic).
@@ -544,13 +546,18 @@ public static partial class LspServer
         _uncacheableDocs.TryRemove(uri, out _);
         _sourceFileDiagnostics.TryRemove(uri, out _);
         CancelAndRemove(uri);
-        // Always publish an empty clear for dolphin rules files and source files.
-        // For source files we can't reliably know whether diagnostics were published
-        // (ScanAndPublishAsync publishes before writing the cache, so a close arriving
-        // in that narrow window sees no cache entry). An extra empty publish for a URI
-        // the client has no diagnostics for is a safe no-op per the LSP spec.
-        if (IsDolphinRulesFile(uri) || IsSourceFile(uri))
+        // Always clear rules-file diagnostics on close. For source files, only clear
+        // when a project root exists — a scan could only have published diagnostics if
+        // .dolphin/rules.yaml was present. Skipping the clear for unrooted files avoids
+        // spurious publishDiagnostics traffic for files that were never scanned.
+        if (IsDolphinRulesFile(uri))
             await PublishDiagnosticsAsync(stdout, uri, []);
+        else if (IsSourceFile(uri))
+        {
+            var path = TryGetLocalPath(uri);
+            if (path != null && FindProjectRoot(path) != null)
+                await PublishDiagnosticsAsync(stdout, uri, []);
+        }
     }
 
     private static async Task HandleDiagnosticPullAsync(Stream stdout, JsonElement p, JsonElement id)
@@ -847,9 +854,9 @@ public static partial class LspServer
                     _sourceFileDiagnostics[uri] = diagnostics;
                 }
                 // Eagerly clear any file that was evicted from the cache so its diagnostics
-                // don't remain visible after it leaves our tracking. This ensures didClose
-                // only needs to check _sourceFileDiagnostics — if a file was evicted it was
-                // already cleared here, so no separate "published URIs" set is needed.
+                // don't remain visible after it leaves our tracking. Combined with
+                // HandleDidCloseAsync clearing source files that have a project root, this
+                // means no separate "published URIs" tracking set is needed.
                 if (evicted is not null)
                     _ = TryClearEvictedDiagnosticsAsync(stdout, evicted);
             }

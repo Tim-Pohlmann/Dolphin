@@ -435,21 +435,16 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public async Task HandleMessage_DidClose_SourceFile_PublishesEmptyDiagnostics()
+    public async Task HandleMessage_DidClose_SourceFile_NoProjectRoot_NoPublishDiagnostics()
     {
-        // Source files always get an empty-diagnostics clear on close so that any
-        // diagnostics published between a scan completing and the cache write aren't
-        // left visible in the editor (the race window makes cache-based detection
-        // unreliable). An empty publish for a URI the client has no diagnostics for
-        // is a safe no-op per the LSP spec.
+        // Source files without a .dolphin/rules.yaml ancestor were never scanned,
+        // so didClose must NOT publish any diagnostics for them.
         var responses = await RunServerAsync(
             """{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///src/app.ts"}}}""",
             """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
         var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
-        Assert.IsNotNull(publish, "didClose for a source file must publish an empty-diagnostics clear");
-        Assert.AreEqual("file:///src/app.ts", publish["params"]?["uri"]?.GetValue<string>());
-        Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
+        Assert.IsNull(publish, "didClose for a source file with no project root must not publish diagnostics");
     }
 
     [TestMethod]
@@ -832,22 +827,33 @@ public partial class LspServerInProcessTests
     public async Task HandleMessage_DidClose_SourceFile_WithCachedDiagnostics_PublishesEmpty()
     {
         // didClose on a source file that has a cached scan result must clear the diagnostics.
-        // We inject a cached entry directly to simulate a prior scan.
-        const string uri = "file:///project/src/app.ts";
+        // We inject a cached entry directly to simulate a prior scan. A real project root
+        // must exist so HandleDidCloseAsync passes the project-root check and publishes.
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-lsptest-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+        var srcFile = Path.Combine(tmpDir, "app.ts");
+        File.WriteAllText(srcFile, "");
+        var uri = new Uri(srcFile).AbsoluteUri;
+        try
+        {
+            var pos = new LspPosition(0, 0);
+            var fakeDiag = new LspDiagnostic(new LspRange(pos, pos), 2, "dolphin", "test finding [rule]", false);
+            LspServer.SetSourceFileDiagnosticsForTest(uri, [fakeDiag]);
 
-        // Seed the cache as if a scan had previously run and found diagnostics.
-        var pos = new LspPosition(0, 0);
-        var fakeDiag = new LspDiagnostic(new LspRange(pos, pos), 2, "dolphin", "test finding [rule]", false);
-        LspServer.SetSourceFileDiagnosticsForTest(uri, [fakeDiag]);
+            var responses = await RunServerAsync(
+                $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-        var responses = await RunServerAsync(
-            $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
-            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
-
-        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
-        Assert.IsNotNull(publish, "didClose must publish empty diagnostics to clear previously-published findings");
-        Assert.AreEqual(uri, publish["params"]?["uri"]?.GetValue<string>());
-        Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
+            var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+            Assert.IsNotNull(publish, "didClose must publish empty diagnostics to clear previously-published findings");
+            Assert.AreEqual(uri, publish["params"]?["uri"]?.GetValue<string>());
+            Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
     }
 
     [TestMethod]
@@ -1190,21 +1196,32 @@ public partial class LspServerInProcessTests
     public async Task HandleMessage_DidClose_SourceFile_AfterScanPublished_ClearsIfCached()
     {
         // A source file whose scan completed and published diagnostics must have those
-        // diagnostics cleared by didClose, even if the CTS was cancelled between publish
-        // and cache write (race window). We verify the normal case (scan + cache write
-        // both complete before close) by seeding the cache directly.
-        const string uri = "file:///project/src/app.ts";
-        var pos = new LspPosition(0, 0);
-        var fakeDiag = new LspDiagnostic(new LspRange(pos, pos), 1, "dolphin", "msg [r]", false);
-        LspServer.SetSourceFileDiagnosticsForTest(uri, [fakeDiag]);
+        // diagnostics cleared by didClose. A real project root must exist so the
+        // project-root check in HandleDidCloseAsync passes and the clear is published.
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-lsptest-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+        var srcFile = Path.Combine(tmpDir, "app.ts");
+        File.WriteAllText(srcFile, "");
+        var uri = new Uri(srcFile).AbsoluteUri;
+        try
+        {
+            var pos = new LspPosition(0, 0);
+            var fakeDiag = new LspDiagnostic(new LspRange(pos, pos), 1, "dolphin", "msg [r]", false);
+            LspServer.SetSourceFileDiagnosticsForTest(uri, [fakeDiag]);
 
-        var responses = await RunServerAsync(
-            $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
-            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+            var responses = await RunServerAsync(
+                $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
-        Assert.IsNotNull(publish, "didClose must publish an empty-clear for cached source-file diagnostics");
-        Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
+            var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+            Assert.IsNotNull(publish, "didClose must publish an empty-clear for cached source-file diagnostics");
+            Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
     }
 
     // ── ConvertFindingsToDiagnostics — unknown severity ───────────────────────

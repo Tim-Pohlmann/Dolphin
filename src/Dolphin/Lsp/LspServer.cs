@@ -141,7 +141,12 @@ public static partial class LspServer
 
     // Test helper: overrides the cached scanner binary path. Pass null to simulate
     // an unresolved binary; pass an invalid path to exercise the failure/clear path.
-    internal static void SetScannerBinaryForTest(string? path) => _scannerBinary = path;
+    // Also resets the negative-cache timestamp so the test starts from a clean state.
+    internal static void SetScannerBinaryForTest(string? path)
+    {
+        _scannerBinary = path;
+        Interlocked.Exchange(ref _scannerBinaryFailedAt, 0);
+    }
 
     [GeneratedRegex(@"Content-Length:\s*(\d+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ContentLengthRegex();
@@ -523,11 +528,14 @@ public static partial class LspServer
         var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
         _documentText.TryRemove(uri, out _);
         _uncacheableDocs.TryRemove(uri, out _);
-        // If a cache entry exists, we published diagnostics for this URI. If it was evicted
-        // earlier, ScanAndPublishAsync already sent an empty clear at eviction time.
-        var hadSourceDiagnostics = _sourceFileDiagnostics.TryRemove(uri, out _);
+        _sourceFileDiagnostics.TryRemove(uri, out _);
         CancelAndRemove(uri);
-        if (IsDolphinRulesFile(uri) || hadSourceDiagnostics)
+        // Always publish an empty clear for dolphin rules files and source files.
+        // For source files we can't reliably know whether diagnostics were published
+        // (ScanAndPublishAsync publishes before writing the cache, so a close arriving
+        // in that narrow window sees no cache entry). An extra empty publish for a URI
+        // the client has no diagnostics for is a safe no-op per the LSP spec.
+        if (IsDolphinRulesFile(uri) || IsSourceFile(uri))
             await PublishDiagnosticsAsync(stdout, uri, []);
     }
 
@@ -777,16 +785,24 @@ public static partial class LspServer
                 {
                     // Scan could not run (scanner binary missing or threw). Preserve any
                     // previously cached result so the editor keeps showing real findings.
-                    // If nothing is cached yet, store an empty sentinel (under the admission
-                    // lock, no eviction) so a pending pull request returns a stable empty
-                    // full report instead of retriggering indefinitely.
-                    lock (_sourceFileDiagnosticsAdmissionLock)
+                    // If nothing is cached yet, store an empty sentinel so pull requests
+                    // return a stable empty full report instead of retriggering indefinitely.
+                    // Evict an arbitrary entry when the cache is full so the sentinel is
+                    // always written (a full cache with a failed scan must not leave pulls
+                    // stuck in ServerCancelled+retrigger loops).
+                    if (!ct.IsCancellationRequested)
                     {
-                        if (!ct.IsCancellationRequested
-                            && !_sourceFileDiagnostics.ContainsKey(uri)
-                            && _sourceFileDiagnostics.Count < MaxCachedDocuments)
+                        lock (_sourceFileDiagnosticsAdmissionLock)
                         {
-                            _sourceFileDiagnostics[uri] = [];
+                            if (!_sourceFileDiagnostics.ContainsKey(uri))
+                            {
+                                if (_sourceFileDiagnostics.Count >= MaxCachedDocuments)
+                                {
+                                    var evict = _sourceFileDiagnostics.Keys.FirstOrDefault();
+                                    if (evict is not null) _sourceFileDiagnostics.TryRemove(evict, out _);
+                                }
+                                _sourceFileDiagnostics[uri] = [];
+                            }
                         }
                     }
                     return;

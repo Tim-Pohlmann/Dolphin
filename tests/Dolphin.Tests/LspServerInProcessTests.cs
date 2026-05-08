@@ -435,14 +435,34 @@ public partial class LspServerInProcessTests
     }
 
     [TestMethod]
-    public async Task HandleMessage_DidClose_NonDolphinFile_NoPublishDiagnostics()
+    public async Task HandleMessage_DidClose_SourceFile_PublishesEmptyDiagnostics()
     {
+        // Source files always get an empty-diagnostics clear on close so that any
+        // diagnostics published between a scan completing and the cache write aren't
+        // left visible in the editor (the race window makes cache-based detection
+        // unreliable). An empty publish for a URI the client has no diagnostics for
+        // is a safe no-op per the LSP spec.
         var responses = await RunServerAsync(
             """{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///src/app.ts"}}}""",
             """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
         var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
-        Assert.IsNull(publish, "No publishDiagnostics expected for non-dolphin file");
+        Assert.IsNotNull(publish, "didClose for a source file must publish an empty-diagnostics clear");
+        Assert.AreEqual("file:///src/app.ts", publish["params"]?["uri"]?.GetValue<string>());
+        Assert.AreEqual(0, publish["params"]?["diagnostics"]?.AsArray().Count);
+    }
+
+    [TestMethod]
+    public async Task HandleMessage_DidClose_UnknownFileType_NoPublishDiagnostics()
+    {
+        // A non-dolphin, non-source URI (e.g. untitled: scheme) must not trigger any
+        // publishDiagnostics notification on close.
+        var responses = await RunServerAsync(
+            """{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"untitled://newfile"}}}""",
+            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+
+        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+        Assert.IsNull(publish, "No publishDiagnostics expected for non-dolphin, non-source URIs");
         Assert.AreEqual(1, responses.Count);
     }
 

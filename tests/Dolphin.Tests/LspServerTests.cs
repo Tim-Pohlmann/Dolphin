@@ -341,7 +341,7 @@ public partial class LspServerTests
     }
 
     [TestMethod]
-    public async Task LspServer_DidClose_NonDolphinFile_NoPublishDiagnostics()
+    public async Task LspServer_DidClose_UnknownFileType_NoPublishDiagnostics()
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         using var proc = StartLspServer();
@@ -351,8 +351,9 @@ public partial class LspServerTests
             SendLsp(proc, """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}""");
             await ReceiveLspMessageAsync(reader, cts.Token);
 
-            // Non-.dolphin/ URI — no publishDiagnostics should be sent.
-            SendLsp(proc, """{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///src/main.ts"}}}""");
+            // untitled:// URI has no extension — neither a .dolphin/ rules file nor a source file.
+            // No publishDiagnostics should be sent.
+            SendLsp(proc, """{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"untitled://newfile"}}}""");
 
             SendLsp(proc, """{"jsonrpc":"2.0","id":2,"method":"shutdown"}""");
             var response = await ReceiveLspMessageAsync(reader, cts.Token);

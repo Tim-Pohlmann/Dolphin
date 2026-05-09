@@ -53,7 +53,11 @@ public static class HookCommand
     {
         if (!File.Exists(filePath)) return;
 
-        var text = await File.ReadAllTextAsync(filePath);
+        string text;
+        try { text = await File.ReadAllTextAsync(filePath); }
+        catch (IOException) { return; }
+        catch (UnauthorizedAccessException) { return; }
+
         var diagnostics = YamlRuleValidator.Validate(text);
 
         if (diagnostics.Length == 0) return;

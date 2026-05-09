@@ -513,7 +513,7 @@ public class YamlRuleValidatorTests
     [TestMethod]
     public void NonAscii_OnFirstLine_ReturnsCorrectLineAndCol()
     {
-        // é (U+00E9) on column 8 of line 0
+        // é (U+00E9) at character index 7 (0-based) on line 0
         var diags = Validate("rules: é");
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual(0, diags[0].Range.Start.Line);

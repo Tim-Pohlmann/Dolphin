@@ -5,7 +5,7 @@
       "hooks": [
         {
           "type": "command",
-          "command": "node ${CLAUDE_PLUGIN_ROOT}/launcher/launcher.js hook post-tool-use"
+          "command": "node \"${CLAUDE_PLUGIN_ROOT}/launcher/launcher.js\" hook post-tool-use"
         }
       ]
     }

@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Text.Json;
+using Dolphin.Output;
 using Dolphin.Scanner;
 
 namespace Dolphin.Cli;
@@ -33,6 +34,8 @@ public static class HookCommand
 
         if (IsRulesFile(filePath))
             await ValidateRulesFileAsync(filePath);
+        else
+            await CheckSourceFileAsync(filePath);
     }
 
     internal static bool IsRulesFile(string filePath)
@@ -61,5 +64,40 @@ public static class HookCommand
         var displayName = Path.GetFileName(filePath);
         foreach (var d in diagnostics)
             Console.WriteLine($"{displayName}:{d.Range.Start.Line + 1}:{d.Range.Start.Character + 1}: {d.Message}");
+    }
+
+    private static async Task CheckSourceFileAsync(string filePath)
+    {
+        if (!File.Exists(filePath)) return;
+
+        var dir = Path.GetDirectoryName(filePath);
+        if (string.IsNullOrEmpty(dir)) return;
+
+        var cwd = FindProjectRoot(dir);
+        if (cwd == null) return;
+
+        string scannerBinary;
+        try { scannerBinary = await Installer.EnsureInstalledAsync(); }
+        catch { return; }
+
+        RunResult result;
+        try { result = await Runner.RunAsync(scannerBinary, cwd, targetFile: filePath); }
+        catch { return; }
+
+        if (result.Findings.Count > 0)
+            Formatter.Print(result.Findings, "text");
+    }
+
+    private static string? FindProjectRoot(string startDir)
+    {
+        var dir = startDir;
+        while (!string.IsNullOrEmpty(dir))
+        {
+            if (File.Exists(Path.Combine(dir, ".dolphin", "rules.yaml"))) return dir;
+            var parent = Path.GetDirectoryName(dir);
+            if (parent == dir) break;
+            dir = parent!;
+        }
+        return null;
     }
 }

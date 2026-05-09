@@ -26,14 +26,20 @@ public static class CheckCommand
         );
         formatOption.FromAmong("text", "json", "github");
 
+        var fileOption = new Option<string?>(
+            "--file",
+            description: "Scan only this file instead of the entire project"
+        );
+
         var cmd = new Command("check", "Run static analysis rules against the codebase")
         {
             cwdOption,
             ruleOption,
-            formatOption
+            formatOption,
+            fileOption
         };
 
-        cmd.SetHandler(async (cwd, ruleId, format) =>
+        cmd.SetHandler(async (cwd, ruleId, format, file) =>
         {
             // Resolve and validate cwd
             cwd = Path.GetFullPath(cwd);
@@ -45,6 +51,10 @@ public static class CheckCommand
                 Environment.Exit(2);
                 return;
             }
+
+            // Resolve --file relative to cwd if not already absolute
+            if (file != null && !Path.IsPathRooted(file))
+                file = Path.GetFullPath(file, cwd);
 
             // Locate scanner binary (bundled next to dolphin, or on PATH for dev builds)
             string scannerBinary;
@@ -65,7 +75,7 @@ public static class CheckCommand
             RunResult result;
             try
             {
-                result = await Runner.RunAsync(scannerBinary, cwd, ruleId);
+                result = await Runner.RunAsync(scannerBinary, cwd, ruleId, targetFile: file);
             }
             catch (FileNotFoundException ex)
             {
@@ -97,7 +107,7 @@ public static class CheckCommand
             var hasErrors = result.Findings.Any(f => f.Severity == Severity.Error);
             Environment.Exit(hasErrors ? 1 : 0);
 
-        }, cwdOption, ruleOption, formatOption);
+        }, cwdOption, ruleOption, formatOption, fileOption);
 
         return cmd;
     }

@@ -824,23 +824,23 @@ public static partial class LspServer
                     // stuck in ServerCancelled+retrigger loops).
                     if (!ct.IsCancellationRequested)
                     {
-                        string? evicted = null;
-                        LspDiagnostic[]? evictedDiags = null;
+                        string? failEvicted = null;
+                        LspDiagnostic[]? failEvictedDiags = null;
                         lock (_sourceFileDiagnosticsAdmissionLock)
                         {
                             if (!_sourceFileDiagnostics.ContainsKey(uri))
                             {
                                 if (_sourceFileDiagnostics.Count >= MaxCachedDocuments)
                                 {
-                                    evicted = _sourceFileDiagnostics.Keys.FirstOrDefault();
-                                    if (evicted is not null) _sourceFileDiagnostics.TryRemove(evicted, out evictedDiags);
+                                    failEvicted = _sourceFileDiagnostics.Keys.FirstOrDefault();
+                                    if (failEvicted is not null) _sourceFileDiagnostics.TryRemove(failEvicted, out failEvictedDiags);
                                 }
                                 _sourceFileDiagnostics[uri] = _failedScanSentinel;
                             }
                         }
                         // Clear diagnostics for evicted published entries (not sentinels).
-                        if (evicted is not null && evictedDiags is not null && !ReferenceEquals(evictedDiags, _failedScanSentinel))
-                            _ = TryClearEvictedDiagnosticsAsync(stdout, evicted);
+                        if (failEvicted is not null && failEvictedDiags is not null && !ReferenceEquals(failEvictedDiags, _failedScanSentinel))
+                            _ = TryClearEvictedDiagnosticsAsync(stdout, failEvicted);
                     }
                     return;
                 }

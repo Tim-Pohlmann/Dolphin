@@ -439,12 +439,21 @@ public partial class LspServerInProcessTests
     {
         // Source files without a .dolphin/rules.yaml ancestor were never scanned,
         // so didClose must NOT publish any diagnostics for them.
-        var responses = await RunServerAsync(
-            """{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///src/app.ts"}}}""",
-            """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
+        // Use a unique temp directory (without .dolphin/) to guarantee no ancestor rules file exists.
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-noproot-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tmpDir);
+        try
+        {
+            var srcFile = Path.Combine(tmpDir, "app.ts");
+            var uri = new Uri(srcFile).AbsoluteUri;
+            var responses = await RunServerAsync(
+                $"{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{{\"textDocument\":{{\"uri\":\"{uri}\"}}}}}}",
+                """{"jsonrpc":"2.0","id":1,"method":"shutdown"}""");
 
-        var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
-        Assert.IsNull(publish, "didClose for a source file with no project root must not publish diagnostics");
+            var publish = responses.FirstOrDefault(r => r["method"]?.GetValue<string>() == "textDocument/publishDiagnostics");
+            Assert.IsNull(publish, "didClose for a source file with no project root must not publish diagnostics");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
     }
 
     [TestMethod]

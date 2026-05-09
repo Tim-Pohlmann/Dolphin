@@ -16,7 +16,8 @@ internal static class Startup
 
         var root = new RootCommand("Dolphin — custom static analysis powered by Opengrep")
         {
-            CheckCommand.Build()
+            CheckCommand.Build(),
+            HookCommand.Build()
         };
 
         root.Name = "dolphin";

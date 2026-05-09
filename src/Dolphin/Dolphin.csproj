@@ -87,7 +87,7 @@
     <Message Text="Opengrep bundled → $(PublishDir)$(_PublishedBinName)" Importance="High" />
   </Target>
   <!--
-    The Semgrep rule schema (Lsp/semgrep-schema.json) is committed to the repo and embedded
+    The Semgrep rule schema (Scanner/semgrep-schema.json) is committed to the repo and embedded
     into the dolphin binary as a .NET resource (see the EmbeddedResource item above), so
     builds work offline. To refresh it against a newer upstream commit, run:
       dotnet run scripts/update-schema.cs

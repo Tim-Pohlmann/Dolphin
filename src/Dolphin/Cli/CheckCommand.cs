@@ -52,9 +52,20 @@ public static class CheckCommand
                 return;
             }
 
-            // Resolve --file relative to cwd if not already absolute
-            if (file != null && !Path.IsPathRooted(file))
-                file = Path.GetFullPath(file, cwd);
+            // Resolve --file relative to cwd if not already absolute, then validate it
+            if (file != null)
+            {
+                if (!Path.IsPathRooted(file))
+                    file = Path.GetFullPath(file, cwd);
+                if (!File.Exists(file))
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Error.WriteLine($"File not found: {file}");
+                    Console.ResetColor();
+                    Environment.Exit(2);
+                    return;
+                }
+            }
 
             // Locate scanner binary (bundled next to dolphin, or on PATH for dev builds)
             string scannerBinary;

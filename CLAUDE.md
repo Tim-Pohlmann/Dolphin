@@ -7,16 +7,17 @@ Custom static code analysis powered by [Opengrep](https://opengrep.dev), distrib
 ```
 src/Dolphin/
   Program.cs               Entry point: delegates to Startup.RunAsync and exits with its code
-  Startup.cs               Routes args to MCP server, LSP server, or CLI
+  Startup.cs               Routes args to MCP server or CLI
   Cli/CheckCommand.cs      `dolphin check` command
   Scanner/Installer.cs     Locates the Opengrep binary (bundled or PATH)
   Scanner/Runner.cs        Invokes Opengrep, parses JSON output
   Scanner/Models.cs        Finding, RunResult, Severity
+  Scanner/YamlRuleValidator.cs  Schema-validates .dolphin/rules.yaml; detects non-ASCII characters
+  Scanner/ValidationOutputParser.cs  Parses `opengrep validate` text output into ValidationDiagnostics
+  Scanner/ValidationModels.cs  ValidationDiagnostic/Range/Position records
   Mcp/Server.cs            MCP server host
   Mcp/Tools/RunCheckTool.cs  MCP tool: run_check
   Output/Formatter.cs      Text and JSON output formatting
-  Lsp/LspServer.cs         LSP server: JSON-RPC over stdio; runs `opengrep validate` on YAML files under .dolphin/
-  Lsp/LspDiagnosticsParser.cs  Parses `opengrep validate` output into LSP diagnostics
 
 launcher/
   launcher.js              Downloads/caches the dolphin+opengrep binary from GitHub Releases
@@ -24,11 +25,11 @@ launcher/
 tests/Dolphin.Tests/
   InstallerTests.cs        Tests for binary resolution
   RunnerTests.cs           Integration tests (skipped if no scanner on PATH)
-  LspDiagnosticsParserTests.cs  Unit tests for diagnostic parsing
+  ValidationOutputParserTests.cs  Unit tests for diagnostic parsing
   fixtures/                Sample rules.yaml and bad-file.ts for tests
 
 skills/generate-rules/     Claude Code skill for interactive rule generation
-.claude-plugin/plugin.json Plugin metadata (includes lspServers config)
+.claude-plugin/plugin.json Plugin metadata
 .mcp.json                  MCP server config (used when plugin is installed)
 .dolphin/rules.yaml        This project's own Dolphin rules
 ```
@@ -67,4 +68,4 @@ SonarCloud integrates as Roslyn analyzers during the CI build, so its issues app
 - **Exit codes**: `0` = no ERROR findings, `1` = at least one ERROR finding, `2` = fatal error.
 - **Trimmed publish**: `PublishTrimmed=true` — use source-generated JSON (`[JsonSerializable]`) and avoid reflection-based serialization.
 - **MCP server**: `dolphin serve --stdio` — no args other than that exact pair; matched by pattern in `Startup.cs`.
-- **LSP server**: `dolphin lsp` — matched by pattern in `Startup.cs`; called by Claude Code via `launcher.js lsp`.
+- **Rules validation**: `YamlRuleValidator.Validate()` schema-checks rules.yaml and rejects non-ASCII characters; `ValidationOutputParser.Parse()` converts `opengrep validate` text output into diagnostics.

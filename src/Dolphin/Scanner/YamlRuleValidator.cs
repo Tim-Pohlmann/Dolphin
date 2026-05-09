@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 using Json.Schema;
 using YamlDotNet.RepresentationModel;
 
-namespace Dolphin.Lsp;
+namespace Dolphin.Scanner;
 
 /// <summary>
 /// Validates Dolphin/Opengrep YAML rule files against the official Semgrep JSON Schema.
@@ -22,20 +22,23 @@ internal static class YamlRuleValidator
     private static JsonSchema LoadSchema()
     {
         var assembly = typeof(YamlRuleValidator).Assembly;
-        using var stream = assembly.GetManifestResourceStream("Dolphin.Lsp.semgrep-schema.json")
+        using var stream = assembly.GetManifestResourceStream("Dolphin.Scanner.semgrep-schema.json")
             ?? throw new InvalidOperationException(
-                "Embedded resource 'Dolphin.Lsp.semgrep-schema.json' not found.");
+                "Embedded resource 'Dolphin.Scanner.semgrep-schema.json' not found.");
         using var reader = new StreamReader(stream);
         return JsonSchema.FromText(reader.ReadToEnd());
     }
 
     /// <summary>
-    /// Validates <paramref name="text"/> and returns zero or more <see cref="LspDiagnostic"/>
+    /// Validates <paramref name="text"/> and returns zero or more <see cref="ValidationDiagnostic"/>
     /// records describing structural problems found.  An empty array means the file is valid.
     /// </summary>
-    public static LspDiagnostic[] Validate(string text)
+    public static ValidationDiagnostic[] Validate(string text)
     {
-        var diagnostics = new List<LspDiagnostic>();
+        var nonAscii = FindNonAsciiDiagnostic(text);
+        if (nonAscii is not null) return nonAscii;
+
+        var diagnostics = new List<ValidationDiagnostic>();
 
         // ── Parse YAML and build a JSON-pointer → 0-based-line-number map ────
         YamlNode rootNode;
@@ -77,10 +80,70 @@ internal static class YamlRuleValidator
         var result = EvaluateAgainstSchema(jsonNode, options);
         if (result.IsValid) return [];
 
-        // ── Map validation errors to LSP diagnostics ──────────────────────────
+        // ── Map validation errors to diagnostics ──────────────────────────────
         ProcessValidationResults(result, lineMap, diagnostics);
 
         return [.. diagnostics];
+    }
+
+    /// <summary>
+    /// Scans <paramref name="text"/> in a single pass and returns a one-element diagnostic array
+    /// pointing at the first non-ASCII character, or <c>null</c> if all characters are ASCII.
+    /// </summary>
+    internal static ValidationDiagnostic[]? FindNonAsciiDiagnostic(string text)
+    {
+        int line = 0, col = 0;
+        bool skipNextLf = false; // Skip LF if we just saw CR (handles CRLF as single newline)
+        for (int i = 0; i < text.Length; i++)
+        {
+            char ch = text[i];
+            if (ch > 127)
+            {
+                var (codePoint, utf16Len) = DecodeNonAscii(ch, text, i);
+                var pos = new ValidationPosition(line, col);
+                return [new ValidationDiagnostic(
+                    Range: new ValidationRange(pos, new ValidationPosition(line, col + utf16Len)),
+                    Severity: 1,
+                    Source: "dolphin",
+                    Message: $"Non-ASCII character (U+{codePoint:X4}): Dolphin rules files must contain only ASCII characters.",
+                    Pending: false)];
+            }
+
+            // Skip LF that follows CR (CRLF sequence)
+            if (skipNextLf && ch == '\n')
+            {
+                skipNextLf = false;
+                continue;
+            }
+            skipNextLf = false;
+
+            if (ch == '\r')
+            {
+                line++;
+                col = 0;
+                skipNextLf = true;
+            }
+            else if (ch == '\n')
+            {
+                line++;
+                col = 0;
+            }
+            else
+            {
+                col++;
+            }
+        }
+        return null;
+    }
+
+    private static (int CodePoint, int Utf16Len) DecodeNonAscii(char ch, string text, int i)
+    {
+        if (char.IsHighSurrogate(ch) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            return (char.ConvertToUtf32(ch, text[i + 1]), 2);
+        if (System.Text.Rune.TryCreate(ch, out var rune))
+            return (rune.Value, rune.Utf16SequenceLength);
+        // Unpaired surrogate — report the raw UTF-16 code unit.
+        return (ch, 1);
     }
 
     /// <summary>
@@ -102,7 +165,7 @@ internal static class YamlRuleValidator
     private static void ProcessValidationResults(
         EvaluationResults result,
         Dictionary<string, int> lineMap,
-        List<LspDiagnostic> diagnostics)
+        List<ValidationDiagnostic> diagnostics)
     {
         var seen = new HashSet<string>(); // deduplicate identical message+line pairs
 
@@ -147,7 +210,7 @@ internal static class YamlRuleValidator
         string instancePath,
         Dictionary<string, int> lineMap,
         HashSet<string> seen,
-        List<LspDiagnostic> diagnostics)
+        List<ValidationDiagnostic> diagnostics)
     {
         var line = lineMap.TryGetValue(instancePath, out var l) ? l : 0;
         foreach (var (keyword, errorNode) in detail.Errors!)
@@ -161,7 +224,7 @@ internal static class YamlRuleValidator
         HashSet<string> missingPatternPaths,
         Dictionary<string, int> lineMap,
         HashSet<string> seen,
-        List<LspDiagnostic> diagnostics)
+        List<ValidationDiagnostic> diagnostics)
     {
         foreach (var path in missingPatternPaths)
         {
@@ -176,24 +239,10 @@ internal static class YamlRuleValidator
 
     // ── Error suppression ─────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Returns true for errors that are evaluation noise rather than real validation failures.
-    ///
-    /// JsonSchema.Net in List output includes failures from:
-    /// <list type="bullet">
-    ///   <item><c>if</c> condition evaluations (path ends with "/if")</item>
-    ///   <item>Individual <c>anyOf</c> / <c>oneOf</c> branch alternatives that do not match</item>
-    /// </list>
-    /// These should not surface as user-visible LSP diagnostics.
-    /// </summary>
     private static bool ShouldSuppressError(string evalPath)
     {
-        // (a) Skip errors from 'if' condition evaluations.
-        //     In List output the path ends at the '/if' segment itself.
         if (evalPath.EndsWith("/if", StringComparison.Ordinal)) return true;
 
-        // (b) Skip errors from anyOf/oneOf indexed branch alternatives.
-        //     These represent "this branch doesn't match" — expected during branch selection.
         if (ContainsIndexedSegment(evalPath, "/anyOf/") ||
             ContainsIndexedSegment(evalPath, "/oneOf/"))
             return true;
@@ -218,13 +267,12 @@ internal static class YamlRuleValidator
     // ── Error formatting ──────────────────────────────────────────────────────
 
     private static IEnumerable<string> FormatKeywordError(
-        string keyword, JsonNode? errorNode, string instancePath)
+        string keyword, System.Text.Json.Nodes.JsonNode? errorNode, string instancePath)
     {
         switch (keyword)
         {
             case "required":
             {
-                // Error node is a string like "Required properties ["id"] are not present"
                 var raw = GetStringValue(errorNode);
                 if (!string.IsNullOrEmpty(raw))
                     yield return raw;
@@ -233,7 +281,6 @@ internal static class YamlRuleValidator
 
             case "enum":
             {
-                // Include the field name since the raw schema message doesn't mention it
                 var field = LastSegment(instancePath);
                 yield return string.IsNullOrEmpty(field)
                     ? "Invalid value. See allowed values in the Semgrep rule schema."
@@ -244,9 +291,6 @@ internal static class YamlRuleValidator
             case "anyOf":
             case "oneOf":
             {
-                // Surface a user-oriented message for combinator failures so that
-                // invalid inputs (e.g. missing required properties inside a oneOf
-                // branch) are never silently dropped.
                 var raw = GetStringValue(errorNode);
                 if (!string.IsNullOrEmpty(raw))
                 {
@@ -261,8 +305,6 @@ internal static class YamlRuleValidator
                 break;
             }
 
-            // All other combinator / meta keywords are filtered before we get here,
-            // but list them defensively so they don't fall into the default case.
             case "if":
             case "then":
             case "else":
@@ -271,7 +313,6 @@ internal static class YamlRuleValidator
                 break;
 
             default:
-                // Emit unknown keyword errors only when the error is a plain string
                 var str = GetStringValue(errorNode);
                 if (!string.IsNullOrEmpty(str))
                     yield return str;
@@ -279,24 +320,18 @@ internal static class YamlRuleValidator
         }
     }
 
-    /// <summary>
-    /// Extracts the raw string payload from a schema-error node, or null when the node
-    /// isn't a string. Avoids <c>JsonNode.ToString()</c> on non-string nodes, which would
-    /// emit JSON-encoded output (e.g. with surrounding quotes) into user-visible messages.
-    /// </summary>
-    private static string? GetStringValue(JsonNode? node) =>
+    private static string? GetStringValue(System.Text.Json.Nodes.JsonNode? node) =>
         node?.GetValueKind() == System.Text.Json.JsonValueKind.String
             ? node.GetValue<string>()
             : null;
 
     // ── YAML → JsonNode conversion ────────────────────────────────────────────
 
-    // RFC 6901 JSON Pointer segment separator
     private const char JsonPointerSep = '/';
 
     private static JsonNode? ConvertToJson(YamlNode node, string path, Dictionary<string, int> lineMap)
     {
-        // YamlDotNet uses 1-based line numbers (long in v17); convert to 0-based int for LSP
+        // YamlDotNet uses 1-based line numbers (long in v17); convert to 0-based int
         lineMap[path] = (int)Math.Clamp(node.Start.Line - 1, 0, int.MaxValue);
 
         return node switch
@@ -336,10 +371,6 @@ internal static class YamlRuleValidator
         return JsonValue.Create(value);
     }
 
-    /// <summary>
-    /// Returns true when the scalar is quoted or uses a block style, meaning its value should
-    /// be preserved as a string without YAML type-coercion (e.g. "true" stays a string).
-    /// </summary>
     private static bool IsQuotedStyle(YamlDotNet.Core.ScalarStyle style) =>
         style is YamlDotNet.Core.ScalarStyle.SingleQuoted
               or YamlDotNet.Core.ScalarStyle.DoubleQuoted
@@ -350,7 +381,7 @@ internal static class YamlRuleValidator
         YamlMappingNode mapping, string path, Dictionary<string, int> lineMap)
     {
         var obj = new JsonObject();
-        var nonScalarIndex = 0; // ensures unique keys for non-scalar map entries
+        var nonScalarIndex = 0;
         foreach (var (keyNode, valueNode) in mapping)
         {
             var key = keyNode switch
@@ -383,9 +414,6 @@ internal static class YamlRuleValidator
 
     /// <summary>
     /// Returns the last non-numeric segment of a JSON Pointer path, unescaped per RFC 6901.
-    /// Numeric segments are array indices (e.g., ".../languages/0") and are skipped so that
-    /// diagnostic messages reference the owning field name (e.g., "languages") instead of
-    /// an unhelpful index like "0".
     /// </summary>
     internal static string LastSegment(string jsonPointerPath)
     {
@@ -402,25 +430,17 @@ internal static class YamlRuleValidator
     private static bool IsArrayIndex(string segment) =>
         segment.Length > 0 && segment.All(char.IsAsciiDigit);
 
-    /// <summary>
-    /// Escapes a JSON Pointer segment per RFC 6901:
-    /// '~' → '~0', '/' → '~1'.
-    /// </summary>
     private static string EscapeJsonPointerSegment(string segment) =>
         segment.Replace("~", "~0").Replace("/", "~1");
 
-    /// <summary>
-    /// Unescapes a JSON Pointer segment per RFC 6901. Order matters: '~1' must be
-    /// replaced before '~0', otherwise '~01' would decode as '/' instead of '~1'.
-    /// </summary>
     internal static string UnescapeJsonPointerSegment(string segment) =>
         segment.Replace("~1", "/").Replace("~0", "~");
 
-    private static LspDiagnostic MakeDiagnostic(int line, int col, string message)
+    private static ValidationDiagnostic MakeDiagnostic(int line, int col, string message)
     {
-        var pos = new LspPosition(line, col);
-        return new LspDiagnostic(
-            Range: new LspRange(pos, pos),
+        var pos = new ValidationPosition(line, col);
+        return new ValidationDiagnostic(
+            Range: new ValidationRange(pos, pos),
             Severity: 1,
             Source: "dolphin",
             Message: message,

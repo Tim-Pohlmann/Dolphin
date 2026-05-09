@@ -24,8 +24,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Lsp\semgrep-schema.json"
-                      LogicalName="Dolphin.Lsp.semgrep-schema.json" />
+    <EmbeddedResource Include="Scanner\semgrep-schema.json"
+                      LogicalName="Dolphin.Scanner.semgrep-schema.json" />
   </ItemGroup>
 
   <ItemGroup>

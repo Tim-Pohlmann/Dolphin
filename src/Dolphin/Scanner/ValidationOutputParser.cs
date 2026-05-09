@@ -1,9 +1,9 @@
 using System.Text.RegularExpressions;
 
-namespace Dolphin.Lsp;
+namespace Dolphin.Scanner;
 
 /// <summary>
-/// Parses the text output of <c>opengrep validate</c> into LSP diagnostics.
+/// Parses the text output of <c>opengrep validate</c> into validation diagnostics.
 ///
 /// Opengrep may emit errors in two formats:
 ///
@@ -19,7 +19,7 @@ namespace Dolphin.Lsp;
 /// For format 2, the location is extracted from the same line as the message
 /// and the diagnostic is resolved immediately without a follow-up pointer line.
 /// </summary>
-internal static partial class LspDiagnosticsParser
+internal static partial class ValidationOutputParser
 {
     // Anchored to EOL so paths with spaces/colons are handled correctly.
     [GeneratedRegex(@"-->.*?:(\d+)(?::(\d+))?\s*$", RegexOptions.None, matchTimeoutMilliseconds: 1000)]
@@ -32,9 +32,9 @@ internal static partial class LspDiagnosticsParser
     [GeneratedRegex(@"\b(error|invalid|missing|required|unexpected)\b", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 1000)]
     private static partial Regex ErrorKeywordPattern();
 
-    public static LspDiagnostic[] Parse(string output)
+    public static ValidationDiagnostic[] Parse(string output)
     {
-        var diagnostics = new List<LspDiagnostic>();
+        var diagnostics = new List<ValidationDiagnostic>();
 
         foreach (var raw in output.Split('\n'))
         {
@@ -58,8 +58,8 @@ internal static partial class LspDiagnosticsParser
                 {
                     // Opengrep embeds location inline — resolve immediately
                     // rather than waiting for a follow-up --> pointer line.
-                    var pos = new LspPosition(lineNum, colNum);
-                    diag = diag with { Range = new LspRange(pos, pos), Pending = false };
+                    var pos = new ValidationPosition(lineNum, colNum);
+                    diag = diag with { Range = new ValidationRange(pos, pos), Pending = false };
                 }
                 diagnostics.Add(diag);
             }
@@ -99,33 +99,33 @@ internal static partial class LspDiagnosticsParser
         return true;
     }
 
-    private static void AttachLocation(List<LspDiagnostic> diagnostics, int lineNum, int colNum)
+    private static void AttachLocation(List<ValidationDiagnostic> diagnostics, int lineNum, int colNum)
     {
         if (diagnostics.Count > 0 && diagnostics[^1].Pending)
         {
             diagnostics[^1] = diagnostics[^1] with
             {
-                Range = new LspRange(
-                    new LspPosition(lineNum, colNum),
-                    new LspPosition(lineNum, colNum)),
+                Range = new ValidationRange(
+                    new ValidationPosition(lineNum, colNum),
+                    new ValidationPosition(lineNum, colNum)),
                 Pending = false,
             };
         }
     }
 
-    private static void FinalisePending(List<LspDiagnostic> diagnostics)
+    private static void FinalisePending(List<ValidationDiagnostic> diagnostics)
     {
         for (int i = 0; i < diagnostics.Count; i++)
             if (diagnostics[i].Pending)
                 diagnostics[i] = diagnostics[i] with { Pending = false };
     }
 
-    private static LspDiagnostic MakePendingDiagnostic(string message) =>
-        new(Range: new LspRange(new LspPosition(0, 0), new LspPosition(1, 0)),
+    private static ValidationDiagnostic MakePendingDiagnostic(string message) =>
+        new(Range: new ValidationRange(new ValidationPosition(0, 0), new ValidationPosition(1, 0)),
             Severity: 1, Source: "opengrep", Message: message, Pending: true);
 
-    private static LspDiagnostic MakeFallbackDiagnostic(string output) =>
-        new(Range: new LspRange(new LspPosition(0, 0), new LspPosition(1, 0)),
+    private static ValidationDiagnostic MakeFallbackDiagnostic(string output) =>
+        new(Range: new ValidationRange(new ValidationPosition(0, 0), new ValidationPosition(1, 0)),
             Severity: 1, Source: "opengrep",
             Message: output.Trim().Split('\n')[0].TrimEnd('\r'),
             Pending: false);

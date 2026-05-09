@@ -6,7 +6,7 @@ namespace Dolphin.Scanner;
 public static class Runner
 {
     /// <summary>
-    /// Runs the scanner against <paramref name="cwd"/> using .dolphin/rules.yaml.
+    /// Runs the scanner against <paramref name="cwd"/> using .dolphin/rules.yaml (or rules.yml).
     /// Optionally filters to a single rule ID or scans a single file.
     /// </summary>
     public static async Task<RunResult> RunAsync(

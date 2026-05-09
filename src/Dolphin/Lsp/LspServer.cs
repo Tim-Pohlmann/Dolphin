@@ -80,7 +80,9 @@ public static partial class LspServer
     // Sentinel stored when a scan failed (scanner unavailable) and no diagnostics were
     // published. Kept as a distinct reference so HandleDidCloseAsync and eviction logic can
     // tell "scan failed, nothing published" apart from "scan succeeded with empty results".
-    private static readonly LspDiagnostic[] _failedScanSentinel = [];
+    // Must be `new LspDiagnostic[0]` (not `[]` / `Array.Empty`) so the identity is unique
+    // and ReferenceEquals checks are reliable regardless of compiler optimizations.
+    private static readonly LspDiagnostic[] _failedScanSentinel = new LspDiagnostic[0];
 
     // Serialises admission into _sourceFileDiagnostics so the size cap is enforced atomically:
     // ContainsKey + Count on ConcurrentDictionary are individually atomic but not
@@ -853,20 +855,20 @@ public static partial class LspServer
                 // subsequent didClose would not see the entry and would skip the empty-clear
                 // publish, leaving stale diagnostics visible in the editor.
                 string? evicted = null;
+                LspDiagnostic[]? evictedDiags = null;
                 lock (_sourceFileDiagnosticsAdmissionLock)
                 {
                     if (!_sourceFileDiagnostics.ContainsKey(uri) && _sourceFileDiagnostics.Count >= MaxCachedDocuments)
                     {
                         evicted = _sourceFileDiagnostics.Keys.FirstOrDefault();
-                        if (evicted is not null) _sourceFileDiagnostics.TryRemove(evicted, out _);
+                        if (evicted is not null) _sourceFileDiagnostics.TryRemove(evicted, out evictedDiags);
                     }
                     _sourceFileDiagnostics[uri] = diagnostics;
                 }
-                // Eagerly clear any file that was evicted from the cache so its diagnostics
-                // don't remain visible after it leaves our tracking. Combined with
-                // HandleDidCloseAsync clearing source files that have a project root, this
-                // means no separate "published URIs" tracking set is needed.
-                if (evicted is not null)
+                // Eagerly clear any file evicted from the cache so its diagnostics don't
+                // remain visible. Skip sentinel entries — those represent scans that never
+                // published anything, so no clear is needed.
+                if (evicted is not null && evictedDiags is not null && !ReferenceEquals(evictedDiags, _failedScanSentinel))
                     _ = TryClearEvictedDiagnosticsAsync(stdout, evicted);
             }
             catch (OperationCanceledException) { /* superseded by a newer open/save */ }

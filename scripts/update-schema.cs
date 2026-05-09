@@ -1,7 +1,7 @@
 #!/usr/bin/env -S dotnet run
 #:package YamlDotNet@17.0.1
 
-// Refreshes src/Dolphin/Lsp/semgrep-schema.json from the pinned upstream commit.
+// Refreshes src/Dolphin/Scanner/semgrep-schema.json from the pinned upstream commit.
 // Run: dotnet run scripts/update-schema.cs
 //
 // rule_schema_v1.yaml is sourced from https://github.com/returntocorp/semgrep-interfaces
@@ -24,7 +24,7 @@ using System.Text.Json.Nodes;
 using YamlDotNet.Serialization;
 
 const string Commit   = "656d6518e822a088c6e1907abf7c3acc61095103";
-const string OutPath  = "src/Dolphin/Lsp/semgrep-schema.json";
+const string OutPath  = "src/Dolphin/Scanner/semgrep-schema.json";
 var          url      = $"https://raw.githubusercontent.com/returntocorp/semgrep-interfaces/{Commit}/rule_schema_v1.yaml";
 
 using var http = new HttpClient();

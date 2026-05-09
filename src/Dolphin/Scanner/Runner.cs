@@ -23,7 +23,7 @@ public static class Runner
                 rulesPath = altPath;
             else
                 throw new FileNotFoundException(
-                    $"No rules file at {rulesPath}. Run the generate-rules skill first.");
+                    $"No rules file at {rulesPath} (or rules.yml). Run the generate-rules skill first.");
         }
 
         var args = new List<string>

@@ -1,4 +1,4 @@
-using Dolphin.Lsp;
+using Dolphin.Scanner;
 
 namespace Dolphin.Tests;
 
@@ -10,7 +10,7 @@ public class YamlRuleValidatorTests
 {
     // ── Helper ────────────────────────────────────────────────────────────────
 
-    private static LspDiagnostic[] Validate(string yaml) =>
+    private static ValidationDiagnostic[] Validate(string yaml) =>
         YamlRuleValidator.Validate(yaml);
 
     private static void AssertNoErrors(string yaml)

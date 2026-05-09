@@ -229,4 +229,57 @@ public class CheckCommandTests
             Directory.Delete(fakeBinDir, recursive: true);
         }
     }
+
+    [TestMethod]
+    public async Task Check_File_ExitCode2_WhenFileDoesNotExist()
+    {
+        var (exitCode, _, stderr) = await RunDolphinAsync(
+            "check --cwd . --file /nonexistent/dolphin-test-file-that-does-not-exist.ts"
+        );
+
+        Assert.AreEqual(2, exitCode);
+        StringAssert.Contains(stderr, "not found");
+    }
+
+    [TestMethod]
+    public async Task Check_File_LimitsResultsToSingleFile()
+    {
+        // Graceful skip if scanner unavailable
+        try { await Installer.EnsureInstalledAsync(); }
+        catch { return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var tmpSrcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(tmpDolphinDir);
+        Directory.CreateDirectory(tmpSrcDir);
+
+        File.Copy(Path.Combine(FixturesDir, "rules.yaml"), Path.Combine(tmpDolphinDir, "rules.yaml"));
+        // bad-file.ts has an ERROR finding; warn-only.ts does not
+        File.Copy(Path.Combine(FixturesDir, "sample-src", "bad-file.ts"),
+                  Path.Combine(tmpSrcDir, "bad-file.ts"));
+        await File.WriteAllTextAsync(
+            Path.Combine(tmpSrcDir, "warn-only.ts"),
+            "export function greet(name: string) { console.log(name); }\n"
+        );
+
+        try
+        {
+            // Scanning only warn-only.ts should exit 0 even though bad-file.ts has errors
+            var (exitCode, _, _) = await RunDolphinAsync(
+                $"check --cwd \"{tmpDir}\" --file \"{Path.Combine(tmpSrcDir, "warn-only.ts")}\""
+            );
+            Assert.AreEqual(0, exitCode, "Expected exit 0 when only clean file is scanned");
+
+            // Scanning only bad-file.ts should exit 1
+            var (exitCode2, _, _) = await RunDolphinAsync(
+                $"check --cwd \"{tmpDir}\" --file \"{Path.Combine(tmpSrcDir, "bad-file.ts")}\""
+            );
+            Assert.AreEqual(1, exitCode2, "Expected exit 1 when file with ERROR finding is scanned");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
 }

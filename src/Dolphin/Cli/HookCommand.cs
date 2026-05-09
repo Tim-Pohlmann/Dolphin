@@ -93,7 +93,9 @@ public static class HookCommand
         var dir = startDir;
         while (!string.IsNullOrEmpty(dir))
         {
-            if (File.Exists(Path.Combine(dir, ".dolphin", "rules.yaml"))) return dir;
+            var dolphinDir = Path.Combine(dir, ".dolphin");
+            if (File.Exists(Path.Combine(dolphinDir, "rules.yaml"))
+             || File.Exists(Path.Combine(dolphinDir, "rules.yml"))) return dir;
             var parent = Path.GetDirectoryName(dir);
             if (parent == dir) break;
             dir = parent!;

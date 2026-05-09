@@ -17,8 +17,14 @@ public static class Runner
     {
         var rulesPath = Path.Combine(cwd, ".dolphin", "rules.yaml");
         if (!File.Exists(rulesPath))
-            throw new FileNotFoundException(
-                $"No rules file at {rulesPath}. Run the generate-rules skill first.");
+        {
+            var altPath = Path.Combine(cwd, ".dolphin", "rules.yml");
+            if (File.Exists(altPath))
+                rulesPath = altPath;
+            else
+                throw new FileNotFoundException(
+                    $"No rules file at {rulesPath}. Run the generate-rules skill first.");
+        }
 
         var args = new List<string>
         {

@@ -27,6 +27,7 @@ public static class HookCommand
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("tool_input", out var input)) return;
             if (!input.TryGetProperty("file_path", out var fp)) return;
+            if (fp.ValueKind != JsonValueKind.String) return;
             filePath = fp.GetString();
         }
         catch (JsonException)

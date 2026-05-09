@@ -73,7 +73,14 @@ public static partial class LspServer
     // served immediately without re-running the scanner. Populated by ScanAndPublishAsync,
     // evicted on didClose. Capped at MaxCachedDocuments with eviction under
     // _sourceFileDiagnosticsAdmissionLock to atomically enforce the size limit.
+    // A value of _failedScanSentinel means the scan could not run; no diagnostics were
+    // published, so HandleDidCloseAsync must not publish an empty clear for those entries.
     private static readonly ConcurrentDictionary<string, LspDiagnostic[]> _sourceFileDiagnostics = new();
+
+    // Sentinel stored when a scan failed (scanner unavailable) and no diagnostics were
+    // published. Kept as a distinct reference so HandleDidCloseAsync and eviction logic can
+    // tell "scan failed, nothing published" apart from "scan succeeded with empty results".
+    private static readonly LspDiagnostic[] _failedScanSentinel = [];
 
     // Serialises admission into _sourceFileDiagnostics so the size cap is enforced atomically:
     // ContainsKey + Count on ConcurrentDictionary are individually atomic but not
@@ -547,13 +554,13 @@ public static partial class LspServer
         _sourceFileDiagnostics.TryRemove(uri, out var cachedDiags);
         CancelAndRemove(uri);
         // Always clear rules-file diagnostics on close. For source files, only clear
-        // if the cache had an entry — a scan completed and published diagnostics for
-        // this URI. Files whose scan never finished (no cache entry) had no diagnostics
-        // published, so no clear is needed. Using the TryRemove result also handles the
-        // case where .dolphin/rules.yaml was removed between open and close.
+        // if the cache had a published entry. _failedScanSentinel entries mean the scan
+        // never ran successfully (no diagnostics were published), so no clear is needed.
+        // Using the TryRemove result also handles the case where .dolphin/rules.yaml was
+        // removed between open and close.
         if (IsDolphinRulesFile(uri))
             await PublishDiagnosticsAsync(stdout, uri, []);
-        else if (IsSourceFile(uri) && cachedDiags is not null)
+        else if (IsSourceFile(uri) && cachedDiags is not null && !ReferenceEquals(cachedDiags, _failedScanSentinel))
             await PublishDiagnosticsAsync(stdout, uri, []);
     }
 
@@ -815,18 +822,23 @@ public static partial class LspServer
                     // stuck in ServerCancelled+retrigger loops).
                     if (!ct.IsCancellationRequested)
                     {
+                        string? evicted = null;
+                        LspDiagnostic[]? evictedDiags = null;
                         lock (_sourceFileDiagnosticsAdmissionLock)
                         {
                             if (!_sourceFileDiagnostics.ContainsKey(uri))
                             {
                                 if (_sourceFileDiagnostics.Count >= MaxCachedDocuments)
                                 {
-                                    var evict = _sourceFileDiagnostics.Keys.FirstOrDefault();
-                                    if (evict is not null) _sourceFileDiagnostics.TryRemove(evict, out _);
+                                    evicted = _sourceFileDiagnostics.Keys.FirstOrDefault();
+                                    if (evicted is not null) _sourceFileDiagnostics.TryRemove(evicted, out evictedDiags);
                                 }
-                                _sourceFileDiagnostics[uri] = [];
+                                _sourceFileDiagnostics[uri] = _failedScanSentinel;
                             }
                         }
+                        // Clear diagnostics for evicted published entries (not sentinels).
+                        if (evicted is not null && evictedDiags is not null && !ReferenceEquals(evictedDiags, _failedScanSentinel))
+                            _ = TryClearEvictedDiagnosticsAsync(stdout, evicted);
                     }
                     return;
                 }

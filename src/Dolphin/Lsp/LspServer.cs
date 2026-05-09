@@ -551,18 +551,18 @@ public static partial class LspServer
     private static async Task HandleDidCloseAsync(Stream stdout, JsonElement p)
     {
         var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
+        // Cancel before touching caches: reduces the race window where an in-flight scan
+        // is waiting on _stdoutLock and could publish after the close-clear.
+        CancelAndRemove(uri);
         _documentText.TryRemove(uri, out _);
         _uncacheableDocs.TryRemove(uri, out _);
         _sourceFileDiagnostics.TryRemove(uri, out var cachedDiags);
-        CancelAndRemove(uri);
         // Always clear rules-file diagnostics on close. For source files, only clear
-        // if the cache had a published entry. _failedScanSentinel entries mean the scan
-        // never ran successfully (no diagnostics were published), so no clear is needed.
-        // Using the TryRemove result also handles the case where .dolphin/rules.yaml was
-        // removed between open and close.
+        // based on what the cache held — no need to re-derive source-ness from the URI.
+        // _failedScanSentinel entries mean the scan never published anything, so no clear.
         if (IsDolphinRulesFile(uri))
             await PublishDiagnosticsAsync(stdout, uri, []);
-        else if (IsSourceFile(uri) && cachedDiags is not null && !ReferenceEquals(cachedDiags, _failedScanSentinel))
+        else if (cachedDiags is not null && !ReferenceEquals(cachedDiags, _failedScanSentinel))
             await PublishDiagnosticsAsync(stdout, uri, []);
     }
 

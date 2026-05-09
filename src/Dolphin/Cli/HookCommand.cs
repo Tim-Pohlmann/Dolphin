@@ -84,6 +84,9 @@ public static class HookCommand
         try { result = await Runner.RunAsync(scannerBinary, cwd, targetFile: filePath); }
         catch { return; }
 
+        if (result.ScannerWarning != null)
+            Console.Error.WriteLine($"Warning: {result.ScannerWarning}");
+
         if (result.Findings.Count > 0)
             Formatter.Print(result.Findings, "text");
     }

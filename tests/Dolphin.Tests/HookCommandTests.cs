@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Dolphin.Cli;
+using Dolphin.Scanner;
 
 namespace Dolphin.Tests;
 
@@ -126,6 +127,46 @@ public class HookCommandTests
         Assert.AreEqual(0, exitCode);
         Assert.IsFalse(stdout.Contains("rules.yaml:"),
             $"Expected no rules.yaml output for a non-rules file, got: {stdout}");
+    }
+
+    [TestMethod]
+    public async Task PostToolUse_SourceFileWithErrorFinding_PrintsFinding()
+    {
+        // Graceful skip if scanner unavailable
+        try { await Installer.EnsureInstalledAsync(); }
+        catch { return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-hook-test-{Guid.NewGuid()}");
+        var dolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var srcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(dolphinDir);
+        Directory.CreateDirectory(srcDir);
+
+        var fixturesDir = Path.Combine(AppContext.BaseDirectory, "fixtures");
+        File.Copy(Path.Combine(fixturesDir, "rules.yaml"), Path.Combine(dolphinDir, "rules.yaml"));
+        var badFile = Path.Combine(srcDir, "bad-file.ts");
+        File.Copy(Path.Combine(fixturesDir, "sample-src", "bad-file.ts"), badFile);
+
+        try
+        {
+            var hookInput = JsonSerializer.Serialize(new
+            {
+                session_id    = "test",
+                tool_name     = "Write",
+                tool_input    = new { file_path = badFile },
+                tool_response = "ok"
+            });
+
+            var (exitCode, stdout, _) = await RunHookAsync(hookInput);
+
+            Assert.AreEqual(0, exitCode);
+            Assert.IsTrue(stdout.Length > 0,
+                $"Expected finding output for a file with ERROR violations, got empty stdout");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
     }
 
     // ── Helper ─────────────────────────────────────────────────────────────────

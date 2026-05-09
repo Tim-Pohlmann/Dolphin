@@ -544,20 +544,17 @@ public static partial class LspServer
         var uri = p.GetProperty(TextDocumentProperty).GetProperty("uri").GetString() ?? "";
         _documentText.TryRemove(uri, out _);
         _uncacheableDocs.TryRemove(uri, out _);
-        _sourceFileDiagnostics.TryRemove(uri, out _);
+        _sourceFileDiagnostics.TryRemove(uri, out var cachedDiags);
         CancelAndRemove(uri);
         // Always clear rules-file diagnostics on close. For source files, only clear
-        // when a project root exists — a scan could only have published diagnostics if
-        // .dolphin/rules.yaml was present. Skipping the clear for unrooted files avoids
-        // spurious publishDiagnostics traffic for files that were never scanned.
+        // if the cache had an entry — a scan completed and published diagnostics for
+        // this URI. Files whose scan never finished (no cache entry) had no diagnostics
+        // published, so no clear is needed. Using the TryRemove result also handles the
+        // case where .dolphin/rules.yaml was removed between open and close.
         if (IsDolphinRulesFile(uri))
             await PublishDiagnosticsAsync(stdout, uri, []);
-        else if (IsSourceFile(uri))
-        {
-            var path = TryGetLocalPath(uri);
-            if (path != null && FindProjectRoot(path) != null)
-                await PublishDiagnosticsAsync(stdout, uri, []);
-        }
+        else if (IsSourceFile(uri) && cachedDiags is not null)
+            await PublishDiagnosticsAsync(stdout, uri, []);
     }
 
     private static async Task HandleDiagnosticPullAsync(Stream stdout, JsonElement p, JsonElement id)

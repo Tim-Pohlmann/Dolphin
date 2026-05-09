@@ -60,6 +60,10 @@ public static class Runner
             // the process may have exited before Kill ran).
             using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             try { await proc.WaitForExitAsync(exitCts.Token); } catch (Exception) { }
+            // Observe the pipe-read tasks so any post-kill IOExceptions do not surface
+            // as UnobservedTaskException after this method returns. By now the process has
+            // exited (or we timed out), so the pipes are closed and these complete quickly.
+            try { await Task.WhenAll(stdoutTask, stderrTask); } catch (Exception) { }
             throw;
         }
         var stdout = stdoutTask.Result;

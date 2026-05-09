@@ -36,10 +36,17 @@ public static class HookCommand
 
         if (string.IsNullOrWhiteSpace(filePath)) return;
 
-        var normalizedPath = filePath.Replace('\\', '/');
-        if (normalizedPath.EndsWith("/.dolphin/rules.yaml", StringComparison.OrdinalIgnoreCase)
-         || normalizedPath.EndsWith("/.dolphin/rules.yml", StringComparison.OrdinalIgnoreCase))
+        if (IsRulesFile(filePath))
             await ValidateRulesFileAsync(filePath);
+    }
+
+    internal static bool IsRulesFile(string filePath)
+    {
+        var fileName  = Path.GetFileName(filePath);
+        var parentDir = Path.GetFileName(Path.GetDirectoryName(filePath) ?? string.Empty);
+        return parentDir.Equals(".dolphin", StringComparison.OrdinalIgnoreCase)
+            && (fileName.Equals("rules.yaml", StringComparison.OrdinalIgnoreCase)
+             || fileName.Equals("rules.yml",  StringComparison.OrdinalIgnoreCase));
     }
 
     private static async Task ValidateRulesFileAsync(string filePath)
@@ -51,7 +58,8 @@ public static class HookCommand
 
         if (diagnostics.Length == 0) return;
 
+        var displayName = Path.GetFileName(filePath);
         foreach (var d in diagnostics)
-            Console.WriteLine($"rules.yaml:{d.Range.Start.Line + 1}: {d.Message}");
+            Console.WriteLine($"{displayName}:{d.Range.Start.Line + 1}:{d.Range.Start.Character + 1}: {d.Message}");
     }
 }

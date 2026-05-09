@@ -122,7 +122,7 @@ public class HookCommandTests
 
         var (exitCode, stdout, _) = await RunHookAsync(hookInput);
 
-        // Source-file check requires scanner; simply assert no crash and no rules.yaml output
+        // Non-rules files are silently ignored at this stage; assert no crash and no rules.yaml output
         Assert.AreEqual(0, exitCode);
         Assert.IsFalse(stdout.Contains("rules.yaml:"),
             $"Expected no rules.yaml output for a non-rules file, got: {stdout}");

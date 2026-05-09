@@ -255,7 +255,7 @@ public class CheckCommandTests
         Directory.CreateDirectory(tmpSrcDir);
 
         File.Copy(Path.Combine(FixturesDir, "rules.yaml"), Path.Combine(tmpDolphinDir, "rules.yaml"));
-        // bad-file.ts has an ERROR finding; warn-only.ts does not
+        // bad-file.ts has an ERROR finding; warn-only.ts has warnings only (no ERRORs)
         File.Copy(Path.Combine(FixturesDir, "sample-src", "bad-file.ts"),
                   Path.Combine(tmpSrcDir, "bad-file.ts"));
         await File.WriteAllTextAsync(

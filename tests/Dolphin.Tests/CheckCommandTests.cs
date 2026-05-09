@@ -269,7 +269,7 @@ public class CheckCommandTests
             var (exitCode, _, _) = await RunDolphinAsync(
                 $"check --cwd \"{tmpDir}\" --file \"{Path.Combine(tmpSrcDir, "warn-only.ts")}\""
             );
-            Assert.AreEqual(0, exitCode, "Expected exit 0 when only clean file is scanned");
+            Assert.AreEqual(0, exitCode, "Expected exit 0 when scanned file has warnings but no ERROR findings");
 
             // Scanning only bad-file.ts should exit 1
             var (exitCode2, _, _) = await RunDolphinAsync(

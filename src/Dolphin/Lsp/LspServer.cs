@@ -844,16 +844,11 @@ public static partial class LspServer
                     }
                     return;
                 }
-                // Publish first so the cache is only written when diagnostics have actually
-                // been delivered. Writing the cache before publish could leave stale entries
-                // if the token is cancelled in the window between the lock release and the
-                // first await in PublishDiagnosticsAsync.
-                await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
-                // After a successful publish, always write to cache under the admission lock,
-                // even if the CT was cancelled between publish and here. Skipping the write
-                // would leave the cache entry absent after diagnostics were shown, so a
-                // subsequent didClose would not see the entry and would skip the empty-clear
-                // publish, leaving stale diagnostics visible in the editor.
+                // Write to cache before publishing so HandleDidCloseAsync always finds an
+                // entry to TryRemove and can issue the empty clear — even if didClose arrives
+                // in the narrow window between publish and a post-publish cache write. On
+                // exception (cancellation before publish, IO failure) roll back via the keyed
+                // overload so a newer scan that has already replaced our entry is preserved.
                 string? evicted = null;
                 LspDiagnostic[]? evictedDiags = null;
                 lock (_sourceFileDiagnosticsAdmissionLock)
@@ -870,6 +865,17 @@ public static partial class LspServer
                 // published anything, so no clear is needed.
                 if (evicted is not null && evictedDiags is not null && !ReferenceEquals(evictedDiags, _failedScanSentinel))
                     _ = TryClearEvictedDiagnosticsAsync(stdout, evicted);
+                try
+                {
+                    await PublishDiagnosticsAsync(stdout, uri, diagnostics, ct);
+                }
+                catch
+                {
+                    // Publish cancelled or failed before delivery: remove our cache entry so
+                    // pull requests don't serve diagnostics that were never shown to the user.
+                    _sourceFileDiagnostics.TryRemove(new KeyValuePair<string, LspDiagnostic[]>(uri, diagnostics));
+                    throw;
+                }
             }
             catch (OperationCanceledException) { /* superseded by a newer open/save */ }
             catch (Exception ex) { await Console.Error.WriteLineAsync($"[dolphin-lsp] scan error for {uri}: {ex.Message}"); }

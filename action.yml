@@ -24,7 +24,6 @@ runs:
       env:
         DOLPHIN_CWD: ${{ inputs.working-directory }}
         DOLPHIN_RULE: ${{ inputs.rule }}
-        CLAUDE_PLUGIN_ROOT: ${{ github.action_path }}
       run: |
         args=(check --cwd "${DOLPHIN_CWD:-$GITHUB_WORKSPACE}" --format github)
         if [ -n "$DOLPHIN_RULE" ]; then

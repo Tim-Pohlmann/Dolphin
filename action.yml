@@ -22,6 +22,7 @@ runs:
     - name: Run Dolphin
       shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
         DOLPHIN_CWD: ${{ inputs.working-directory }}
         DOLPHIN_RULE: ${{ inputs.rule }}
       run: |
@@ -29,4 +30,4 @@ runs:
         if [ -n "$DOLPHIN_RULE" ]; then
           args+=(--rule "$DOLPHIN_RULE")
         fi
-        node "$GITHUB_ACTION_PATH/launcher/launcher.js" "${args[@]}"
+        node "$ACTION_PATH/launcher/launcher.js" "${args[@]}"

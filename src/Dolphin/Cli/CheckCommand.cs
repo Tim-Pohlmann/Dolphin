@@ -21,9 +21,10 @@ public static class CheckCommand
 
         var formatOption = new Option<string>(
             "--format",
-            description: "Output format: text or json",
+            description: "Output format: text, json, or github",
             getDefaultValue: () => "text"
         );
+        formatOption.FromAmong("text", "json", "github");
 
         var cmd = new Command("check", "Run static analysis rules against the codebase")
         {

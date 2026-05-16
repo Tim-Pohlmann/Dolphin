@@ -28,6 +28,12 @@ public static class Formatter
             return;
         }
 
+        if (format == "github")
+        {
+            PrintGitHub(findings);
+            return;
+        }
+
         PrintText(findings);
     }
 
@@ -113,4 +119,28 @@ public static class Formatter
             FormatterJsonContext.Default.ListFindingDto
         ));
     }
+
+    private static void PrintGitHub(List<Finding> findings)
+    {
+        foreach (var f in findings)
+        {
+            var level = f.Severity switch
+            {
+                Severity.Error   => "error",
+                Severity.Warning => "warning",
+                _                => "notice"
+            };
+            var file    = EscapeProperty(f.FilePath);
+            var title   = EscapeProperty(f.RuleId);
+            var message = EscapeData(f.Message);
+            Console.WriteLine(
+                $"::{level} file={file},line={f.Line},col={f.Column},title={title}::{message}");
+        }
+    }
+
+    private static string EscapeData(string value) =>
+        value.Replace("%", "%25").Replace("\r", "%0D").Replace("\n", "%0A");
+
+    private static string EscapeProperty(string value) =>
+        EscapeData(value).Replace(":", "%3A").Replace(",", "%2C");
 }

@@ -1,0 +1,23 @@
+name: Dolphin
+description: Run Dolphin static analysis and emit GitHub Actions annotations
+author: Tim Pohlmann
+
+branding:
+  icon: search
+  color: blue
+
+inputs:
+  working-directory:
+    description: Directory to scan (defaults to the repository root)
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Run Dolphin
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        DOLPHIN_CWD: ${{ inputs.working-directory }}
+      run: |
+        node "$ACTION_PATH/launcher/launcher.js" check --cwd "${DOLPHIN_CWD:-$GITHUB_WORKSPACE}" --format github

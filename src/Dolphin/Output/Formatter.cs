@@ -132,16 +132,15 @@ public static class Formatter
             };
             var file    = EscapeProperty(f.FilePath);
             var title   = EscapeProperty(f.RuleId);
-            var message = f.Message
-                .Replace("%",  "%25")
-                .Replace("\r", "%0D")
-                .Replace("\n", "%0A");
+            var message = EscapeData(f.Message);
             Console.WriteLine(
                 $"::{level} file={file},line={f.Line},col={f.Column},title={title}::{message}");
         }
     }
 
+    private static string EscapeData(string value) =>
+        value.Replace("%", "%25").Replace("\r", "%0D").Replace("\n", "%0A");
+
     private static string EscapeProperty(string value) =>
-        value.Replace("%", "%25").Replace("\r", "%0D").Replace("\n", "%0A")
-             .Replace(":", "%3A").Replace(",", "%2C");
+        EscapeData(value).Replace(":", "%3A").Replace(",", "%2C");
 }

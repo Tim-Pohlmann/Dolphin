@@ -6,18 +6,28 @@ namespace Dolphin.Scanner;
 public static class Runner
 {
     /// <summary>
-    /// Runs the scanner against <paramref name="cwd"/> using .dolphin/rules.yaml.
-    /// Optionally filters to a single rule ID.
+    /// Runs the scanner against <paramref name="cwd"/> using .dolphin/rules.yaml (or rules.yml).
+    /// Optionally filters to a single rule ID or scans a single file.
     /// </summary>
     public static async Task<RunResult> RunAsync(
         string scannerBinary,
         string cwd,
-        string? ruleId = null)
+        string? ruleId = null,
+        string? targetFile = null)
     {
         var rulesPath = Path.Combine(cwd, ".dolphin", "rules.yaml");
         if (!File.Exists(rulesPath))
-            throw new FileNotFoundException(
-                $"No rules file at {rulesPath}. Run the generate-rules skill first.");
+        {
+            var altPath = Path.Combine(cwd, ".dolphin", "rules.yml");
+            if (File.Exists(altPath))
+                rulesPath = altPath;
+            else
+                throw new FileNotFoundException(
+                    $"No rules file at {rulesPath} (or rules.yml). Run the generate-rules skill first.");
+        }
+
+        if (targetFile != null && !Path.IsPathRooted(targetFile))
+            targetFile = Path.GetFullPath(targetFile, cwd);
 
         var args = new List<string>
         {
@@ -25,7 +35,7 @@ public static class Runner
             "--json",
             "--no-git-ignore",
             "--no-rewrite-rule-ids",
-            cwd
+            targetFile ?? cwd
         };
 
         var psi = new ProcessStartInfo(scannerBinary)

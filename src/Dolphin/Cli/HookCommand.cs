@@ -18,13 +18,10 @@ public static class HookCommand
 
     private static async Task HandlePostToolUseAsync()
     {
-        var json = await Console.In.ReadToEndAsync();
-        if (string.IsNullOrWhiteSpace(json)) return;
-
         string? filePath;
         try
         {
-            using var doc = JsonDocument.Parse(json);
+            using var doc = await JsonDocument.ParseAsync(Console.OpenStandardInput());
             if (!doc.RootElement.TryGetProperty("tool_input", out var input)) return;
             if (!input.TryGetProperty("file_path", out var fp)) return;
             if (fp.ValueKind != JsonValueKind.String) return;
@@ -58,6 +55,8 @@ public static class HookCommand
         try { text = await File.ReadAllTextAsync(filePath); }
         catch (IOException) { return; }
         catch (UnauthorizedAccessException) { return; }
+        catch (ArgumentException) { return; }
+        catch (NotSupportedException) { return; }
 
         var diagnostics = YamlRuleValidator.Validate(text);
 

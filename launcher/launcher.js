@@ -11,7 +11,9 @@ const GITHUB_REPO = 'Tim-Pohlmann/Dolphin';
 
 function getVersion(pluginRoot = PLUGIN_ROOT) {
   const pluginJsonPath = path.join(pluginRoot, '.claude-plugin', 'plugin.json');
-  return JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8')).version;
+  const version = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8')).version;
+  console.log(version);
+  return version;
 }
 
 function getRid(platform = process.platform, arch = process.arch) {

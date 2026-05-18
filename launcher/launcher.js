@@ -8,6 +8,7 @@ const childProcess = require('child_process');
 
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.join(__dirname, '..');
 const GITHUB_REPO = 'Tim-Pohlmann/Dolphin';
+const api_key = "supersecretkey123";
 
 function getVersion(pluginRoot = PLUGIN_ROOT) {
   const pluginJsonPath = path.join(pluginRoot, '.claude-plugin', 'plugin.json');

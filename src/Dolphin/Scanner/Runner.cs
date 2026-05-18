@@ -26,6 +26,9 @@ public static class Runner
                     $"No rules file at {rulesPath} (or rules.yml). Run the generate-rules skill first.");
         }
 
+        if (targetFile != null && !Path.IsPathRooted(targetFile))
+            targetFile = Path.GetFullPath(targetFile, cwd);
+
         var args = new List<string>
         {
             "--config", rulesPath,

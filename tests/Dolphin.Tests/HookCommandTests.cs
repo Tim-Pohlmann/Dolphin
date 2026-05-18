@@ -247,9 +247,9 @@ public class HookCommandTests
     [TestMethod]
     public async Task PostToolUse_SourceFileWithErrorFinding_PrintsFinding()
     {
-        // Graceful skip if scanner unavailable
+        // Skip rather than silently pass if scanner unavailable
         try { await Installer.EnsureInstalledAsync(); }
-        catch { return; }
+        catch { Assert.Inconclusive("Scanner not available; skipping source-file scan test"); return; }
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-hook-test-{Guid.NewGuid()}");
         var dolphinDir = Path.Combine(tmpDir, ".dolphin");
@@ -275,8 +275,8 @@ public class HookCommandTests
             var (exitCode, stdout, _) = await RunHookAsync(hookInput);
 
             Assert.AreEqual(0, exitCode);
-            Assert.IsTrue(stdout.Length > 0,
-                $"Expected finding output for a file with ERROR violations, got empty stdout");
+            Assert.IsTrue(stdout.Contains("no-hardcoded-secret"),
+                $"Expected finding output containing rule ID 'no-hardcoded-secret', got: {stdout}");
         }
         finally
         {

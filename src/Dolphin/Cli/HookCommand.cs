@@ -74,6 +74,7 @@ public static class HookCommand
 
     private static async Task CheckSourceFileAsync(string filePath)
     {
+        filePath = Path.GetFullPath(filePath);
         if (!File.Exists(filePath)) return;
 
         var dir = Path.GetDirectoryName(filePath);

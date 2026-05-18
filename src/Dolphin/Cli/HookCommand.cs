@@ -1,9 +1,13 @@
 using System.CommandLine;
+using System.Text;
 using System.Text.Json;
-using Dolphin.Output;
+using System.Text.Json.Serialization;
 using Dolphin.Scanner;
 
 namespace Dolphin.Cli;
+
+[JsonSerializable(typeof(string))]
+internal partial class HookCommandJsonContext : JsonSerializerContext { }
 
 public static class HookCommand
 {
@@ -62,8 +66,10 @@ public static class HookCommand
         if (diagnostics.Length == 0) return;
 
         var displayName = Path.GetFileName(filePath);
+        var sb = new StringBuilder();
         foreach (var d in diagnostics)
-            Console.WriteLine($"{displayName}:{d.Range.Start.Line + 1}:{d.Range.Start.Character + 1}: {d.Message}");
+            sb.AppendLine($"{displayName}:{d.Range.Start.Line + 1}:{d.Range.Start.Character + 1}: {d.Message}");
+        WriteHookContext(sb.ToString().TrimEnd());
     }
 
     private static async Task CheckSourceFileAsync(string filePath)
@@ -84,11 +90,34 @@ public static class HookCommand
         try { result = await Runner.RunAsync(scannerBinary, cwd, targetFile: filePath); }
         catch { return; }
 
-        if (result.ScannerWarning != null)
-            Console.Error.WriteLine($"Warning: {result.ScannerWarning}");
+        if (result.Findings.Count == 0) return;
 
-        if (result.Findings.Count > 0)
-            Formatter.Print(result.Findings, "text");
+        var sb = new StringBuilder();
+        foreach (var f in result.Findings)
+        {
+            var sev = f.Severity switch
+            {
+                Severity.Error   => "ERROR",
+                Severity.Warning => "WARN",
+                _                => "INFO"
+            };
+            sb.AppendLine($"{f.FilePath}:{f.Line}  {sev}  {f.Message}  [{f.RuleId}]");
+            if (!string.IsNullOrEmpty(f.MatchedText))
+                sb.AppendLine($"    {f.MatchedText}");
+        }
+        var errors   = result.Findings.Count(f => f.Severity == Severity.Error);
+        var warnings = result.Findings.Count(f => f.Severity == Severity.Warning);
+        var infos    = result.Findings.Count(f => f.Severity == Severity.Info);
+        sb.Append($"Found {result.Findings.Count} violation(s): {errors} errors, {warnings} warnings, {infos} info");
+        if (result.ScannerWarning != null)
+            sb.Append($"\nWarning: {result.ScannerWarning}");
+        WriteHookContext(sb.ToString());
+    }
+
+    private static void WriteHookContext(string text)
+    {
+        var escaped = JsonSerializer.Serialize(text, HookCommandJsonContext.Default.String);
+        Console.WriteLine($"{{\"hookSpecificOutput\":{{\"hookEventName\":\"PostToolUse\",\"additionalContext\":{escaped}}}}}");
     }
 
     private static string? FindProjectRoot(string startDir)

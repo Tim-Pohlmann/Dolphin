@@ -1,9 +1,9 @@
-using Dolphin.Lsp;
+using Dolphin.Scanner;
 
 namespace Dolphin.Tests;
 
 [TestClass]
-public class LspDiagnosticsParserTests
+public class ValidationOutputParserTests
 {
     // ── Happy path ─────────────────────────────────────────────────────────────
 
@@ -15,7 +15,7 @@ public class LspDiagnosticsParserTests
               --> /tmp/rules.yaml:8:5
             """;
 
-        var diags = LspDiagnosticsParser.Parse(output);
+        var diags = ValidationOutputParser.Parse(output);
 
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual("opengrep", diags[0].Source);
@@ -33,7 +33,7 @@ public class LspDiagnosticsParserTests
               --> /tmp/rules.yaml:3
             """;
 
-        var diags = LspDiagnosticsParser.Parse(output);
+        var diags = ValidationOutputParser.Parse(output);
 
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual(2, diags[0].Range.Start.Line);
@@ -50,7 +50,7 @@ public class LspDiagnosticsParserTests
               --> /home/my user/my rules.yaml:12:3
             """;
 
-        var diags = LspDiagnosticsParser.Parse(output);
+        var diags = ValidationOutputParser.Parse(output);
 
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual(11, diags[0].Range.Start.Line);
@@ -65,7 +65,7 @@ public class LspDiagnosticsParserTests
               --> C:\Users\My Name\rules.yaml:5:1
             """;
 
-        var diags = LspDiagnosticsParser.Parse(output);
+        var diags = ValidationOutputParser.Parse(output);
 
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual(4, diags[0].Range.Start.Line);
@@ -79,7 +79,7 @@ public class LspDiagnosticsParserTests
     {
         const string output = "Error: unexpected field 'xyz'";
 
-        var diags = LspDiagnosticsParser.Parse(output);
+        var diags = ValidationOutputParser.Parse(output);
 
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual(0, diags[0].Range.Start.Line);
@@ -99,7 +99,7 @@ public class LspDiagnosticsParserTests
               --> /tmp/rules.yaml:10:1
             """;
 
-        var diags = LspDiagnosticsParser.Parse(output);
+        var diags = ValidationOutputParser.Parse(output);
 
         Assert.AreEqual(2, diags.Length);
         Assert.AreEqual(1, diags[0].Range.Start.Line);
@@ -111,14 +111,14 @@ public class LspDiagnosticsParserTests
     [TestMethod]
     public void Parse_EmptyOutput_ReturnsEmpty()
     {
-        var diags = LspDiagnosticsParser.Parse("");
+        var diags = ValidationOutputParser.Parse("");
         Assert.AreEqual(0, diags.Length);
     }
 
     [TestMethod]
     public void Parse_WhitespaceOnlyOutput_ReturnsEmpty()
     {
-        var diags = LspDiagnosticsParser.Parse("   \n\t\n  ");
+        var diags = ValidationOutputParser.Parse("   \n\t\n  ");
         Assert.AreEqual(0, diags.Length);
     }
 
@@ -130,7 +130,7 @@ public class LspDiagnosticsParserTests
         // Output that doesn't match any keyword — treated as opaque error.
         const string output = "Something went completely sideways";
 
-        var diags = LspDiagnosticsParser.Parse(output);
+        var diags = ValidationOutputParser.Parse(output);
 
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual("opengrep", diags[0].Source);
@@ -148,7 +148,7 @@ public class LspDiagnosticsParserTests
         const string output =
             "[00.20][WARNING]: invalid rule bad-rule, rules.yaml:2:4: Missing required field message";
 
-        var diags = LspDiagnosticsParser.Parse(output);
+        var diags = ValidationOutputParser.Parse(output);
 
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual(1, diags[0].Range.Start.Line);      // 2 → 0-indexed 1
@@ -162,7 +162,7 @@ public class LspDiagnosticsParserTests
         const string output =
             "[00.70][ERROR]: Opengrep match found at line rules.yaml:5";
 
-        var diags = LspDiagnosticsParser.Parse(output);
+        var diags = ValidationOutputParser.Parse(output);
 
         Assert.AreEqual(1, diags.Length);
         Assert.AreEqual(4, diags[0].Range.Start.Line);      // 5 → 0-indexed 4

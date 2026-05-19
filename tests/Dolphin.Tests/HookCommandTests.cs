@@ -31,31 +31,35 @@ public class HookCommandTests
     }
 
     [TestMethod]
-    public async Task HandlePostToolUse_EmptyStream_ExitsCleanly()
+    public async Task HandlePostToolUse_EmptyStream_ProducesNoOutput()
     {
         using var stdin = new MemoryStream();
-        await HookCommand.HandlePostToolUseAsync(stdin);
+        var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+        Assert.AreEqual(string.Empty, output.Trim());
     }
 
     [TestMethod]
-    public async Task HandlePostToolUse_InvalidJson_ExitsCleanly()
+    public async Task HandlePostToolUse_InvalidJson_ProducesNoOutput()
     {
         using var stdin = new MemoryStream(Encoding.UTF8.GetBytes("not json"));
-        await HookCommand.HandlePostToolUseAsync(stdin);
+        var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+        Assert.AreEqual(string.Empty, output.Trim());
     }
 
     [TestMethod]
-    public async Task HandlePostToolUse_MissingToolInput_ExitsCleanly()
+    public async Task HandlePostToolUse_MissingToolInput_ProducesNoOutput()
     {
         using var stdin = Utf8Stream("""{"tool_name":"Write"}""");
-        await HookCommand.HandlePostToolUseAsync(stdin);
+        var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+        Assert.AreEqual(string.Empty, output.Trim());
     }
 
     [TestMethod]
-    public async Task HandlePostToolUse_NonStringFilePath_ExitsCleanly()
+    public async Task HandlePostToolUse_NonStringFilePath_ProducesNoOutput()
     {
         using var stdin = Utf8Stream("""{"tool_input":{"file_path":123}}""");
-        await HookCommand.HandlePostToolUseAsync(stdin);
+        var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+        Assert.AreEqual(string.Empty, output.Trim());
     }
 
     [TestMethod]

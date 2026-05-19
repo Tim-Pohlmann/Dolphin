@@ -23,10 +23,24 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Validate version format
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          version="${{ github.event.inputs.version }}"
-          if [[ ! "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "Error: version must match v<major>.<minor>.<patch> with no leading zeros (got: $version)"
+          if [[ ! "$INPUT_VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Error: version must match v<major>.<minor>.<patch> with no leading zeros (got: $INPUT_VERSION)"
+            exit 1
+          fi
+
+      - name: Validate version files match release version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          semver="${INPUT_VERSION#v}"
+          plugin_version=$(jq -r '.version' .claude-plugin/plugin.json)
+          csproj_version=$(grep -oPm1 '(?<=<Version>)[^<]+' src/Dolphin/Dolphin.csproj)
+          if [[ "$plugin_version" != "$semver" || "$csproj_version" != "$semver" ]]; then
+            echo "Error: version mismatch. Expected $semver but found plugin.json=$plugin_version, Dolphin.csproj=$csproj_version"
+            echo "Bump the version first by running the Version Bump workflow with version $INPUT_VERSION."
             exit 1
           fi
 

@@ -59,12 +59,15 @@ jobs:
             exit 0
           fi
           git commit -m "Bump version to v$semver"
-          git push origin "$branch" --force
-          gh pr create \
-            --title "Bump version to v$semver" \
-            --body "Automated version bump to v$semver." \
-            --base "${{ github.event.repository.default_branch }}" \
-            --head "$branch" \
-          || echo "PR already exists."
+          git push origin "$branch" --force-with-lease
+          if gh pr view "$branch" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "PR already exists."
+          else
+            gh pr create \
+              --title "Bump version to v$semver" \
+              --body "Automated version bump to v$semver." \
+              --base "${{ github.event.repository.default_branch }}" \
+              --head "$branch"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

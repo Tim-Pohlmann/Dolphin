@@ -26,79 +26,93 @@ public static class CheckCommand
         );
         formatOption.FromAmong("text", "json", "github");
 
+        var fileOption = new Option<string?>(
+            "--file",
+            description: "Scan only this file instead of the entire project"
+        );
+
         var cmd = new Command("check", "Run static analysis rules against the codebase")
         {
             cwdOption,
             ruleOption,
-            formatOption
+            formatOption,
+            fileOption
         };
 
-        cmd.SetHandler(async (cwd, ruleId, format) =>
-        {
-            // Resolve and validate cwd
-            cwd = Path.GetFullPath(cwd);
-            if (!Directory.Exists(cwd))
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.Error.WriteLine($"Directory not found: {cwd}");
-                Console.ResetColor();
-                Environment.Exit(2);
-                return;
-            }
-
-            // Locate scanner binary (bundled next to dolphin, or on PATH for dev builds)
-            string scannerBinary;
-            try
-            {
-                scannerBinary = await Installer.EnsureInstalledAsync();
-            }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.Error.WriteLine($"Failed to locate scanner: {ex.Message}");
-                Console.ResetColor();
-                Environment.Exit(2);
-                return;
-            }
-
-            // Run analysis
-            RunResult result;
-            try
-            {
-                result = await Runner.RunAsync(scannerBinary, cwd, ruleId);
-            }
-            catch (FileNotFoundException ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.Error.WriteLine(ex.Message);
-                Console.ResetColor();
-                Environment.Exit(2);
-                return;
-            }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.Error.WriteLine($"Analysis failed: {ex.Message}");
-                Console.ResetColor();
-                Environment.Exit(2);
-                return;
-            }
-
-            if (result.ScannerWarning != null)
-            {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.Error.WriteLine($"Warning: {result.ScannerWarning}");
-                Console.ResetColor();
-            }
-
-            Formatter.Print(result.Findings, format);
-
-            // Exit 1 if any ERROR-severity findings, 0 otherwise
-            var hasErrors = result.Findings.Any(f => f.Severity == Severity.Error);
-            Environment.Exit(hasErrors ? 1 : 0);
-
-        }, cwdOption, ruleOption, formatOption);
+        cmd.SetHandler(
+            async (cwd, ruleId, format, file) =>
+                Environment.Exit(await HandleAsync(cwd, ruleId, format, file)),
+            cwdOption, ruleOption, formatOption, fileOption);
 
         return cmd;
+    }
+
+    internal static async Task<int> HandleAsync(string cwd, string? ruleId, string format, string? file)
+    {
+        cwd = Path.GetFullPath(cwd);
+        if (!Directory.Exists(cwd))
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            await Console.Error.WriteLineAsync($"Directory not found: {cwd}");
+            Console.ResetColor();
+            return 2;
+        }
+
+        if (file != null)
+        {
+            if (!Path.IsPathRooted(file))
+                file = Path.GetFullPath(file, cwd);
+            if (!File.Exists(file))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                await Console.Error.WriteLineAsync($"File not found: {file}");
+                Console.ResetColor();
+                return 2;
+            }
+        }
+
+        string scannerBinary;
+        try
+        {
+            scannerBinary = await Installer.EnsureInstalledAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            await Console.Error.WriteLineAsync($"Failed to locate scanner: {ex.Message}");
+            Console.ResetColor();
+            return 2;
+        }
+
+        RunResult result;
+        try
+        {
+            result = await Runner.RunAsync(scannerBinary, cwd, ruleId, targetFile: file);
+        }
+        catch (FileNotFoundException ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            await Console.Error.WriteLineAsync(ex.Message);
+            Console.ResetColor();
+            return 2;
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            await Console.Error.WriteLineAsync($"Analysis failed: {ex.Message}");
+            Console.ResetColor();
+            return 2;
+        }
+
+        if (result.ScannerWarning != null)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            await Console.Error.WriteLineAsync($"Warning: {result.ScannerWarning}");
+            Console.ResetColor();
+        }
+
+        Formatter.Print(result.Findings, format);
+
+        return result.Findings.Any(f => f.Severity == Severity.Error) ? 1 : 0;
     }
 }

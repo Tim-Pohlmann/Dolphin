@@ -381,6 +381,67 @@ public class RunnerTests
         finally { Directory.Delete(tmpDir, recursive: true); }
     }
 
+    [TestMethod]
+    public async Task RunAsync_UsesRulesYml_WhenRulesYamlAbsent()
+    {
+        string scanner;
+        try { scanner = await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("No scanner found in this environment"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var tmpSrcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(tmpDolphinDir);
+        Directory.CreateDirectory(tmpSrcDir);
+
+        // Use rules.yml (not rules.yaml) to verify fallback logic
+        File.Copy(Path.Combine(FixturesDir, "rules.yaml"), Path.Combine(tmpDolphinDir, "rules.yml"));
+        File.Copy(Path.Combine(FixturesDir, "sample-src", "bad-file.ts"),
+                  Path.Combine(tmpSrcDir, "bad-file.ts"));
+
+        try
+        {
+            var result = await Runner.RunAsync(scanner, tmpDir);
+            Assert.IsTrue(result.Findings.Count > 0, "Expected findings when using rules.yml fallback");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RunAsync_TargetFile_LimitsFindingsToThatFile()
+    {
+        string scanner;
+        try { scanner = await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("No scanner found in this environment"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        var tmpDolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var tmpSrcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(tmpDolphinDir);
+        Directory.CreateDirectory(tmpSrcDir);
+
+        File.Copy(Path.Combine(FixturesDir, "rules.yaml"), Path.Combine(tmpDolphinDir, "rules.yaml"));
+        File.Copy(Path.Combine(FixturesDir, "sample-src", "bad-file.ts"),
+                  Path.Combine(tmpSrcDir, "bad-file.ts"));
+        var cleanFile = Path.Combine(tmpSrcDir, "clean-file.ts");
+        File.Copy(Path.Combine(FixturesDir, "sample-src", "clean-file.ts"), cleanFile);
+
+        try
+        {
+            // Scanning only clean-file.ts should produce no findings even though bad-file.ts is present
+            var result = await Runner.RunAsync(scanner, tmpDir, targetFile: cleanFile);
+            Assert.AreEqual(0, result.Findings.Count,
+                "Expected no findings when scanning only the clean file");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
+    }
+
     /// <summary>
     /// Creates a temp directory with a minimal .dolphin/rules.yaml and a fake scanner script
     /// that writes the provided stdout content (or empty JSON results by default) and exits

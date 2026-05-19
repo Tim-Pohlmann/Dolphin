@@ -1,8 +1,13 @@
 using System.CommandLine;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dolphin.Scanner;
 
 namespace Dolphin.Cli;
+
+[JsonSerializable(typeof(string))]
+internal partial class HookCommandJsonContext : JsonSerializerContext { }
 
 public static class HookCommand
 {
@@ -33,6 +38,8 @@ public static class HookCommand
 
         if (IsRulesFile(filePath))
             await ValidateRulesFileAsync(filePath);
+        else
+            await CheckSourceFileAsync(filePath);
     }
 
     internal static bool IsRulesFile(string filePath)
@@ -59,7 +66,72 @@ public static class HookCommand
         if (diagnostics.Length == 0) return;
 
         var displayName = Path.GetFileName(filePath);
+        var sb = new StringBuilder();
         foreach (var d in diagnostics)
-            Console.WriteLine($"{displayName}:{d.Range.Start.Line + 1}:{d.Range.Start.Character + 1}: {d.Message}");
+            sb.AppendLine($"{displayName}:{d.Range.Start.Line + 1}:{d.Range.Start.Character + 1}: {d.Message}");
+        WriteHookContext(sb.ToString().TrimEnd());
+    }
+
+    private static async Task CheckSourceFileAsync(string filePath)
+    {
+        filePath = Path.GetFullPath(filePath);
+        if (!File.Exists(filePath)) return;
+
+        var dir = Path.GetDirectoryName(filePath)!;
+
+        var cwd = FindProjectRoot(dir);
+        if (cwd == null) return;
+
+        string scannerBinary;
+        try { scannerBinary = await Installer.EnsureInstalledAsync(); }
+        catch { return; }
+
+        RunResult result;
+        try { result = await Runner.RunAsync(scannerBinary, cwd, targetFile: filePath); }
+        catch { return; }
+
+        if (result.Findings.Count == 0) return;
+
+        var sb = new StringBuilder();
+        foreach (var f in result.Findings)
+        {
+            var sev = f.Severity switch
+            {
+                Severity.Error   => "ERROR",
+                Severity.Warning => "WARN",
+                _                => "INFO"
+            };
+            sb.AppendLine($"{f.FilePath}:{f.Line}  {sev}  {f.Message}  [{f.RuleId}]");
+            if (!string.IsNullOrEmpty(f.MatchedText))
+                sb.AppendLine($"    {f.MatchedText}");
+        }
+        var errors   = result.Findings.Count(f => f.Severity == Severity.Error);
+        var warnings = result.Findings.Count(f => f.Severity == Severity.Warning);
+        var infos    = result.Findings.Count(f => f.Severity == Severity.Info);
+        sb.Append($"Found {result.Findings.Count} violation(s): {errors} errors, {warnings} warnings, {infos} info");
+        if (result.ScannerWarning != null)
+            sb.Append($"\nWarning: {result.ScannerWarning}");
+        WriteHookContext(sb.ToString());
+    }
+
+    private static void WriteHookContext(string text)
+    {
+        var escaped = JsonSerializer.Serialize(text, HookCommandJsonContext.Default.String);
+        Console.WriteLine($"{{\"hookSpecificOutput\":{{\"hookEventName\":\"PostToolUse\",\"additionalContext\":{escaped}}}}}");
+    }
+
+    private static string? FindProjectRoot(string startDir)
+    {
+        var dir = startDir;
+        while (!string.IsNullOrEmpty(dir))
+        {
+            var dolphinDir = Path.Combine(dir, ".dolphin");
+            if (File.Exists(Path.Combine(dolphinDir, "rules.yaml"))
+             || File.Exists(Path.Combine(dolphinDir, "rules.yml"))) return dir;
+            var parent = Path.GetDirectoryName(dir);
+            if (parent == dir) break;
+            dir = parent!;
+        }
+        return null;
     }
 }

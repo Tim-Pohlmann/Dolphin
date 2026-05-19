@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Dolphin.Cli;
+using Dolphin.Scanner;
 
 namespace Dolphin.Tests;
 
@@ -144,6 +145,88 @@ public class HookCommandTests
         Assert.AreEqual(string.Empty, output.Trim());
     }
 
+    [TestMethod]
+    public async Task HandlePostToolUse_NonExistentSourceFile_ProducesNoOutput()
+    {
+        using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+            { tool_input = new { file_path = "/nonexistent/src/component.ts" } }));
+        var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+        Assert.AreEqual(string.Empty, output.Trim());
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_SourceFileNoProjectRoot_ProducesNoOutput()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-hook-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tmpDir);
+        var srcFile = Path.Combine(tmpDir, "component.ts");
+        await File.WriteAllTextAsync(srcFile, "const x = 1;");
+        try
+        {
+            using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+                { tool_input = new { file_path = srcFile } }));
+            var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+            Assert.AreEqual(string.Empty, output.Trim());
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_SourceFileInProject_NoFindings_ProducesNoOutput()
+    {
+        try { await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("Scanner not available; skipping source-file scan test"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-hook-test-{Guid.NewGuid()}");
+        var dolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var srcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(dolphinDir);
+        Directory.CreateDirectory(srcDir);
+
+        var fixturesDir = Path.Combine(AppContext.BaseDirectory, "fixtures");
+        File.Copy(Path.Combine(fixturesDir, "rules.yaml"), Path.Combine(dolphinDir, "rules.yaml"));
+        var cleanFile = Path.Combine(srcDir, "clean-file.ts");
+        File.Copy(Path.Combine(fixturesDir, "sample-src", "clean-file.ts"), cleanFile);
+
+        try
+        {
+            using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+                { tool_input = new { file_path = cleanFile } }));
+            var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+            Assert.AreEqual(string.Empty, output.Trim(),
+                $"Expected no output for a clean source file, got: {output}");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_SourceFileInProject_WithFindings_PrintsOutput()
+    {
+        try { await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("Scanner not available; skipping source-file scan test"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-hook-test-{Guid.NewGuid()}");
+        var dolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var srcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(dolphinDir);
+        Directory.CreateDirectory(srcDir);
+
+        var fixturesDir = Path.Combine(AppContext.BaseDirectory, "fixtures");
+        File.Copy(Path.Combine(fixturesDir, "rules.yaml"), Path.Combine(dolphinDir, "rules.yaml"));
+        var badFile = Path.Combine(srcDir, "bad-file.ts");
+        File.Copy(Path.Combine(fixturesDir, "sample-src", "bad-file.ts"), badFile);
+
+        try
+        {
+            using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+                { tool_input = new { file_path = badFile } }));
+            var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+            Assert.IsFalse(string.IsNullOrEmpty(output.Trim()),
+                "Expected findings output for a file with violations");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
     // ── CLI integration tests ──────────────────────────────────────────────────
 
     [TestMethod]
@@ -241,6 +324,46 @@ public class HookCommandTests
         Assert.AreEqual(0, exitCode);
         Assert.IsFalse(stdout.Contains("rules.yaml:"),
             $"Expected no rules.yaml output for a non-rules file, got: {stdout}");
+    }
+
+    [TestMethod]
+    public async Task PostToolUse_SourceFileWithErrorFinding_PrintsFinding()
+    {
+        // Skip rather than silently pass if scanner unavailable
+        try { await Installer.EnsureInstalledAsync(); }
+        catch { Assert.Inconclusive("Scanner not available; skipping source-file scan test"); return; }
+
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-hook-test-{Guid.NewGuid()}");
+        var dolphinDir = Path.Combine(tmpDir, ".dolphin");
+        var srcDir = Path.Combine(tmpDir, "src");
+        Directory.CreateDirectory(dolphinDir);
+        Directory.CreateDirectory(srcDir);
+
+        var fixturesDir = Path.Combine(AppContext.BaseDirectory, "fixtures");
+        File.Copy(Path.Combine(fixturesDir, "rules.yaml"), Path.Combine(dolphinDir, "rules.yaml"));
+        var badFile = Path.Combine(srcDir, "bad-file.ts");
+        File.Copy(Path.Combine(fixturesDir, "sample-src", "bad-file.ts"), badFile);
+
+        try
+        {
+            var hookInput = JsonSerializer.Serialize(new
+            {
+                session_id    = "test",
+                tool_name     = "Write",
+                tool_input    = new { file_path = badFile },
+                tool_response = "ok"
+            });
+
+            var (exitCode, stdout, _) = await RunHookAsync(hookInput);
+
+            Assert.AreEqual(0, exitCode);
+            Assert.IsTrue(stdout.Contains("no-hardcoded-secret"),
+                $"Expected finding output containing rule ID 'no-hardcoded-secret', got: {stdout}");
+        }
+        finally
+        {
+            Directory.Delete(tmpDir, recursive: true);
+        }
     }
 
     // ── Helper ─────────────────────────────────────────────────────────────────

@@ -507,4 +507,81 @@ public class YamlRuleValidatorTests
     {
         Assert.AreEqual(expected, YamlRuleValidator.LastSegment(pointer));
     }
+
+    // ── Non-ASCII detection ───────────────────────────────────────────────────
+
+    [TestMethod]
+    public void NonAscii_OnFirstLine_ReturnsCorrectLineAndCol()
+    {
+        // é (U+00E9) at character index 7 (0-based) on line 0
+        var diags = Validate("rules: é");
+        Assert.AreEqual(1, diags.Length);
+        Assert.AreEqual(0, diags[0].Range.Start.Line);
+        Assert.AreEqual(7, diags[0].Range.Start.Character);
+        StringAssert.Contains(diags[0].Message, "U+00E9");
+        StringAssert.Contains(diags[0].Message, "ASCII");
+    }
+
+    [TestMethod]
+    public void NonAscii_AfterLfNewline_ReturnsCorrectLine()
+    {
+        // LF newline: non-ASCII on line 1
+        var diags = Validate("rules:\né");
+        Assert.AreEqual(1, diags.Length);
+        Assert.AreEqual(1, diags[0].Range.Start.Line);
+        Assert.AreEqual(0, diags[0].Range.Start.Character);
+    }
+
+    [TestMethod]
+    public void NonAscii_AfterCrLfNewline_ReturnsCorrectLine()
+    {
+        // CRLF: both CR and LF together count as one newline
+        var diags = Validate("rules:\r\né");
+        Assert.AreEqual(1, diags.Length);
+        Assert.AreEqual(1, diags[0].Range.Start.Line);
+        Assert.AreEqual(0, diags[0].Range.Start.Character);
+    }
+
+    [TestMethod]
+    public void NonAscii_AfterCrOnlyNewline_ReturnsCorrectLine()
+    {
+        // CR alone also advances the line counter
+        var diags = Validate("rules:\ré");
+        Assert.AreEqual(1, diags.Length);
+        Assert.AreEqual(1, diags[0].Range.Start.Line);
+    }
+
+    [TestMethod]
+    public void NonAscii_SurrogatePair_RangeSpansTwoUtf16Units()
+    {
+        // 𝄞 (U+1D11E) is a surrogate pair: high D834 + low DD1E; utf16Len = 2
+        var diags = Validate("x: 𝄞");
+        Assert.AreEqual(1, diags.Length);
+        Assert.AreEqual(3, diags[0].Range.Start.Character);
+        Assert.AreEqual(5, diags[0].Range.End.Character); // start + 2
+    }
+
+    [TestMethod]
+    public void NonAscii_UnpairedHighSurrogate_RangeSpansOneUnit()
+    {
+        // Unpaired high surrogate (no following low surrogate): utf16Len = 1
+        var diags = Validate("x: \uD800z");
+        Assert.AreEqual(1, diags.Length);
+        Assert.AreEqual(3, diags[0].Range.Start.Character);
+        Assert.AreEqual(4, diags[0].Range.End.Character); // start + 1
+    }
+
+    [TestMethod]
+    public void NonAscii_ReturnedBeforeSchemaErrors()
+    {
+        // Non-ASCII check runs first and returns early — no schema errors mixed in
+        var diags = Validate("rules: é");
+        Assert.AreEqual(1, diags.Length, "Expected exactly the non-ASCII diagnostic, not schema errors too");
+    }
+
+    [TestMethod]
+    public void FindNonAsciiDiagnostic_AllAscii_ReturnsNull()
+    {
+        Assert.IsNull(YamlRuleValidator.FindNonAsciiDiagnostic("rules: []"));
+    }
 }

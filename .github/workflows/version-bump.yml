@@ -27,8 +27,10 @@ jobs:
 
       - name: Resolve version
         id: resolve
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          version="${{ inputs.version }}"
+          version="$INPUT_VERSION"
           if [[ -z "$version" ]]; then
             current=$(jq -r '.version' .claude-plugin/plugin.json)
             major="${current%%.*}"

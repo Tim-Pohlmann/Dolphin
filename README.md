@@ -26,6 +26,12 @@ Dolphin helps you generate and enforce Opengrep rules. It comes in two major com
 /generate-rules 
 ```
 
+The plugin provides:
+- The `generate-rules` skill for interactive rule generation
+- An MCP server that Claude uses to run checks during conversations
+- The `dolphin` CLI binary
+- A PostToolUse hook that validates `.dolphin/rules.yaml` after every Write/Edit and prints diagnostics directly in Claude Code (no additional install required)
+
 ## CLI
 
 Download the binary from [Releases](../../releases) and run it:

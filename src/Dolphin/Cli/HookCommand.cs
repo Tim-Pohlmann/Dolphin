@@ -9,15 +9,12 @@ public static class HookCommand
     public static Command Build()
     {
         var postToolUse = new Command("post-tool-use", "Handle post-tool-use hook events from Claude Code");
-        postToolUse.SetHandler(HandlePostToolUseAsync);
+        postToolUse.SetHandler(() => HandlePostToolUseAsync(Console.OpenStandardInput()));
 
         var hook = new Command("hook", "Internal hook handlers for Claude Code integration");
         hook.AddCommand(postToolUse);
         return hook;
     }
-
-    private static Task HandlePostToolUseAsync()
-        => HandlePostToolUseAsync(Console.OpenStandardInput());
 
     internal static async Task HandlePostToolUseAsync(Stream stdin)
     {

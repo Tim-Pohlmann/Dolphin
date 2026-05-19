@@ -49,8 +49,6 @@ public static class HookCommand
 
     private static async Task ValidateRulesFileAsync(string filePath)
     {
-        if (!File.Exists(filePath)) return;
-
         string text;
         try { text = await File.ReadAllTextAsync(filePath); }
         catch (IOException) { return; }

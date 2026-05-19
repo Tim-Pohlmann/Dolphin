@@ -53,7 +53,7 @@ public static class CheckCommand
         if (!Directory.Exists(cwd))
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.Error.WriteLine($"Directory not found: {cwd}");
+            await Console.Error.WriteLineAsync($"Directory not found: {cwd}");
             Console.ResetColor();
             return 2;
         }
@@ -65,7 +65,7 @@ public static class CheckCommand
             if (!File.Exists(file))
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.Error.WriteLine($"File not found: {file}");
+                await Console.Error.WriteLineAsync($"File not found: {file}");
                 Console.ResetColor();
                 return 2;
             }
@@ -79,7 +79,7 @@ public static class CheckCommand
         catch (Exception ex)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.Error.WriteLine($"Failed to locate scanner: {ex.Message}");
+            await Console.Error.WriteLineAsync($"Failed to locate scanner: {ex.Message}");
             Console.ResetColor();
             return 2;
         }
@@ -92,14 +92,14 @@ public static class CheckCommand
         catch (FileNotFoundException ex)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Error.WriteLine(ex.Message);
+            await Console.Error.WriteLineAsync(ex.Message);
             Console.ResetColor();
             return 2;
         }
         catch (Exception ex)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.Error.WriteLine($"Analysis failed: {ex.Message}");
+            await Console.Error.WriteLineAsync($"Analysis failed: {ex.Message}");
             Console.ResetColor();
             return 2;
         }
@@ -107,7 +107,7 @@ public static class CheckCommand
         if (result.ScannerWarning != null)
         {
             Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.Error.WriteLine($"Warning: {result.ScannerWarning}");
+            await Console.Error.WriteLineAsync($"Warning: {result.ScannerWarning}");
             Console.ResetColor();
         }
 

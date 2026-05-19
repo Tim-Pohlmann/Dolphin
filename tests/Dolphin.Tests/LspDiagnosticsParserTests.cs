@@ -3,7 +3,7 @@ using Dolphin.Scanner;
 namespace Dolphin.Tests;
 
 [TestClass]
-public class LspDiagnosticsParserTests
+public class ValidationOutputParserTests
 {
     // ── Happy path ─────────────────────────────────────────────────────────────
 

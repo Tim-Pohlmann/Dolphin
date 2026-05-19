@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Dolphin.Cli;
 
@@ -7,7 +8,7 @@ namespace Dolphin.Tests;
 [TestClass]
 public class HookCommandTests
 {
-    // ── Unit tests ─────────────────────────────────────────────────────────────
+    // ── Unit tests (in-process) ────────────────────────────────────────────────
 
     [TestMethod]
     [DataRow("/project/.dolphin/rules.yaml")]
@@ -27,6 +28,90 @@ public class HookCommandTests
     public void IsRulesFile_NonRulesPaths_ReturnsFalse(string path)
     {
         Assert.IsFalse(HookCommand.IsRulesFile(path));
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_EmptyStream_ExitsCleanly()
+    {
+        using var stdin = new MemoryStream();
+        await HookCommand.HandlePostToolUseAsync(stdin);
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_InvalidJson_ExitsCleanly()
+    {
+        using var stdin = new MemoryStream(Encoding.UTF8.GetBytes("not json"));
+        await HookCommand.HandlePostToolUseAsync(stdin);
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_MissingToolInput_ExitsCleanly()
+    {
+        using var stdin = Utf8Stream("""{"tool_name":"Write"}""");
+        await HookCommand.HandlePostToolUseAsync(stdin);
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_NonStringFilePath_ExitsCleanly()
+    {
+        using var stdin = Utf8Stream("""{"tool_input":{"file_path":123}}""");
+        await HookCommand.HandlePostToolUseAsync(stdin);
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_ValidRulesYaml_ProducesNoOutput()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-hook-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        var rulesPath = Path.Combine(tmpDir, ".dolphin", "rules.yaml");
+        await File.WriteAllTextAsync(rulesPath, """
+            rules:
+              - id: no-console-log
+                message: "Remove console.log"
+                languages: [typescript]
+                severity: WARNING
+                pattern: console.log(...)
+            """);
+        try
+        {
+            using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+                { tool_input = new { file_path = rulesPath } }));
+            var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+            Assert.AreEqual(string.Empty, output.Trim(),
+                $"Expected no output for a valid rules file, got: {output}");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_InvalidRulesYaml_PrintsDiagnostic()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-hook-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        var rulesPath = Path.Combine(tmpDir, ".dolphin", "rules.yaml");
+        await File.WriteAllTextAsync(rulesPath, "rules:\n  - id: broken\n");
+        try
+        {
+            using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+                { tool_input = new { file_path = rulesPath } }));
+            var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+            Assert.IsTrue(output.Contains("rules.yaml:"),
+                $"Expected diagnostic output containing 'rules.yaml:', got: {output}");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
+    private static MemoryStream Utf8Stream(string json)
+        => new(Encoding.UTF8.GetBytes(json));
+
+    private static async Task<string> CaptureConsoleOut(Func<Task> action)
+    {
+        var oldOut = Console.Out;
+        using var writer = new StringWriter();
+        Console.SetOut(writer);
+        try { await action(); }
+        finally { Console.SetOut(oldOut); }
+        return writer.ToString();
     }
 
     // ── CLI integration tests ──────────────────────────────────────────────────

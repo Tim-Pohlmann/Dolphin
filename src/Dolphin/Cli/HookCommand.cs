@@ -16,21 +16,21 @@ public static class HookCommand
         return hook;
     }
 
-    private static async Task HandlePostToolUseAsync()
+    private static Task HandlePostToolUseAsync()
+        => HandlePostToolUseAsync(Console.OpenStandardInput());
+
+    internal static async Task HandlePostToolUseAsync(Stream stdin)
     {
         string? filePath;
         try
         {
-            using var doc = await JsonDocument.ParseAsync(Console.OpenStandardInput());
+            using var doc = await JsonDocument.ParseAsync(stdin);
             if (!doc.RootElement.TryGetProperty("tool_input", out var input)) return;
             if (!input.TryGetProperty("file_path", out var fp)) return;
             if (fp.ValueKind != JsonValueKind.String) return;
             filePath = fp.GetString();
         }
-        catch (JsonException)
-        {
-            return;
-        }
+        catch (JsonException) { return; }
 
         if (string.IsNullOrWhiteSpace(filePath)) return;
 
@@ -41,7 +41,8 @@ public static class HookCommand
     internal static bool IsRulesFile(string filePath)
     {
         var fileName  = Path.GetFileName(filePath);
-        var parentDir = Path.GetFileName(Path.GetDirectoryName(filePath) ?? string.Empty);
+        var dirPath   = Path.GetDirectoryName(filePath) ?? string.Empty;
+        var parentDir = Path.GetFileName(dirPath);
         return parentDir.Equals(".dolphin", StringComparison.OrdinalIgnoreCase)
             && (fileName.Equals("rules.yaml", StringComparison.OrdinalIgnoreCase)
              || fileName.Equals("rules.yml",  StringComparison.OrdinalIgnoreCase));

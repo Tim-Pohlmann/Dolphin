@@ -77,8 +77,7 @@ public static class HookCommand
         filePath = Path.GetFullPath(filePath);
         if (!File.Exists(filePath)) return;
 
-        var dir = Path.GetDirectoryName(filePath);
-        if (string.IsNullOrEmpty(dir)) return;
+        var dir = Path.GetDirectoryName(filePath)!;
 
         var cwd = FindProjectRoot(dir);
         if (cwd == null) return;

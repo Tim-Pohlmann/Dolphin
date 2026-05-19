@@ -33,6 +33,121 @@ public class CheckCommandTests
         Assert.AreEqual(2, result);
     }
 
+    [TestMethod]
+    public async Task HandleAsync_FakeScanner_NoFindings_Returns0()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var (tmpDir, fakeBinDir) = CreateFakeOpengrepEnv(exitCode: 0, stdout: """{"results":[]}""");
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", fakeBinDir + ":" + savedPath);
+        try
+        {
+            var result = await CheckCommand.HandleAsync(tmpDir, null, "text", null);
+            Assert.AreEqual(0, result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Directory.Delete(tmpDir, recursive: true);
+            Directory.Delete(fakeBinDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task HandleAsync_FakeScanner_ScannerWarning_Returns0()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var (tmpDir, fakeBinDir) = CreateFakeOpengrepEnv(exitCode: 2, stdout: """{"results":[]}""", stderr: "non-fatal warning");
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", fakeBinDir + ":" + savedPath);
+        try
+        {
+            var result = await CheckCommand.HandleAsync(tmpDir, null, "text", null);
+            Assert.AreEqual(0, result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Directory.Delete(tmpDir, recursive: true);
+            Directory.Delete(fakeBinDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task HandleAsync_FakeScanner_ScannerCrash_Returns2()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var (tmpDir, fakeBinDir) = CreateFakeOpengrepEnv(exitCode: 5, stdout: "{}", stderr: "fatal crash");
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", fakeBinDir + ":" + savedPath);
+        try
+        {
+            var result = await CheckCommand.HandleAsync(tmpDir, null, "text", null);
+            Assert.AreEqual(2, result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Directory.Delete(tmpDir, recursive: true);
+            Directory.Delete(fakeBinDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task HandleAsync_FakeScanner_MissingRulesFile_Returns2()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var fakeBinDir = Path.Combine(Path.GetTempPath(), $"dolphin-fakebin-{Guid.NewGuid()}");
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(fakeBinDir);
+        Directory.CreateDirectory(tmpDir);
+        var fakeScript = WriteFakeOpengrep(fakeBinDir, exitCode: 0, stdout: """{"results":[]}""");
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", fakeBinDir + ":" + savedPath);
+        try
+        {
+            var result = await CheckCommand.HandleAsync(tmpDir, null, "text", null);
+            Assert.AreEqual(2, result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Directory.Delete(tmpDir, recursive: true);
+            Directory.Delete(fakeBinDir, recursive: true);
+        }
+    }
+
+    private static (string tmpDir, string fakeBinDir) CreateFakeOpengrepEnv(
+        int exitCode, string stdout, string stderr = "")
+    {
+        var fakeBinDir = Path.Combine(Path.GetTempPath(), $"dolphin-fakebin-{Guid.NewGuid()}");
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(fakeBinDir);
+        Directory.CreateDirectory(Path.Combine(tmpDir, ".dolphin"));
+        File.WriteAllText(Path.Combine(tmpDir, ".dolphin", "rules.yaml"), "rules: []");
+        WriteFakeOpengrep(fakeBinDir, exitCode, stdout, stderr);
+        return (tmpDir, fakeBinDir);
+    }
+
+    private static string WriteFakeOpengrep(string dir, int exitCode, string stdout, string stderr = "")
+    {
+        var stdoutFile = Path.Combine(dir, "fake-stdout.txt");
+        var stderrFile = Path.Combine(dir, "fake-stderr.txt");
+        File.WriteAllText(stdoutFile, stdout);
+        File.WriteAllText(stderrFile, stderr);
+        var script = Path.Combine(dir, "opengrep");
+        File.WriteAllText(script,
+            $"#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '1.0.0'; exit 0; fi\n" +
+            $"cat '{stdoutFile}'\ncat '{stderrFile}' >&2\nexit {exitCode}\n");
+#pragma warning disable CA1416
+        File.SetUnixFileMode(script,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+#pragma warning restore CA1416
+        return script;
+    }
+
     // ── CLI integration tests ──────────────────────────────────────────────────
     private static readonly string FixturesDir = Path.Combine(
         AppContext.BaseDirectory, "fixtures"

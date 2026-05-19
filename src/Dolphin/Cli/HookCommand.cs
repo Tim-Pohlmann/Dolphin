@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -54,15 +55,39 @@ public static class HookCommand
 
     private static async Task ValidateRulesFileAsync(string filePath)
     {
-        string text;
-        try { text = await File.ReadAllTextAsync(filePath); }
-        catch (IOException) { return; }
-        catch (UnauthorizedAccessException) { return; }
-        catch (ArgumentException) { return; }
-        catch (NotSupportedException) { return; }
+        if (!File.Exists(filePath)) return;
 
-        var diagnostics = YamlRuleValidator.Validate(text);
+        string scannerBinary;
+        try { scannerBinary = await Installer.EnsureInstalledAsync(); }
+        catch { return; }
 
+        var psi = new ProcessStartInfo(scannerBinary)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.ArgumentList.Add("validate");
+        psi.ArgumentList.Add(filePath);
+
+        string stdout, stderr;
+        try
+        {
+            using var proc = Process.Start(psi)!;
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            await Task.WhenAll(stdoutTask, stderrTask);
+            await proc.WaitForExitAsync();
+            stdout = await stdoutTask;
+            stderr = await stderrTask;
+            if (proc.ExitCode == 0) return;
+        }
+        catch { return; }
+
+        var combined = (stderr.Trim() + "\n" + stdout.Trim()).Trim();
+        if (string.IsNullOrWhiteSpace(combined)) return;
+
+        var diagnostics = ValidationOutputParser.Parse(combined);
         if (diagnostics.Length == 0) return;
 
         var displayName = Path.GetFileName(filePath);

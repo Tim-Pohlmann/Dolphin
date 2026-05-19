@@ -25,16 +25,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Scanner\semgrep-schema.json"
-                      LogicalName="Dolphin.Scanner.semgrep-schema.json" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="JsonSchema.Net" Version="9.1.5" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
     <PackageReference Include="ModelContextProtocol" Version="0.2.0-preview.3" />
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
-    <PackageReference Include="YamlDotNet" Version="17.0.1" />
   </ItemGroup>
 
   <!--
@@ -86,30 +79,6 @@
     <WriteLinesToFile File="$(PublishDir)OPENGREP-LICENSE.txt" Overwrite="true" Lines="Dolphin bundles Opengrep (https://github.com/opengrep/opengrep), licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).%0AThe binary has not been modified. Source code is available at https://github.com/opengrep/opengrep.%0AThe full license text is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" />
 
     <Message Text="Opengrep bundled → $(PublishDir)$(_PublishedBinName)" Importance="High" />
-  </Target>
-  <!--
-    The Semgrep rule schema (Scanner/semgrep-schema.json) is committed to the repo and embedded
-    into the dolphin binary as a .NET resource (see the EmbeddedResource item above), so
-    builds work offline. To refresh it against a newer upstream commit, run:
-      dotnet run scripts/update-schema.cs
-
-    rule_schema_v1.yaml is sourced from https://github.com/returntocorp/semgrep-interfaces,
-    licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1). LGPL 2.1
-    redistribution obligations (satisfied by this project):
-      - The schema is converted YAML → JSON with only the documented modifications listed
-        in scripts/update-schema.cs.
-      - The LGPL license text (and link to source) is included in the published output as
-        SEMGREP-SCHEMA-LICENSE.txt (see BundleSemgrepSchemaLicense target below).
-      - Source code is available at https://github.com/returntocorp/semgrep-interfaces.
-  -->
-
-  <!--
-    BundleSemgrepSchemaLicense: writes a brief LGPL attribution file next to the published
-    binary. The Semgrep rule schema is embedded in dolphin as a .NET resource, so the LGPL
-    obligation travels with every published artifact regardless of runtime identifier.
-  -->
-  <Target Name="BundleSemgrepSchemaLicense" AfterTargets="Publish">
-    <WriteLinesToFile File="$(PublishDir)SEMGREP-SCHEMA-LICENSE.txt" Overwrite="true" Lines="Dolphin embeds the Semgrep rule schema from https://github.com/returntocorp/semgrep-interfaces (rule_schema_v1.yaml), licensed under the GNU Lesser General Public License v2.1 (LGPL-2.1).%0AThe schema has been converted from YAML to JSON%3B modifications are documented in scripts/update-schema.cs. Source is available at https://github.com/returntocorp/semgrep-interfaces.%0AThe full license text is available at https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html" />
   </Target>
 
 </Project>

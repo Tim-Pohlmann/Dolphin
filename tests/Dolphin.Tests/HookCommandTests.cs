@@ -118,6 +118,32 @@ public class HookCommandTests
         return writer.ToString();
     }
 
+    [TestMethod]
+    public void Build_ReturnsHookCommand()
+    {
+        var cmd = HookCommand.Build();
+        Assert.IsNotNull(cmd);
+        Assert.AreEqual("hook", cmd.Name);
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_NonRulesFilePath_ProducesNoOutput()
+    {
+        using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+            { tool_input = new { file_path = "/project/src/component.ts" } }));
+        var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+        Assert.AreEqual(string.Empty, output.Trim());
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_NonExistentRulesYaml_ProducesNoOutput()
+    {
+        using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+            { tool_input = new { file_path = "/nonexistent/.dolphin/rules.yaml" } }));
+        var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+        Assert.AreEqual(string.Empty, output.Trim());
+    }
+
     // ── CLI integration tests ──────────────────────────────────────────────────
 
     [TestMethod]

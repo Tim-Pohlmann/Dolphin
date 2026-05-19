@@ -1,19 +1,39 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Dolphin.Cli;
 using Dolphin.Scanner;
 
 namespace Dolphin.Tests;
 
-/// <summary>
-/// End-to-end CLI tests that exercise the full pipeline:
-/// argument parsing → Installer → Runner → Formatter → exit code.
-///
-/// Each test spawns a child process via `dotnet run` so that
-/// Environment.Exit() in CheckCommand doesn't terminate the test runner.
-/// </summary>
 [TestClass]
 public class CheckCommandTests
 {
+    // ── Unit tests ─────────────────────────────────────────────────────────────
+
+    [TestMethod]
+    public async Task HandleAsync_NonExistentCwd_Returns2()
+    {
+        var result = await CheckCommand.HandleAsync("/nonexistent/dolphin-test-path", null, "text", null);
+        Assert.AreEqual(2, result);
+    }
+
+    [TestMethod]
+    public async Task HandleAsync_NonExistentFile_Returns2()
+    {
+        var result = await CheckCommand.HandleAsync(
+            Path.GetTempPath(), null, "text", "/nonexistent/dolphin-test-file.ts");
+        Assert.AreEqual(2, result);
+    }
+
+    [TestMethod]
+    public async Task HandleAsync_RelativeFileThatDoesNotExist_Returns2()
+    {
+        var result = await CheckCommand.HandleAsync(
+            Path.GetTempPath(), null, "text", "dolphin-test-no-such-file.ts");
+        Assert.AreEqual(2, result);
+    }
+
+    // ── CLI integration tests ──────────────────────────────────────────────────
     private static readonly string FixturesDir = Path.Combine(
         AppContext.BaseDirectory, "fixtures"
     );

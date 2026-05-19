@@ -39,12 +39,15 @@ public static class CheckCommand
             fileOption
         };
 
-        cmd.SetHandler(HandleAsync, cwdOption, ruleOption, formatOption, fileOption);
+        cmd.SetHandler(
+            async (cwd, ruleId, format, file) =>
+                Environment.Exit(await HandleAsync(cwd, ruleId, format, file)),
+            cwdOption, ruleOption, formatOption, fileOption);
 
         return cmd;
     }
 
-    private static async Task HandleAsync(string cwd, string? ruleId, string format, string? file)
+    internal static async Task<int> HandleAsync(string cwd, string? ruleId, string format, string? file)
     {
         cwd = Path.GetFullPath(cwd);
         if (!Directory.Exists(cwd))
@@ -52,8 +55,7 @@ public static class CheckCommand
             Console.ForegroundColor = ConsoleColor.Red;
             Console.Error.WriteLine($"Directory not found: {cwd}");
             Console.ResetColor();
-            Environment.Exit(2);
-            return;
+            return 2;
         }
 
         if (file != null)
@@ -65,8 +67,7 @@ public static class CheckCommand
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.Error.WriteLine($"File not found: {file}");
                 Console.ResetColor();
-                Environment.Exit(2);
-                return;
+                return 2;
             }
         }
 
@@ -80,8 +81,7 @@ public static class CheckCommand
             Console.ForegroundColor = ConsoleColor.Red;
             Console.Error.WriteLine($"Failed to locate scanner: {ex.Message}");
             Console.ResetColor();
-            Environment.Exit(2);
-            return;
+            return 2;
         }
 
         RunResult result;
@@ -94,16 +94,14 @@ public static class CheckCommand
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.Error.WriteLine(ex.Message);
             Console.ResetColor();
-            Environment.Exit(2);
-            return;
+            return 2;
         }
         catch (Exception ex)
         {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.Error.WriteLine($"Analysis failed: {ex.Message}");
             Console.ResetColor();
-            Environment.Exit(2);
-            return;
+            return 2;
         }
 
         if (result.ScannerWarning != null)
@@ -115,7 +113,6 @@ public static class CheckCommand
 
         Formatter.Print(result.Findings, format);
 
-        var hasErrors = result.Findings.Any(f => f.Severity == Severity.Error);
-        Environment.Exit(hasErrors ? 1 : 0);
+        return result.Findings.Any(f => f.Severity == Severity.Error) ? 1 : 0;
     }
 }

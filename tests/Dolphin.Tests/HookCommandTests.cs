@@ -145,6 +145,32 @@ public class HookCommandTests
         Assert.AreEqual(string.Empty, output.Trim());
     }
 
+    [TestMethod]
+    public async Task HandlePostToolUse_NonExistentSourceFile_ProducesNoOutput()
+    {
+        using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+            { tool_input = new { file_path = "/nonexistent/src/component.ts" } }));
+        var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+        Assert.AreEqual(string.Empty, output.Trim());
+    }
+
+    [TestMethod]
+    public async Task HandlePostToolUse_SourceFileNoProjectRoot_ProducesNoOutput()
+    {
+        var tmpDir = Path.Combine(Path.GetTempPath(), $"dolphin-hook-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(tmpDir);
+        var srcFile = Path.Combine(tmpDir, "component.ts");
+        await File.WriteAllTextAsync(srcFile, "const x = 1;");
+        try
+        {
+            using var stdin = Utf8Stream(JsonSerializer.Serialize(new
+                { tool_input = new { file_path = srcFile } }));
+            var output = await CaptureConsoleOut(() => HookCommand.HandlePostToolUseAsync(stdin));
+            Assert.AreEqual(string.Empty, output.Trim());
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
     // ── CLI integration tests ──────────────────────────────────────────────────
 
     [TestMethod]

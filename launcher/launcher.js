@@ -132,9 +132,10 @@ function main() {
         process.exit(1);
       }
     })
-    .catch(err => new Promise(resolve => {
-      process.stderr.write(`[dolphin] Fatal: ${err.message}\n`, () => { process.exit(2); resolve(); });
-    }));
+    .catch(err => {
+      process.exitCode = 2;
+      process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
+    });
 }
 
 if (require.main === module) {

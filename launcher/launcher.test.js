@@ -544,15 +544,15 @@ test('main exits with 1 when spawnSync returns neither status nor signal', async
   assert.equal(exitCode, 1);
 });
 
-test('main writes fatal message and exits 2 when ensureBinary rejects', async (t) => {
+test('main writes fatal message and sets exitCode 2 when ensureBinary rejects', async (t) => {
   const origExists = fs.existsSync;
   const origMkdir = fs.mkdirSync;
   const origRmSync = fs.rmSync;
-  const origExit = process.exit;
   const origStderr = process.stderr.write;
+  const origExitCode = process.exitCode;
   t.after(() => {
     fs.existsSync = origExists; fs.mkdirSync = origMkdir; fs.rmSync = origRmSync;
-    process.exit = origExit; process.stderr.write = origStderr;
+    process.stderr.write = origStderr; process.exitCode = origExitCode;
   });
 
   fs.existsSync = () => false;
@@ -570,13 +570,11 @@ test('main writes fatal message and exits 2 when ensureBinary rejects', async (t
   };
 
   let stderrMsg = '';
-  process.stderr.write = (msg, cb) => { stderrMsg += msg; if (cb) cb(); };
-  let exitCode;
-  process.exit = (code) => { exitCode = code; };
+  process.stderr.write = (msg) => { stderrMsg += msg; };
 
   await main();
   assert.ok(stderrMsg.includes('[dolphin] Fatal:'), `expected fatal message, got: ${stderrMsg}`);
-  assert.equal(exitCode, 2);
+  assert.equal(process.exitCode, 2);
 });
 
 test('module entry point: invokes main() when run as script', { skip: process.platform === 'win32' }, (t, done) => {

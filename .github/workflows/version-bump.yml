@@ -59,8 +59,7 @@ jobs:
             exit 0
           fi
           git commit -m "Bump version to v$semver"
-          git fetch origin "$branch" || true
-          git push origin "$branch" --force-with-lease
+          git push origin "$branch" --force
           if [[ $(gh pr list --head "$branch" --state open --repo "$GITHUB_REPOSITORY" --json number --jq length) -gt 0 ]]; then
             echo "PR already exists."
           else

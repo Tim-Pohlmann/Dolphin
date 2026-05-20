@@ -121,7 +121,7 @@ async function ensureBinary() {
 }
 
 if (require.main === module) {
-  (async () => {
+  (async () => { // NOSONAR — top-level await not available in CommonJS
     try {
       const binaryPath = await ensureBinary();
       const result = childProcess.spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
@@ -136,7 +136,7 @@ if (require.main === module) {
       process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
       process.exit(2);
     }
-  })(); // NOSONAR — top-level await not available in CommonJS
+  })();
 }
 
 module.exports = { getVersion, getRid, download, ensureBinary };

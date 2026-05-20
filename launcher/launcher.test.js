@@ -546,12 +546,19 @@ test('main exits with 1 when spawnSync returns neither status nor signal', async
 
 test('main writes fatal message and exits 2 when ensureBinary rejects', async (t) => {
   const origExists = fs.existsSync;
+  const origMkdir = fs.mkdirSync;
+  const origRmSync = fs.rmSync;
   const origExit = process.exit;
   const origStderr = process.stderr.write.bind(process.stderr);
-  t.after(() => { fs.existsSync = origExists; process.exit = origExit; process.stderr.write = origStderr; });
+  t.after(() => {
+    fs.existsSync = origExists; fs.mkdirSync = origMkdir; fs.rmSync = origRmSync;
+    process.exit = origExit; process.stderr.write = origStderr;
+  });
 
   fs.existsSync = () => false;
-  // Make download fail immediately so ensureBinary rejects
+  fs.mkdirSync = () => {};
+  fs.rmSync = () => {};
+
   const origHttpsGet = https.get;
   t.after(() => { https.get = origHttpsGet; });
   https.get = (_u, _opts, cb) => {
@@ -563,7 +570,7 @@ test('main writes fatal message and exits 2 when ensureBinary rejects', async (t
   };
 
   let stderrMsg = '';
-  process.stderr.write = (msg) => { stderrMsg += msg; };
+  process.stderr.write = (msg, cb) => { stderrMsg += msg; if (cb) cb(); };
   let exitCode;
   process.exit = (code) => { exitCode = code; };
 

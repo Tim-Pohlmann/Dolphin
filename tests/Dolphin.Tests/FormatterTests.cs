@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dolphin.Output;
 using Dolphin.Scanner;
 
@@ -8,7 +9,7 @@ public class FormatterTests
 {
     private static string Capture(List<Finding> findings, string format)
     {
-        var sw = new StringWriter();
+        using var sw = new StringWriter();
         var original = Console.Out;
         Console.SetOut(sw);
         try { Formatter.Print(findings, format); }
@@ -185,12 +186,14 @@ public class FormatterTests
     {
         var findings = new List<Finding> { new("rule-x", Severity.Error, "foo.cs", 5, 3, "something", "snippet") };
         var output = CaptureJson(findings);
-        StringAssert.Contains(output, "\"RuleId\":\"rule-x\"");
-        StringAssert.Contains(output, "\"Severity\":\"error\"");
-        StringAssert.Contains(output, "\"FilePath\":\"foo.cs\"");
-        StringAssert.Contains(output, "\"Line\":5");
-        StringAssert.Contains(output, "\"Column\":3");
-        StringAssert.Contains(output, "\"Message\":\"something\"");
-        StringAssert.Contains(output, "\"MatchedText\":\"snippet\"");
+        using var doc = JsonDocument.Parse(output.Trim());
+        var item = doc.RootElement[0];
+        Assert.AreEqual("rule-x",    item.GetProperty("RuleId").GetString());
+        Assert.AreEqual("error",     item.GetProperty("Severity").GetString());
+        Assert.AreEqual("foo.cs",    item.GetProperty("FilePath").GetString());
+        Assert.AreEqual(5,           item.GetProperty("Line").GetInt32());
+        Assert.AreEqual(3,           item.GetProperty("Column").GetInt32());
+        Assert.AreEqual("something", item.GetProperty("Message").GetString());
+        Assert.AreEqual("snippet",   item.GetProperty("MatchedText").GetString());
     }
 }

@@ -570,3 +570,26 @@ test('main writes fatal message and exits 2 when ensureBinary rejects', async (t
   assert.ok(stderrMsg.includes('[dolphin] Fatal:'), `expected fatal message, got: ${stderrMsg}`);
   assert.equal(exitCode, 2);
 });
+
+test('module entry point: invokes main() when run as script', (t, done) => {
+  const tmpRoot = fs.mkdtempSync('/tmp/dolphin-entrypoint-test-');
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(tmpRoot, '.claude-plugin'));
+  fs.writeFileSync(path.join(tmpRoot, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: '0.0.0-test' }));
+
+  const { rid } = getRid();
+  const cacheDir = path.join(tmpRoot, 'bin', 'cache', '0.0.0-test', rid);
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const fakeBin = path.join(cacheDir, 'dolphin');
+  fs.writeFileSync(fakeBin, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(fakeBin, 0o755);
+
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'launcher.js')],
+    { env: { ...process.env, CLAUDE_PLUGIN_ROOT: tmpRoot } }
+  );
+  assert.equal(result.status, 0);
+  done();
+});

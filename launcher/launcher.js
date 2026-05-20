@@ -120,23 +120,23 @@ async function ensureBinary() {
   return binaryPath;
 }
 
+async function main() {
+  const binaryPath = await ensureBinary();
+  const result = childProcess.spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
+  if (typeof result.status === 'number') {
+    process.exit(result.status);
+  } else if (result.signal) {
+    process.kill(process.pid, result.signal);
+  } else {
+    process.exit(1);
+  }
+}
+
 if (require.main === module) {
-  (async () => { // NOSONAR — top-level await not available in CommonJS
-    try {
-      const binaryPath = await ensureBinary();
-      const result = childProcess.spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
-      if (typeof result.status === 'number') {
-        process.exit(result.status);
-      } else if (result.signal) {
-        process.kill(process.pid, result.signal);
-      } else {
-        process.exit(1);
-      }
-    } catch (err) {
-      process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
-      process.exit(2);
-    }
-  })();
+  main().catch(err => {
+    process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
+    process.exit(2);
+  });
 }
 
 module.exports = { getVersion, getRid, download, ensureBinary };

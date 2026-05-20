@@ -524,6 +524,7 @@ test('main kills process with spawnSync signal', async (t) => {
   process.kill = (pid, sig) => { killed = { pid, sig }; };
 
   await main();
+  assert.equal(killed.pid, process.pid);
   assert.equal(killed.sig, 'SIGTERM');
 });
 
@@ -540,4 +541,32 @@ test('main exits with 1 when spawnSync returns neither status nor signal', async
 
   await main();
   assert.equal(exitCode, 1);
+});
+
+test('main writes fatal message and exits 2 when ensureBinary rejects', async (t) => {
+  const origExists = fs.existsSync;
+  const origExit = process.exit;
+  const origStderr = process.stderr.write.bind(process.stderr);
+  t.after(() => { fs.existsSync = origExists; process.exit = origExit; process.stderr.write = origStderr; });
+
+  fs.existsSync = () => false;
+  // Make download fail immediately so ensureBinary rejects
+  const origHttpsGet = https.get;
+  t.after(() => { https.get = origHttpsGet; });
+  https.get = (_u, _opts, cb) => {
+    const res = new (require('stream').PassThrough)();
+    res.statusCode = 500;
+    cb(res);
+    res.resume();
+    return { on: () => {} };
+  };
+
+  let stderrMsg = '';
+  process.stderr.write = (msg) => { stderrMsg += msg; };
+  let exitCode;
+  process.exit = (code) => { exitCode = code; };
+
+  await main();
+  assert.ok(stderrMsg.includes('[dolphin] Fatal:'), `expected fatal message, got: ${stderrMsg}`);
+  assert.equal(exitCode, 2);
 });

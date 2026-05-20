@@ -51,18 +51,31 @@ public static class Runner
         // Exit 0 = clean, 1 = findings present, 2 = non-fatal scanner warning, 3+ = error
         if (proc.ExitCode > 2)
         {
-            var detail = TryExtractErrors(stdout)
-                ?? (!string.IsNullOrWhiteSpace(stderr) ? stderr.Trim()
-                    : !string.IsNullOrWhiteSpace(stdout) ? stdout.Trim()
-                    : "Scanner failed without returning error details.");
+            var detail = GetErrorDetail(stdout, stderr);
             throw new InvalidOperationException(
                 $"Scanner exited with code {proc.ExitCode}.\n{detail}");
         }
 
-        var scannerWarning = proc.ExitCode == 2
-            ? (string.IsNullOrWhiteSpace(stderr) ? "Scanner reported a non-fatal warning." : stderr.Trim())
-            : null;
+        var scannerWarning = proc.ExitCode == 2 ? GetScannerWarning(stderr) : null;
+        var findings = ParseAndFilterFindings(stdout, cwd, ruleId);
+        return new RunResult(findings, proc.ExitCode == 1, scannerWarning);
+    }
 
+    private static string GetErrorDetail(string stdout, string stderr) =>
+        TryExtractErrors(stdout) ?? GetFallbackDetail(stderr, stdout);
+
+    private static string GetFallbackDetail(string stderr, string stdout)
+    {
+        if (!string.IsNullOrWhiteSpace(stderr)) return stderr.Trim();
+        if (!string.IsNullOrWhiteSpace(stdout)) return stdout.Trim();
+        return "Scanner failed without returning error details.";
+    }
+
+    private static string GetScannerWarning(string stderr) =>
+        string.IsNullOrWhiteSpace(stderr) ? "Scanner reported a non-fatal warning." : stderr.Trim();
+
+    private static List<Finding> ParseAndFilterFindings(string stdout, string cwd, string? ruleId)
+    {
         var findings = ParseFindings(stdout, cwd);
         // Filter by rule ID if requested. The check_id in the output is typically the bare rule ID
         // but may be path-prefixed by the scanner (e.g. ".dolphin.my-rule"). Match on suffix.
@@ -70,7 +83,7 @@ public static class Runner
             findings = findings
                 .Where(f => f.RuleId == ruleId || f.RuleId.EndsWith("." + ruleId, StringComparison.Ordinal))
                 .ToList();
-        return new RunResult(findings, proc.ExitCode == 1, scannerWarning);
+        return findings;
     }
 
     private static string ResolveRulesPath(string cwd)

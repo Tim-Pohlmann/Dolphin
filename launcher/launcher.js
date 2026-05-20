@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-const https = require('https');
-const fs = require('fs');
-const path = require('path');
-const childProcess = require('child_process');
+const https = require('node:https');
+const fs = require('node:fs');
+const path = require('node:path');
+const childProcess = require('node:child_process');
 
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.join(__dirname, '..');
 const GITHUB_REPO = 'Tim-Pohlmann/Dolphin';

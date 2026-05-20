@@ -2,6 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('os');
 const path = require('path');
 const { PassThrough, Writable } = require('stream');
 const https = require('https');
@@ -571,8 +572,8 @@ test('main writes fatal message and exits 2 when ensureBinary rejects', async (t
   assert.equal(exitCode, 2);
 });
 
-test('module entry point: invokes main() when run as script', (t, done) => {
-  const tmpRoot = fs.mkdtempSync('/tmp/dolphin-entrypoint-test-');
+test('module entry point: invokes main() when run as script', { skip: process.platform === 'win32' }, (t, done) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dolphin-entrypoint-test-'));
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
   fs.mkdirSync(path.join(tmpRoot, '.claude-plugin'));

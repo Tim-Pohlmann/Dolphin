@@ -136,7 +136,7 @@ if (require.main === module) {
       process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
       process.exit(2);
     }
-  })();
+  })(); // NOSONAR — top-level await not available in CommonJS
 }
 
 module.exports = { getVersion, getRid, download, ensureBinary };

@@ -22,29 +22,30 @@ function getRid(platform = process.platform, arch = process.arch) {
   throw new Error(`Unsupported platform: ${platform}/${arch}. Supported: linux-x64, linux-arm64, osx-arm64, win-x64.`);
 }
 
+function get(u, dest, resolve, reject, remainingRedirects = 10) {
+  https.get(u, { headers: { 'User-Agent': 'dolphin-launcher' } }, res => {
+    if (res.statusCode === 301 || res.statusCode === 302) {
+      res.resume();
+      if (remainingRedirects <= 0) {
+        return reject(new Error(`Too many redirects while fetching ${u}`));
+      }
+      return get(res.headers.location, dest, resolve, reject, remainingRedirects - 1);
+    }
+    if (res.statusCode !== 200) {
+      res.resume();
+      return reject(new Error(`HTTP ${res.statusCode} for ${u}`));
+    }
+    const file = fs.createWriteStream(dest);
+    res.pipe(file);
+    file.on('finish', () => file.close(resolve));
+    file.on('error', reject);
+    res.on('error', reject);
+  }).on('error', reject);
+}
+
 function download(url, dest) {
   return new Promise((resolve, reject) => {
-    function get(u, remainingRedirects = 10) {
-      https.get(u, { headers: { 'User-Agent': 'dolphin-launcher' } }, res => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          res.resume();
-          if (remainingRedirects <= 0) {
-            return reject(new Error(`Too many redirects while fetching ${url}`));
-          }
-          return get(res.headers.location, remainingRedirects - 1);
-        }
-        if (res.statusCode !== 200) {
-          res.resume();
-          return reject(new Error(`HTTP ${res.statusCode} for ${u}`));
-        }
-        const file = fs.createWriteStream(dest);
-        res.pipe(file);
-        file.on('finish', () => file.close(resolve));
-        file.on('error', reject);
-        res.on('error', reject);
-      }).on('error', reject);
-    }
-    get(url);
+    get(url, dest, resolve, reject);
   });
 }
 

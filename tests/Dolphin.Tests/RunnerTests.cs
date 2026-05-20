@@ -442,6 +442,50 @@ public class RunnerTests
         }
     }
 
+    [TestMethod]
+    public async Task RunAsync_ExitCodeAbove2_FallsBackToStdout_WhenStderrEmpty()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 3, stderr: "", stdout: "non-json output");
+        try
+        {
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+            StringAssert.Contains(ex.Message, "non-json output");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
+    [TestMethod]
+    public async Task RunAsync_ExitCodeAbove2_UsesDefaultMessage_WhenBothOutputsEmpty()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 3, stderr: "", stdout: "");
+        try
+        {
+            var ex = await Assert.ThrowsExactlyAsync<InvalidOperationException>(
+                () => Runner.RunAsync(fakeBinary, tmpDir)
+            );
+            StringAssert.Contains(ex.Message, "Scanner failed without returning error details.");
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
+    [TestMethod]
+    public async Task RunAsync_ExitCode2_ReturnsFallbackWarning_WhenStderrEmpty()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var (tmpDir, fakeBinary) = CreateFakeScannerEnv(exitCode: 2, stderr: "");
+        try
+        {
+            var result = await Runner.RunAsync(fakeBinary, tmpDir);
+            Assert.IsNotNull(result.ScannerWarning);
+            Assert.AreEqual("Scanner reported a non-fatal warning.", result.ScannerWarning);
+        }
+        finally { Directory.Delete(tmpDir, recursive: true); }
+    }
+
     /// <summary>
     /// Creates a temp directory with a minimal .dolphin/rules.yaml and a fake scanner script
     /// that writes the provided stdout content (or empty JSON results by default) and exits

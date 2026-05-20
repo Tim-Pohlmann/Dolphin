@@ -549,7 +549,7 @@ test('main writes fatal message and exits 2 when ensureBinary rejects', async (t
   const origMkdir = fs.mkdirSync;
   const origRmSync = fs.rmSync;
   const origExit = process.exit;
-  const origStderr = process.stderr.write.bind(process.stderr);
+  const origStderr = process.stderr.write;
   t.after(() => {
     fs.existsSync = origExists; fs.mkdirSync = origMkdir; fs.rmSync = origRmSync;
     process.exit = origExit; process.stderr.write = origStderr;
@@ -562,7 +562,7 @@ test('main writes fatal message and exits 2 when ensureBinary rejects', async (t
   const origHttpsGet = https.get;
   t.after(() => { https.get = origHttpsGet; });
   https.get = (_u, _opts, cb) => {
-    const res = new (require('stream').PassThrough)();
+    const res = new PassThrough();
     res.statusCode = 500;
     cb(res);
     res.resume();

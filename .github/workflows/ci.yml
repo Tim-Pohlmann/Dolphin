@@ -144,7 +144,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Dolphin check
-        run: ~/.cache/dolphin/dolphin check --cwd .
+        run: ~/.cache/dolphin/dolphin check --cwd . --format github
 
   analyze:
     name: Analyze

@@ -120,23 +120,26 @@ async function ensureBinary() {
   return binaryPath;
 }
 
-async function main() {
-  const binaryPath = await ensureBinary();
-  const result = childProcess.spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
-  if (typeof result.status === 'number') {
-    process.exit(result.status);
-  } else if (result.signal) {
-    process.kill(process.pid, result.signal);
-  } else {
-    process.exit(1);
-  }
+function main() {
+  return ensureBinary()
+    .then(binaryPath => {
+      const result = childProcess.spawnSync(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
+      if (typeof result.status === 'number') {
+        process.exit(result.status);
+      } else if (result.signal) {
+        process.kill(process.pid, result.signal);
+      } else {
+        process.exit(1);
+      }
+    })
+    .catch(err => {
+      process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
+      process.exit(2);
+    });
 }
 
 if (require.main === module) {
-  main().catch(err => {
-    process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
-    process.exit(2);
-  });
+  main();
 }
 
-module.exports = { getVersion, getRid, download, ensureBinary };
+module.exports = { getVersion, getRid, download, ensureBinary, main };

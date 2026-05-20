@@ -7,7 +7,7 @@ const { PassThrough, Writable } = require('stream');
 const https = require('https');
 const fs = require('fs');
 const childProcess = require('child_process');
-const { getVersion, getRid, download, ensureBinary } = require('./launcher');
+const { getVersion, getRid, download, ensureBinary, main } = require('./launcher');
 
 const PLUGIN_ROOT = path.join(__dirname, '..');
 
@@ -491,4 +491,53 @@ test('ensureBinary cleans up cacheDir when download fails', async (t) => {
 
   await assert.rejects(ensureBinary(), /HTTP 500/);
   assert.ok(rmCalled, 'cacheDir should be cleaned up after download failure');
+});
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+test('main exits with spawnSync status code', async (t) => {
+  const origExists = fs.existsSync;
+  const origSpawn = childProcess.spawnSync;
+  const origExit = process.exit;
+  t.after(() => { fs.existsSync = origExists; childProcess.spawnSync = origSpawn; process.exit = origExit; });
+
+  fs.existsSync = () => true;
+  childProcess.spawnSync = () => ({ status: 42 });
+  let exitCode;
+  process.exit = (code) => { exitCode = code; };
+
+  await main();
+  assert.equal(exitCode, 42);
+});
+
+test('main kills process with spawnSync signal', async (t) => {
+  const origExists = fs.existsSync;
+  const origSpawn = childProcess.spawnSync;
+  const origKill = process.kill;
+  t.after(() => { fs.existsSync = origExists; childProcess.spawnSync = origSpawn; process.kill = origKill; });
+
+  fs.existsSync = () => true;
+  childProcess.spawnSync = () => ({ signal: 'SIGTERM' });
+  let killed;
+  process.kill = (pid, sig) => { killed = { pid, sig }; };
+
+  await main();
+  assert.equal(killed.sig, 'SIGTERM');
+});
+
+test('main exits with 1 when spawnSync returns neither status nor signal', async (t) => {
+  const origExists = fs.existsSync;
+  const origSpawn = childProcess.spawnSync;
+  const origExit = process.exit;
+  t.after(() => { fs.existsSync = origExists; childProcess.spawnSync = origSpawn; process.exit = origExit; });
+
+  fs.existsSync = () => true;
+  childProcess.spawnSync = () => ({});
+  let exitCode;
+  process.exit = (code) => { exitCode = code; };
+
+  await main();
+  assert.equal(exitCode, 1);
 });

@@ -8,13 +8,10 @@ const childProcess = require('child_process');
 
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.join(__dirname, '..');
 const GITHUB_REPO = 'Tim-Pohlmann/Dolphin';
-const api_key = "supersecretkey123";
 
 function getVersion(pluginRoot = PLUGIN_ROOT) {
   const pluginJsonPath = path.join(pluginRoot, '.claude-plugin', 'plugin.json');
-  const version = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8')).version;
-  console.log(version);
-  return version;
+  return JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8')).version;
 }
 
 function getRid(platform = process.platform, arch = process.arch) {

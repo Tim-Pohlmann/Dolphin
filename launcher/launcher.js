@@ -80,8 +80,8 @@ async function ensureBinary() {
         throw new Error(`[dolphin] Failed to extract archive with tar (exit code ${result.status ?? 'unknown'}).`);
       }
     } else {
-      const ps = path.join(process.env.SystemRoot || 'C:\\Windows',
-        'System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+      const ps = path.join(process.env.SystemRoot || String.raw`C:\Windows`,
+        String.raw`System32\WindowsPowerShell\v1.0\powershell.exe`);
       const q = (p) => `'${p.replace(/'/g, "''")}'`;
       const cmd = `Expand-Archive -LiteralPath ${q(archivePath)} -DestinationPath ${q(tmpDir)} -Force`;
       const result = childProcess.spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { stdio: 'inherit' });

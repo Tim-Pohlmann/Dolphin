@@ -144,13 +144,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Dolphin check
-        run: |
-          set +e
-          ~/.cache/dolphin/dolphin check --cwd . --format json > /tmp/dolphin.json
-          EXIT=$?
-          set -e
-          jq -r '.[] | "::" + (if .Severity == "error" then "error" elif .Severity == "warning" then "warning" else "notice" end) + " file=" + .FilePath + ",line=" + (.Line|tostring) + "::" + .Message + " [" + .RuleId + "]"' /tmp/dolphin.json
-          exit $EXIT
+        run: ~/.cache/dolphin/dolphin check --cwd . --format github
 
   analyze:
     name: Analyze

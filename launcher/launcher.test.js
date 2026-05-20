@@ -2,12 +2,13 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const os = require('os');
 const path = require('path');
 const { PassThrough, Writable } = require('stream');
 const https = require('https');
 const fs = require('fs');
 const childProcess = require('child_process');
-const { getVersion, getRid, download, ensureBinary } = require('./launcher');
+const { getVersion, getRid, download, ensureBinary, main } = require('./launcher');
 
 const PLUGIN_ROOT = path.join(__dirname, '..');
 
@@ -491,4 +492,112 @@ test('ensureBinary cleans up cacheDir when download fails', async (t) => {
 
   await assert.rejects(ensureBinary(), /HTTP 500/);
   assert.ok(rmCalled, 'cacheDir should be cleaned up after download failure');
+});
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+test('main exits with spawnSync status code', async (t) => {
+  const origExists = fs.existsSync;
+  const origSpawn = childProcess.spawnSync;
+  const origExit = process.exit;
+  t.after(() => { fs.existsSync = origExists; childProcess.spawnSync = origSpawn; process.exit = origExit; });
+
+  fs.existsSync = () => true;
+  childProcess.spawnSync = () => ({ status: 42 });
+  let exitCode;
+  process.exit = (code) => { exitCode = code; };
+
+  await main();
+  assert.equal(exitCode, 42);
+});
+
+test('main kills process with spawnSync signal', async (t) => {
+  const origExists = fs.existsSync;
+  const origSpawn = childProcess.spawnSync;
+  const origKill = process.kill;
+  t.after(() => { fs.existsSync = origExists; childProcess.spawnSync = origSpawn; process.kill = origKill; });
+
+  fs.existsSync = () => true;
+  childProcess.spawnSync = () => ({ signal: 'SIGTERM' });
+  let killed;
+  process.kill = (pid, sig) => { killed = { pid, sig }; };
+
+  await main();
+  assert.equal(killed.pid, process.pid);
+  assert.equal(killed.sig, 'SIGTERM');
+});
+
+test('main exits with 1 when spawnSync returns neither status nor signal', async (t) => {
+  const origExists = fs.existsSync;
+  const origSpawn = childProcess.spawnSync;
+  const origExit = process.exit;
+  t.after(() => { fs.existsSync = origExists; childProcess.spawnSync = origSpawn; process.exit = origExit; });
+
+  fs.existsSync = () => true;
+  childProcess.spawnSync = () => ({});
+  let exitCode;
+  process.exit = (code) => { exitCode = code; };
+
+  await main();
+  assert.equal(exitCode, 1);
+});
+
+test('main writes fatal message and exits 2 when ensureBinary rejects', async (t) => {
+  const origExists = fs.existsSync;
+  const origMkdir = fs.mkdirSync;
+  const origRmSync = fs.rmSync;
+  const origExit = process.exit;
+  const origStderr = process.stderr.write;
+  t.after(() => {
+    fs.existsSync = origExists; fs.mkdirSync = origMkdir; fs.rmSync = origRmSync;
+    process.exit = origExit; process.stderr.write = origStderr;
+  });
+
+  fs.existsSync = () => false;
+  fs.mkdirSync = () => {};
+  fs.rmSync = () => {};
+
+  const origHttpsGet = https.get;
+  t.after(() => { https.get = origHttpsGet; });
+  https.get = (_u, _opts, cb) => {
+    const res = new PassThrough();
+    res.statusCode = 500;
+    cb(res);
+    res.resume();
+    return { on: () => {} };
+  };
+
+  let stderrMsg = '';
+  process.stderr.write = (msg) => { stderrMsg += msg; };
+  let exitCode;
+  process.exit = (code) => { exitCode = code; };
+
+  await main();
+  assert.ok(stderrMsg.includes('[dolphin] Fatal:'), `expected fatal message, got: ${stderrMsg}`);
+  assert.equal(exitCode, 2);
+});
+
+test('module entry point: invokes main() when run as script', { skip: process.platform === 'win32' }, (t, done) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dolphin-entrypoint-test-'));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  fs.mkdirSync(path.join(tmpRoot, '.claude-plugin'));
+  fs.writeFileSync(path.join(tmpRoot, '.claude-plugin', 'plugin.json'), JSON.stringify({ version: '0.0.0-test' }));
+
+  const { rid } = getRid();
+  const cacheDir = path.join(tmpRoot, 'bin', 'cache', '0.0.0-test', rid);
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const fakeBin = path.join(cacheDir, 'dolphin');
+  fs.writeFileSync(fakeBin, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(fakeBin, 0o755);
+
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [path.join(__dirname, 'launcher.js')],
+    { env: { ...process.env, CLAUDE_PLUGIN_ROOT: tmpRoot } }
+  );
+  assert.equal(result.status, 0);
+  done();
 });

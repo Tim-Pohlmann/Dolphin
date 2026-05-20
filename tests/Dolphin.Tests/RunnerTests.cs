@@ -21,7 +21,7 @@ public class RunnerTests
 
         try
         {
-            await Assert.ThrowsExceptionAsync<FileNotFoundException>(
+            await Assert.ThrowsExactlyAsync<FileNotFoundException>(
                 () => Runner.RunAsync(scanner, emptyDir)
             );
         }

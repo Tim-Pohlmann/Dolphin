@@ -189,6 +189,7 @@ public class FormatterTests
         StringAssert.Contains(output, "\"Severity\":\"error\"");
         StringAssert.Contains(output, "\"FilePath\":\"foo.cs\"");
         StringAssert.Contains(output, "\"Line\":5");
+        StringAssert.Contains(output, "\"Column\":3");
         StringAssert.Contains(output, "\"Message\":\"something\"");
         StringAssert.Contains(output, "\"MatchedText\":\"snippet\"");
     }

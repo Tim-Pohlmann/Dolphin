@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dolphin.Output;
 using Dolphin.Scanner;
 
@@ -6,15 +7,19 @@ namespace Dolphin.Tests;
 [TestClass]
 public class FormatterTests
 {
-    private static string CaptureGitHub(List<Finding> findings)
+    private static string Capture(List<Finding> findings, string format)
     {
-        var sw = new StringWriter();
+        using var sw = new StringWriter();
         var original = Console.Out;
         Console.SetOut(sw);
-        try { Formatter.Print(findings, "github"); }
+        try { Formatter.Print(findings, format); }
         finally { Console.SetOut(original); }
         return sw.ToString();
     }
+
+    private static string CaptureGitHub(List<Finding> findings) => Capture(findings, "github");
+    private static string CaptureText(List<Finding> findings)   => Capture(findings, "text");
+    private static string CaptureJson(List<Finding> findings)   => Capture(findings, "json");
 
     // ── Severity mapping ───────────────────────────────────────────────────────
 
@@ -130,5 +135,65 @@ public class FormatterTests
         Assert.AreEqual(2, lines.Length);
         StringAssert.StartsWith(lines[0], "::error ");
         StringAssert.StartsWith(lines[1], "::warning ");
+    }
+
+    // ── Text format ────────────────────────────────────────────────────────────
+
+    [TestMethod]
+    public void Print_Text_WithErrorFinding_ContainsFilenameAndRule()
+    {
+        var findings = new List<Finding> { new("my-rule", Severity.Error, "src/foo.cs", 5, 1, "bad thing", "") };
+        var output = CaptureText(findings);
+        StringAssert.Contains(output, "src/foo.cs:5");
+        StringAssert.Contains(output, "[my-rule]");
+    }
+
+    [TestMethod]
+    public void Print_Text_WithMatchedText_PrintsMatchedText()
+    {
+        var findings = new List<Finding> { new("r", Severity.Warning, "f.cs", 1, 1, "msg", "matched snippet") };
+        var output = CaptureText(findings);
+        StringAssert.Contains(output, "matched snippet");
+    }
+
+    [TestMethod]
+    public void Print_Text_SummaryCountsAllSeverities()
+    {
+        var findings = new List<Finding>
+        {
+            new("r", Severity.Error,   "a.cs", 1, 1, "e", ""),
+            new("r", Severity.Warning, "b.cs", 2, 1, "w", ""),
+            new("r", Severity.Info,    "c.cs", 3, 1, "i", ""),
+        };
+        var output = CaptureText(findings);
+        StringAssert.Contains(output, "Found 3 violation(s)");
+        StringAssert.Contains(output, "1 errors");
+        StringAssert.Contains(output, "1 warnings");
+        StringAssert.Contains(output, "1 info");
+    }
+
+    // ── JSON format ────────────────────────────────────────────────────────────
+
+    [TestMethod]
+    public void Print_Json_NoFindings_PrintsEmptyArray()
+    {
+        var output = CaptureJson([]);
+        Assert.AreEqual("[]", output.Trim());
+    }
+
+    [TestMethod]
+    public void Print_Json_WithFinding_SerializesAllFields()
+    {
+        var findings = new List<Finding> { new("rule-x", Severity.Error, "foo.cs", 5, 3, "something", "snippet") };
+        var output = CaptureJson(findings);
+        using var doc = JsonDocument.Parse(output.Trim());
+        var item = doc.RootElement[0];
+        Assert.AreEqual("rule-x",    item.GetProperty("RuleId").GetString());
+        Assert.AreEqual("error",     item.GetProperty("Severity").GetString());
+        Assert.AreEqual("foo.cs",    item.GetProperty("FilePath").GetString());
+        Assert.AreEqual(5,           item.GetProperty("Line").GetInt32());
+        Assert.AreEqual(3,           item.GetProperty("Column").GetInt32());
+        Assert.AreEqual("something", item.GetProperty("Message").GetString());
+        Assert.AreEqual("snippet",   item.GetProperty("MatchedText").GetString());
     }
 }

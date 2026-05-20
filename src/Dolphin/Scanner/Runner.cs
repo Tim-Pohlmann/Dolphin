@@ -51,16 +51,13 @@ public static class Runner
         // Exit 0 = clean, 1 = findings present, 2 = non-fatal scanner warning, 3+ = error
         if (proc.ExitCode > 2)
         {
-            var detail = TryExtractErrors(stdout)
-                ?? (!string.IsNullOrWhiteSpace(stderr) ? stderr.Trim()
-                    : !string.IsNullOrWhiteSpace(stdout) ? stdout.Trim()
-                    : "Scanner failed without returning error details.");
+            var detail = TryExtractErrors(stdout) ?? GetFallbackDetail(stderr, stdout);
             throw new InvalidOperationException(
                 $"Scanner exited with code {proc.ExitCode}.\n{detail}");
         }
 
         var scannerWarning = proc.ExitCode == 2
-            ? (string.IsNullOrWhiteSpace(stderr) ? "Scanner reported a non-fatal warning." : stderr.Trim())
+            ? GetScannerWarning(stderr)
             : null;
 
         var findings = ParseFindings(stdout, cwd);
@@ -115,6 +112,16 @@ public static class Runner
             return null;
         }
     }
+
+    private static string GetFallbackDetail(string stderr, string stdout)
+    {
+        if (!string.IsNullOrWhiteSpace(stderr)) return stderr.Trim();
+        if (!string.IsNullOrWhiteSpace(stdout)) return stdout.Trim();
+        return "Scanner failed without returning error details.";
+    }
+
+    private static string GetScannerWarning(string stderr) =>
+        string.IsNullOrWhiteSpace(stderr) ? "Scanner reported a non-fatal warning." : stderr.Trim();
 
     private static string? FormatErrorEntry(JsonElement e)
     {

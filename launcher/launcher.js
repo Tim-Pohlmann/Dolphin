@@ -133,8 +133,8 @@ function main() {
       }
     })
     .catch(err => {
-      process.exitCode = 2;
       process.stderr.write(`[dolphin] Fatal: ${err.message}\n`);
+      process.exit(2);
     });
 }
 

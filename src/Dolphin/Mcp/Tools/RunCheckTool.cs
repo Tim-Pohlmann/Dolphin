@@ -13,7 +13,7 @@ public sealed class RunCheckTool
         "Returns a summary of all violations found. " +
         "Optionally filter to a single rule ID."
     )]
-    public async Task<string> RunCheck(
+    public async Task<string> RunCheck( // NOSONAR - instance method required by MCP framework
         [Description("Absolute path to the project root directory to scan")]
         string cwd,
         [Description("Optional: only run the rule with this ID")]

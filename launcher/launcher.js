@@ -49,6 +49,34 @@ function download(url, dest) {
   });
 }
 
+function extractArchive(ext, archivePath, tmpDir, isWindows) {
+  if (ext === 'tar.gz') {
+    const tar = fs.existsSync('/usr/bin/tar') ? '/usr/bin/tar' : '/bin/tar';
+    const result = childProcess.spawnSync(tar, ['-xzf', archivePath, '-C', tmpDir], { stdio: 'inherit' });
+    if (result.error || result.status !== 0) {
+      throw new Error(`[dolphin] Failed to extract archive with tar (exit code ${result.status ?? 'unknown'}).`);
+    }
+  } else {
+    const ps = path.join(process.env.SystemRoot || String.raw`C:\Windows`,
+      String.raw`System32\WindowsPowerShell\v1.0\powershell.exe`);
+    const q = (p) => `'${p.replaceAll("'", "''")}'`;
+    const cmd = `Expand-Archive -LiteralPath ${q(archivePath)} -DestinationPath ${q(tmpDir)} -Force`;
+    const result = childProcess.spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { stdio: 'inherit' });
+    if (result.error || result.status !== 0) {
+      throw new Error(`[dolphin] Failed to extract archive with PowerShell (exit code ${result.status ?? 'unknown'}).`);
+    }
+  }
+
+  fs.unlinkSync(archivePath);
+
+  if (!isWindows) {
+    for (const name of ['dolphin', 'opengrep']) {
+      const p = path.join(tmpDir, name);
+      if (fs.existsSync(p)) fs.chmodSync(p, 0o750);
+    }
+  }
+}
+
 async function ensureBinary() {
   const version = getVersion();
   const { rid, ext } = getRid();
@@ -73,32 +101,7 @@ async function ensureBinary() {
 
   try {
     await download(url, archivePath);
-
-    if (ext === 'tar.gz') {
-      const tar = fs.existsSync('/usr/bin/tar') ? '/usr/bin/tar' : '/bin/tar';
-      const result = childProcess.spawnSync(tar, ['-xzf', archivePath, '-C', tmpDir], { stdio: 'inherit' });
-      if (result.error || result.status !== 0) {
-        throw new Error(`[dolphin] Failed to extract archive with tar (exit code ${result.status ?? 'unknown'}).`);
-      }
-    } else {
-      const ps = path.join(process.env.SystemRoot || String.raw`C:\Windows`,
-        String.raw`System32\WindowsPowerShell\v1.0\powershell.exe`);
-      const q = (p) => `'${p.replaceAll("'", "''")}'`;
-      const cmd = `Expand-Archive -LiteralPath ${q(archivePath)} -DestinationPath ${q(tmpDir)} -Force`;
-      const result = childProcess.spawnSync(ps, ['-NoProfile', '-NonInteractive', '-Command', cmd], { stdio: 'inherit' });
-      if (result.error || result.status !== 0) {
-        throw new Error(`[dolphin] Failed to extract archive with PowerShell (exit code ${result.status ?? 'unknown'}).`);
-      }
-    }
-
-    fs.unlinkSync(archivePath);
-
-    if (!isWindows) {
-      for (const name of ['dolphin', 'opengrep']) {
-        const p = path.join(tmpDir, name);
-        if (fs.existsSync(p)) fs.chmodSync(p, 0o750);
-      }
-    }
+    extractArchive(ext, archivePath, tmpDir, isWindows);
 
     // Atomically promote the temp directory to the final cache location.
     // If another concurrent process already moved its copy first, discard ours.

@@ -78,7 +78,7 @@ function extractArchive(ext, archivePath, tmpDir, isWindows) {
 }
 
 async function ensureBinary() {
-  const version = getVersion();
+  const version = process.env.DOLPHIN_VERSION || getVersion();
   const { rid, ext } = getRid();
   const isWindows = process.platform === 'win32';
   const binaryName = isWindows ? 'dolphin.exe' : 'dolphin';

@@ -123,12 +123,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Cache dolphin binary
-        uses: actions/cache@v4
-        with:
-          path: bin/cache
-          key: dolphin-linux-x64-${{ steps.dolphin-version.outputs.version }}
-
       - uses: ./
         env:
           DOLPHIN_VERSION: ${{ steps.dolphin-version.outputs.version }}

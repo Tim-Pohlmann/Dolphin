@@ -21,6 +21,7 @@ runs:
         ACTION_PATH: ${{ github.action_path }}
       run: |
         VERSION=$(node -e "const p=require('path'),f=p.join(process.env.ACTION_PATH,'.claude-plugin','plugin.json');console.log(require(f).version)")
+        test -n "$VERSION" || { echo "Failed to read version from plugin.json" >&2; exit 1; }
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
     - name: Cache Dolphin binary

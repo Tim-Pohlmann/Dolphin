@@ -113,19 +113,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Resolve latest dolphin release version
-        id: dolphin-version
-        run: |
-          TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
-          test -n "$TAG" || { echo "Failed to determine latest dolphin release tag" >&2; exit 1; }
-          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - uses: ./
-        env:
-          DOLPHIN_VERSION: ${{ steps.dolphin-version.outputs.version }}
+      - uses: Tim-Pohlmann/Dolphin@v1
 
   analyze:
     name: Analyze

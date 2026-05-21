@@ -123,6 +123,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  tag-latest:
+    name: Update v1 floating tag
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ github.event.inputs.version }}
+      - name: Update v1 tag
+        run: |
+          git tag -f v1
+          git push origin v1 --force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   bump-version:
     name: Bump Version
     needs: publish

@@ -14,6 +14,22 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Get Dolphin version
+      id: dolphin-version
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        VERSION=$(node -e "const p=require('path'),f=p.join(process.env.ACTION_PATH,'.claude-plugin','plugin.json');const v=require(f).version;if(!v)throw new Error('No version in plugin.json');console.log(v)")
+        test -n "$VERSION" || { echo "Failed to read version from plugin.json" >&2; exit 1; }
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Dolphin binary
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.action_path }}/bin/cache
+        key: dolphin-${{ runner.os }}-${{ runner.arch }}-${{ steps.dolphin-version.outputs.version }}
+
     - name: Run Dolphin
       shell: bash
       env:

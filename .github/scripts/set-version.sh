@@ -18,7 +18,8 @@ if [[ "$csproj_version" != "$version" ]]; then
 fi
 
 if [[ -n "$stable_ref" ]]; then
-  sed -i "s/\"ref\": \"[^\"]*\"/\"ref\": \"$stable_ref\"/" .claude-plugin/marketplace.json
+  tmp=$(mktemp)
+  jq --arg ref "$stable_ref" '.plugins[0].source.ref = $ref' .claude-plugin/marketplace.json > "$tmp" && mv "$tmp" .claude-plugin/marketplace.json
   marketplace_ref="$(jq -r '.plugins[0].source.ref' .claude-plugin/marketplace.json 2>/dev/null || true)"
   if [[ "$marketplace_ref" != "$stable_ref" ]]; then
     echo "Error: failed to update .claude-plugin/marketplace.json ref to $stable_ref (found: ${marketplace_ref:-<missing>})" >&2

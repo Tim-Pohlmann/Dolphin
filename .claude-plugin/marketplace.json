@@ -1,15 +1,19 @@
 {
-  "name": "dolphin-dev",
+  "name": "dolphin",
   "owner": {
-    "name": "Local Development"
+    "name": "Tim Pohlmann"
   },
   "metadata": {
-    "description": "Dolphin local development marketplace"
+    "description": "Custom static analysis powered by Opengrep. Generate rules with Claude, and force it to follow them."
   },
   "plugins": [
     {
       "name": "dolphin",
-      "source": "./"
+      "source": {
+        "source": "github",
+        "repo": "Tim-Pohlmann/Dolphin",
+        "ref": "v1.5.0"
+      }
     }
   ]
 }

@@ -9,7 +9,11 @@
   "plugins": [
     {
       "name": "dolphin",
-      "source": "./"
+      "source": {
+        "source": "github",
+        "repo": "Tim-Pohlmann/Dolphin",
+        "ref": "v1.5.0"
+      }
     }
   ]
 }

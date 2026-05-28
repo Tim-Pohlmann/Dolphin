@@ -52,8 +52,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          bash .github/scripts/set-version.sh "$semver"
-          git add .claude-plugin/plugin.json src/Dolphin/Dolphin.csproj
+          current=$(jq -r '.version' .claude-plugin/plugin.json)
+          bash .github/scripts/set-version.sh "$semver" "v${current}"
+          git add .claude-plugin/plugin.json src/Dolphin/Dolphin.csproj .claude-plugin/marketplace.json
           if git diff --cached --quiet; then
             echo "Version already set to $semver, no changes needed."
             exit 0

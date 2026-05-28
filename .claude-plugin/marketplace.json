@@ -1,10 +1,10 @@
 {
-  "name": "dolphin-dev",
+  "name": "dolphin",
   "owner": {
-    "name": "Local Development"
+    "name": "Tim Pohlmann"
   },
   "metadata": {
-    "description": "Dolphin local development marketplace"
+    "description": "Custom static analysis powered by Opengrep. Generate rules with Claude, run them in CI."
   },
   "plugins": [
     {

@@ -30,9 +30,10 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
+          current=$(jq -r '.version' .claude-plugin/plugin.json)
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
           version="$INPUT_VERSION"
           if [[ -z "$version" ]]; then
-            current=$(jq -r '.version' .claude-plugin/plugin.json)
             major="${current%%.*}"
             minor="${current#*.}"
             minor="${minor%%.*}"
@@ -52,8 +53,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          current=$(jq -r '.version' .claude-plugin/plugin.json)
-          bash .github/scripts/set-version.sh "$semver" "v${current}"
+          bash .github/scripts/set-version.sh "$semver" "v${{ steps.resolve.outputs.current }}"
           git add .claude-plugin/plugin.json src/Dolphin/Dolphin.csproj .claude-plugin/marketplace.json
           if git diff --cached --quiet; then
             echo "Version already set to $semver, no changes needed."

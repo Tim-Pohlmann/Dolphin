@@ -4,7 +4,7 @@
     "name": "Tim Pohlmann"
   },
   "metadata": {
-    "description": "Custom static analysis powered by Opengrep. Generate rules with Claude, run them in CI."
+    "description": "Custom static analysis powered by Opengrep. Generate rules with Claude, and force it to follow them."
   },
   "plugins": [
     {

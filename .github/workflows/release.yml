@@ -53,6 +53,9 @@ jobs:
             git tag "${{ github.event.inputs.version }}"
             git push origin "${{ github.event.inputs.version }}"
           fi
+          major="${INPUT_VERSION%%.*}"
+          git tag -f "$major" "${{ github.event.inputs.version }}"
+          git push origin "$major" --force
           gh release create "${{ github.event.inputs.version }}" \
             --title "Dolphin ${{ github.event.inputs.version }}" \
             --target "$(git rev-parse HEAD)" \
@@ -61,6 +64,7 @@ jobs:
           || gh release view "${{ github.event.inputs.version }}" --repo "$GITHUB_REPOSITORY" > /dev/null
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
 
   publish:
     name: Publish (${{ matrix.rid }})

@@ -53,9 +53,6 @@ jobs:
             git tag "${{ github.event.inputs.version }}"
             git push origin "${{ github.event.inputs.version }}"
           fi
-          major="${INPUT_VERSION%%.*}"
-          git tag -f "$major" "${{ github.event.inputs.version }}"
-          git push origin "$major" --force
           gh release create "${{ github.event.inputs.version }}" \
             --title "Dolphin ${{ github.event.inputs.version }}" \
             --target "$(git rev-parse HEAD)" \
@@ -64,7 +61,6 @@ jobs:
           || gh release view "${{ github.event.inputs.version }}" --repo "$GITHUB_REPOSITORY" > /dev/null
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          INPUT_VERSION: ${{ github.event.inputs.version }}
 
   publish:
     name: Publish (${{ matrix.rid }})
@@ -126,6 +122,24 @@ jobs:
         run: gh release upload "${{ github.event.inputs.version }}" "dolphin-${{ steps.ver.outputs.value }}-${{ matrix.rid }}.${{ matrix.archive_ext }}" --clobber --repo "$GITHUB_REPOSITORY"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  advance-major-tag:
+    name: Advance Major Tag
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ github.event.inputs.version }}
+      - name: Move floating major tag
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          major="${INPUT_VERSION%%.*}"
+          git tag -f "$major" "$INPUT_VERSION"
+          git push origin "$major" --force
 
   bump-version:
     name: Bump Version

@@ -53,6 +53,49 @@ public class CheckCommandTests
         }
     }
 
+    private const string WarningFindingJson =
+        """{"results":[{"check_id":"r","path":"f.ts","start":{"line":1,"col":1},"end":{"line":1,"col":1},"extra":{"message":"m","severity":"WARNING","lines":"x"}}]}""";
+
+    [TestMethod]
+    public async Task HandleAsync_WarningFinding_DefaultFailOn_Returns0()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var (tmpDir, fakeBinDir) = CreateFakeOpengrepEnv(exitCode: 1, stdout: WarningFindingJson);
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", fakeBinDir + ":" + savedPath);
+        try
+        {
+            var result = await CheckCommand.HandleAsync(tmpDir, null, "text", null);
+            Assert.AreEqual(0, result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Directory.Delete(tmpDir, recursive: true);
+            Directory.Delete(fakeBinDir, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task HandleAsync_WarningFinding_FailOnWarning_Returns1()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var (tmpDir, fakeBinDir) = CreateFakeOpengrepEnv(exitCode: 1, stdout: WarningFindingJson);
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", fakeBinDir + ":" + savedPath);
+        try
+        {
+            var result = await CheckCommand.HandleAsync(tmpDir, null, "text", null, "warning");
+            Assert.AreEqual(1, result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Directory.Delete(tmpDir, recursive: true);
+            Directory.Delete(fakeBinDir, recursive: true);
+        }
+    }
+
     [TestMethod]
     public async Task HandleAsync_FakeScanner_ScannerWarning_Returns0()
     {

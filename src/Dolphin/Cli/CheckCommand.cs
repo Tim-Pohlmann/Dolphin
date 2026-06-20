@@ -31,23 +31,32 @@ public static class CheckCommand
             description: "Scan only this file instead of the entire project"
         );
 
+        var failOnOption = new Option<string>(
+            "--fail-on",
+            description: "Lowest severity that causes a non-zero exit: error, warning, or info",
+            getDefaultValue: () => "error"
+        );
+        failOnOption.FromAmong("error", "warning", "info");
+
         var cmd = new Command("check", "Run static analysis rules against the codebase")
         {
             cwdOption,
             ruleOption,
             formatOption,
-            fileOption
+            fileOption,
+            failOnOption
         };
 
         cmd.SetHandler(
-            async (cwd, ruleId, format, file) =>
-                Environment.Exit(await HandleAsync(cwd, ruleId, format, file)),
-            cwdOption, ruleOption, formatOption, fileOption);
+            async (cwd, ruleId, format, file, failOn) =>
+                Environment.Exit(await HandleAsync(cwd, ruleId, format, file, failOn)),
+            cwdOption, ruleOption, formatOption, fileOption, failOnOption);
 
         return cmd;
     }
 
-    internal static async Task<int> HandleAsync(string cwd, string? ruleId, string format, string? file)
+    internal static async Task<int> HandleAsync(
+        string cwd, string? ruleId, string format, string? file, string failOn = "error")
     {
         cwd = Path.GetFullPath(cwd);
         if (!Directory.Exists(cwd))
@@ -113,6 +122,15 @@ public static class CheckCommand
 
         Formatter.Print(result.Findings, format);
 
-        return result.Findings.Any(f => f.Severity == Severity.Error) ? 1 : 0;
+        // Lower enum value == higher severity (Error=0, Warning=1, Info=2).
+        // Fail if any finding is at least as severe as the configured threshold.
+        var threshold = failOn switch
+        {
+            "warning" => Severity.Warning,
+            "info" => Severity.Info,
+            _ => Severity.Error
+        };
+
+        return result.Findings.Any(f => f.Severity <= threshold) ? 1 : 0;
     }
 }

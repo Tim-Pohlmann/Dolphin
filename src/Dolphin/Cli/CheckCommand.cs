@@ -122,15 +122,17 @@ public static class CheckCommand
 
         Formatter.Print(result.Findings, format);
 
-        // Lower enum value == higher severity (Error=0, Warning=1, Info=2).
-        // Fail if any finding is at least as severe as the configured threshold.
-        var threshold = failOn switch
-        {
-            "warning" => Severity.Warning,
-            "info" => Severity.Info,
-            _ => Severity.Error
-        };
-
-        return result.Findings.Any(f => f.Severity <= threshold) ? 1 : 0;
+        return result.Findings.Any(f => Fails(f.Severity, failOn)) ? 1 : 0;
     }
+
+    // Whether a finding of the given severity should cause a non-zero exit under the
+    // configured threshold. Listed explicitly so behavior does not depend on the
+    // Severity enum's declaration order.
+    private static bool Fails(Severity severity, string failOn) =>
+        failOn.ToLowerInvariant() switch
+        {
+            "info" => true,
+            "warning" => severity is Severity.Error or Severity.Warning,
+            _ => severity == Severity.Error
+        };
 }

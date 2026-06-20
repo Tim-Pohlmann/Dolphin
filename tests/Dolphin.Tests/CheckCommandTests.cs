@@ -1,3 +1,5 @@
+using System.CommandLine;
+using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.Text.Json;
 using Dolphin.Cli;
@@ -9,6 +11,25 @@ namespace Dolphin.Tests;
 public class CheckCommandTests
 {
     // ── Unit tests ─────────────────────────────────────────────────────────────
+
+    [TestMethod]
+    public void Build_FailOnOption_DefaultsToError()
+    {
+        var cmd = CheckCommand.Build();
+        var result = cmd.Parse("");
+        var option = (Option<string>)cmd.Options.Single(o => o.Name == "fail-on");
+        Assert.AreEqual("error", result.GetValueForOption(option));
+    }
+
+    [TestMethod]
+    public void Build_FailOnOption_AcceptsValidValuesAndRejectsInvalid()
+    {
+        var cmd = CheckCommand.Build();
+        var option = (Option<string>)cmd.Options.Single(o => o.Name == "fail-on");
+
+        Assert.AreEqual("warning", cmd.Parse("--fail-on warning").GetValueForOption(option));
+        Assert.IsTrue(cmd.Parse("--fail-on bogus").Errors.Count > 0);
+    }
 
     [TestMethod]
     public async Task HandleAsync_NonExistentCwd_Returns2()
@@ -86,6 +107,29 @@ public class CheckCommandTests
         try
         {
             var result = await CheckCommand.HandleAsync(tmpDir, null, "text", null, "warning");
+            Assert.AreEqual(1, result);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Directory.Delete(tmpDir, recursive: true);
+            Directory.Delete(fakeBinDir, recursive: true);
+        }
+    }
+
+    private const string InfoFindingJson =
+        """{"results":[{"check_id":"r","path":"f.ts","start":{"line":1,"col":1},"end":{"line":1,"col":1},"extra":{"message":"m","severity":"INFO","lines":"x"}}]}""";
+
+    [TestMethod]
+    public async Task HandleAsync_InfoFinding_FailOnInfo_Returns1()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Inconclusive("Fake scanner uses a shell script; Unix-only");
+        var (tmpDir, fakeBinDir) = CreateFakeOpengrepEnv(exitCode: 1, stdout: InfoFindingJson);
+        var savedPath = Environment.GetEnvironmentVariable("PATH");
+        Environment.SetEnvironmentVariable("PATH", fakeBinDir + ":" + savedPath);
+        try
+        {
+            var result = await CheckCommand.HandleAsync(tmpDir, null, "text", null, "info");
             Assert.AreEqual(1, result);
         }
         finally

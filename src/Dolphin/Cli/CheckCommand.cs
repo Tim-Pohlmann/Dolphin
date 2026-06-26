@@ -31,23 +31,32 @@ public static class CheckCommand
             description: "Scan only this file instead of the entire project"
         );
 
+        var failOnOption = new Option<string>(
+            "--fail-on",
+            description: "Lowest severity that causes a non-zero exit: error, warning, or info",
+            getDefaultValue: () => "error"
+        );
+        failOnOption.FromAmong("error", "warning", "info");
+
         var cmd = new Command("check", "Run static analysis rules against the codebase")
         {
             cwdOption,
             ruleOption,
             formatOption,
-            fileOption
+            fileOption,
+            failOnOption
         };
 
         cmd.SetHandler(
-            async (cwd, ruleId, format, file) =>
-                Environment.Exit(await HandleAsync(cwd, ruleId, format, file)),
-            cwdOption, ruleOption, formatOption, fileOption);
+            async (cwd, ruleId, format, file, failOn) =>
+                Environment.Exit(await HandleAsync(cwd, ruleId, format, file, failOn)),
+            cwdOption, ruleOption, formatOption, fileOption, failOnOption);
 
         return cmd;
     }
 
-    internal static async Task<int> HandleAsync(string cwd, string? ruleId, string format, string? file)
+    internal static async Task<int> HandleAsync(
+        string cwd, string? ruleId, string format, string? file, string failOn = "error")
     {
         cwd = Path.GetFullPath(cwd);
         if (!Directory.Exists(cwd))
@@ -113,6 +122,18 @@ public static class CheckCommand
 
         Formatter.Print(result.Findings, format);
 
-        return result.Findings.Any(f => f.Severity == Severity.Error) ? 1 : 0;
+        var threshold = failOn.ToLowerInvariant();
+        return result.Findings.Any(f => Fails(f.Severity, threshold)) ? 1 : 0;
     }
+
+    // Whether a finding of the given severity should cause a non-zero exit under the
+    // configured threshold (which must already be lower-cased). Listed explicitly so
+    // behavior does not depend on the Severity enum's declaration order.
+    private static bool Fails(Severity severity, string threshold) =>
+        threshold switch
+        {
+            "info" => true,
+            "warning" => severity is Severity.Error or Severity.Warning,
+            _ => severity == Severity.Error
+        };
 }

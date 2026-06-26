@@ -122,14 +122,15 @@ public static class CheckCommand
 
         Formatter.Print(result.Findings, format);
 
-        return result.Findings.Any(f => Fails(f.Severity, failOn)) ? 1 : 0;
+        var threshold = failOn.ToLowerInvariant();
+        return result.Findings.Any(f => Fails(f.Severity, threshold)) ? 1 : 0;
     }
 
     // Whether a finding of the given severity should cause a non-zero exit under the
-    // configured threshold. Listed explicitly so behavior does not depend on the
-    // Severity enum's declaration order.
-    private static bool Fails(Severity severity, string failOn) =>
-        failOn.ToLowerInvariant() switch
+    // configured threshold (which must already be lower-cased). Listed explicitly so
+    // behavior does not depend on the Severity enum's declaration order.
+    private static bool Fails(Severity severity, string threshold) =>
+        threshold switch
         {
             "info" => true,
             "warning" => severity is Severity.Error or Severity.Warning,

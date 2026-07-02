@@ -1,6 +1,7 @@
 ---
 name: generate-rules-recon
 description: Scan a codebase and produce candidate Dolphin rules that prevent drift from established patterns.
+disallowedTools: Agent, Skill
 ---
 # Goal
 You perform codebase reconnaissance to surface candidate Dolphin static analysis rules.

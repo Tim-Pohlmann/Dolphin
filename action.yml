@@ -11,6 +11,10 @@ inputs:
     description: Directory to scan (defaults to the repository root)
     required: false
     default: ''
+  fail-on:
+    description: Lowest severity that causes a non-zero exit: error, warning, or info
+    required: false
+    default: error
 runs:
   using: composite
   steps:
@@ -35,5 +39,6 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
         DOLPHIN_CWD: ${{ inputs.working-directory }}
+        DOLPHIN_FAIL_ON: ${{ inputs.fail-on }}
       run: |
-        node "$ACTION_PATH/launcher/launcher.js" check --cwd "${DOLPHIN_CWD:-$GITHUB_WORKSPACE}" --format github
+        node "$ACTION_PATH/launcher/launcher.js" check --cwd "${DOLPHIN_CWD:-$GITHUB_WORKSPACE}" --format github --fail-on "${DOLPHIN_FAIL_ON:-error}"

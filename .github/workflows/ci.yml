@@ -113,7 +113,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: Tim-Pohlmann/Dolphin@v1
+      - uses: ./
 
   validate-action:
     name: Validate action.yml

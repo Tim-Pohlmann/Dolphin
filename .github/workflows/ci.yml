@@ -113,7 +113,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: Tim-Pohlmann/Dolphin@v1
+      - uses: ./
+
+  validate-action:
+    name: Validate action.yml
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: action-validator
+        uses: mpalmer/action-validator@c994f427b7c42cd5ecb1bc9315cb91c3d7d72e3d # main @ 2026-04-08
+        with:
+          version: "0.9.0"
+          patterns: |
+            action.yml
+            .github/workflows/*.yml
 
   analyze:
     name: Analyze
